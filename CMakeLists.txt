@@ -21,6 +21,7 @@ link_directories(${OPENVR_SDK_PATH}/lib/win64)
 
 # Add Dear ImGui
 add_subdirectory(thirdparty/imgui)
+include_directories(thirdparty/imgui)
 
 # Add GLAD
 include_directories(thirdparty/glad/include)
@@ -36,23 +37,17 @@ include_directories(thirdparty/json/include)
 # Add sources
 set(SOURCES
     src/main.cpp
-	src/StayPutDriver.cpp
-    src/ui/StayPutUI.cpp
+    src/Native/DriverFactory.cpp
+    src/Driver/VRDriver.cpp
+    src/UI/UIManager.cpp
     ${GLAD_SOURCES}
 )
 
-# Add headers
-set(HEADERS
-    src/StayPutDriver.h
-    src/TrackedDeviceData.h
-    src/ui/StayPutUI.h
-)
-
 # Create driver library
-add_library(driver_stayputvr SHARED ${SOURCES} ${HEADERS})
+add_library(driver_stayputvr SHARED ${SOURCES})
 target_include_directories(driver_stayputvr PRIVATE 
     src
-    src/ui
+    thirdparty
 )
 
 target_link_libraries(driver_stayputvr PRIVATE
