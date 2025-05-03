@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="17.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\User\VSCode\EarPerkOSC\glfw-3.4\CMakeFiles\eebae6036297debd7346f909742f30d5\uninstall.rule">
+      <Filter>CMake Rules</Filter>
+    </CustomBuild>
+    <CustomBuild Include="C:\Users\User\VSCode\EarPerkOSC\glfw-3.4\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="C:\Users\User\VSCode\EarPerkOSC\glfw-3.4\CMakeFiles\uninstall" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="CMake Rules">
+      <UniqueIdentifier>{AF0F189A-E8FB-3AB7-B436-17AF74DFED68}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

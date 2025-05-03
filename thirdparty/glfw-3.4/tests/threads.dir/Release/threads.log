@@ -1,0 +1,5 @@
+﻿  Building Custom Rule C:/Users/User/VSCode/EarPerkOSC/glfw-3.4/tests/CMakeLists.txt
+  threads.c
+  tinycthread.c
+  Generating Code...
+  threads.vcxproj -> C:\Users\User\VSCode\EarPerkOSC\glfw-3.4\tests\Release\threads.exe
