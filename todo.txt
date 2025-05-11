@@ -1,0 +1,19 @@
+TODO: 
+
+* ✓ Tabs in UI
+* Cooldown timeout
+* OSC output for triggered devices
+* Warning distance
+* Audio cue on warning and on out of bounds
+* Haptic warning if device supports it
+* OSC input for each device
+* Disable threshold--if a device is extremely far out of bounds then it gets
+  unlocked, and/or if all the devices are out of bounds it unlocks it.
+  (safeword mode)
+* Save configuration to file
+* Audio cue when a device is locked via OSC
+* Audio cue when devices are locked via UI
+* Chaining mode--when a device is locked via OSC, all devices are locked
+* Hold-pose timer: when locked, will auto unlock after timer hits 0 (with
+  UI), with unlock audio cue
+* Countdown timer: when locking triggered, locks in x seconds, with audio cue
