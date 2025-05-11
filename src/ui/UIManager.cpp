@@ -5,12 +5,23 @@
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
+#include <nlohmann/json.hpp>
+#include "../Logger.hpp"
+#include "../PathUtils.hpp"
+#include "../Audio.hpp"
+#include <shellapi.h> // For ShellExecuteA
+
+using json = nlohmann::json;
 
 extern std::atomic<bool> g_running;
 
 namespace StayPutVR {
 
     UIManager::UIManager() : window_(nullptr), imgui_context_(nullptr), running_ptr_(&g_running) {
+        // Initialize config_dir_ with AppData path
+        config_dir_ = GetAppDataPath() + "\\configs";
+        // Increase window height to prevent cutting off UI elements
+        window_height_ = 700;
     }
 
     UIManager::~UIManager() {
@@ -64,7 +75,20 @@ namespace StayPutVR {
         // Set window close callback
         glfwSetWindowCloseCallback(window_, [](GLFWwindow* window) {
             g_running = false;
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("Window close callback triggered");
+            }
         });
+        
+        // Create config directories
+        std::filesystem::create_directories(config_dir_);
+        std::filesystem::create_directories(GetAppDataPath() + "\\config");
+        
+        // Initialize audio system
+        AudioManager::Initialize();
+        
+        // Load configuration
+        LoadConfig();
         
         return true;
     }
@@ -76,6 +100,10 @@ namespace StayPutVR {
         // Check if window should close
         if (glfwWindowShouldClose(window_)) {
             *running_ptr_ = false;
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("Window close button pressed, shutting down application");
+            }
+            glfwSetWindowShouldClose(window_, GLFW_FALSE); // Reset the flag
         }
         
         // Start the Dear ImGui frame
@@ -101,6 +129,16 @@ namespace StayPutVR {
     }
 
     void UIManager::Shutdown() {
+        if (StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Info("UIManager shutting down");
+        }
+        
+        // Save configuration before shutting down
+        SaveConfig();
+        
+        // Shutdown audio system
+        AudioManager::Shutdown();
+        
         if (window_ != nullptr) {
             // Cleanup
             ImGui_ImplOpenGL3_Shutdown();
@@ -116,32 +154,537 @@ namespace StayPutVR {
     }
 
     void UIManager::UpdateDevicePositions(const std::vector<std::shared_ptr<IVRDevice>>& devices) {
-        device_positions_.clear();
+        // Mark current time for tracking device activity
+        auto now = std::chrono::steady_clock::now();
         
+        // Create a set of all current device serials
+        std::unordered_set<std::string> current_device_serials;
+        
+        // Update device map
         for (const auto& device : devices) {
             if (!device)
                 continue;
             
-            DevicePosition pos;
-            pos.serial = device->GetSerial();
-            pos.type = device->GetDeviceType();
+            std::string serial = device->GetSerial();
+            current_device_serials.insert(serial);
             
-            // Get pose from device
-            vr::DriverPose_t pose = device->GetPose();
+            // Check if this device exists in our map
+            auto it = device_map_.find(serial);
             
-            // Store position
-            pos.position[0] = pose.vecPosition[0];
-            pos.position[1] = pose.vecPosition[1];
-            pos.position[2] = pose.vecPosition[2];
-            
-            // Store rotation
-            pos.rotation[0] = pose.qRotation.x;
-            pos.rotation[1] = pose.qRotation.y;
-            pos.rotation[2] = pose.qRotation.z;
-            pos.rotation[3] = pose.qRotation.w;
-            
-            device_positions_.push_back(pos);
+            if (it == device_map_.end()) {
+                // New device, add it
+                DevicePosition pos;
+                pos.serial = serial;
+                pos.type = device->GetDeviceType();
+                
+                // Get pose from device
+                vr::DriverPose_t pose = device->GetPose();
+                
+                // Store position
+                pos.position[0] = pose.vecPosition[0];
+                pos.position[1] = pose.vecPosition[1];
+                pos.position[2] = pose.vecPosition[2];
+                
+                // Store rotation
+                pos.rotation[0] = pose.qRotation.x;
+                pos.rotation[1] = pose.qRotation.y;
+                pos.rotation[2] = pose.qRotation.z;
+                pos.rotation[3] = pose.qRotation.w;
+                
+                // Initialize original position and rotation with current values
+                for (int i = 0; i < 3; i++) {
+                    pos.original_position[i] = pos.position[i];
+                    pos.previous_position[i] = pos.position[i];
+                }
+                for (int i = 0; i < 4; i++) pos.original_rotation[i] = pos.rotation[i];
+                
+                // Initialize last update time
+                pos.last_update_time = now;
+                
+                // Look up device name from config if available
+                auto nameIt = config_.device_names.find(serial);
+                if (nameIt != config_.device_names.end()) {
+                    pos.device_name = nameIt->second;
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Info("Applied stored name for device: " + serial + " -> " + nameIt->second);
+                    }
+                }
+                
+                // Apply include_in_locking setting if available
+                auto settingIt = config_.device_settings.find(serial);
+                if (settingIt != config_.device_settings.end()) {
+                    pos.include_in_locking = settingIt->second;
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Info("Applied include_in_locking setting for device: " + serial + " -> " + 
+                                                (pos.include_in_locking ? "true" : "false"));
+                    }
+                }
+                
+                // Log new device
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Info("New device connected: " + serial);
+                }
+                
+                // Add to our list and map
+                device_positions_.push_back(pos);
+                device_map_[serial] = device_positions_.size() - 1;
+            } else {
+                // Existing device, update it
+                size_t index = it->second;
+                vr::DriverPose_t pose = device->GetPose();
+                
+                // Save previous position
+                for (int i = 0; i < 3; i++) {
+                    device_positions_[index].previous_position[i] = device_positions_[index].position[i];
+                }
+                
+                // Store current position
+                float current_pos[3] = {
+                    pose.vecPosition[0],
+                    pose.vecPosition[1],
+                    pose.vecPosition[2]
+                };
+                float current_rot[4] = {
+                    pose.qRotation.x,
+                    pose.qRotation.y,
+                    pose.qRotation.z,
+                    pose.qRotation.w
+                };
+                
+                // Update position and rotation
+                for (int i = 0; i < 3; i++) {
+                    device_positions_[index].position[i] = current_pos[i];
+                }
+                for (int i = 0; i < 4; i++) {
+                    device_positions_[index].rotation[i] = current_rot[i];
+                }
+                
+                if (device_positions_[index].locked) {
+                    // If locked, calculate and store position offset
+                    for (int i = 0; i < 3; i++) {
+                        device_positions_[index].position_offset[i] = 
+                            device_positions_[index].original_position[i] - current_pos[i];
+                    }
+                    
+                    // For quaternions, we should use proper quaternion math for offsets
+                    // This is simplified for now
+                    device_positions_[index].rotation_offset[0] = current_rot[0];
+                    device_positions_[index].rotation_offset[1] = current_rot[1];
+                    device_positions_[index].rotation_offset[2] = current_rot[2];
+                    device_positions_[index].rotation_offset[3] = current_rot[3];
+                }
+                
+                // Update last update time
+                device_positions_[index].last_update_time = now;
+            }
         }
+        
+        // Check for devices that need to be removed from the list
+        // (they haven't been seen for more than 5 seconds)
+        std::vector<size_t> indices_to_remove;
+        std::vector<std::string> serials_to_remove;
+        
+        for (size_t i = 0; i < device_positions_.size(); ++i) {
+            const auto& device = device_positions_[i];
+            
+            // Skip devices that are in the current update
+            if (current_device_serials.find(device.serial) != current_device_serials.end()) {
+                continue;
+            }
+            
+            // If device hasn't been updated in more than 5 seconds, mark for removal
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - device.last_update_time).count();
+            if (elapsed > 5) {
+                indices_to_remove.push_back(i);
+                serials_to_remove.push_back(device.serial);
+                
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Info("Device disconnected: " + device.serial);
+                }
+            }
+        }
+        
+        // Remove devices that are no longer present
+        if (!indices_to_remove.empty()) {
+            // Remove from device_map
+            for (const auto& serial : serials_to_remove) {
+                device_map_.erase(serial);
+            }
+            
+            // Remove from device_positions_ in reverse order to maintain valid indices
+            std::sort(indices_to_remove.begin(), indices_to_remove.end(), std::greater<size_t>());
+            for (size_t index : indices_to_remove) {
+                device_positions_.erase(device_positions_.begin() + index);
+            }
+            
+            // Rebuild device_map with updated indices
+            device_map_.clear();
+            for (size_t i = 0; i < device_positions_.size(); ++i) {
+                device_map_[device_positions_[i].serial] = i;
+            }
+        }
+        
+        // Check position deviations if global lock is active
+        if (global_lock_active_) {
+            CheckDevicePositionDeviations();
+        }
+
+        // Save device names to configuration if they exist
+        bool names_changed = false;
+        for (const auto& device : device_positions_) {
+            if (!device.device_name.empty()) {
+                if (config_.device_names[device.serial] != device.device_name) {
+                    config_.device_names[device.serial] = device.device_name;
+                    names_changed = true;
+                }
+            }
+        }
+
+        // Save config if device names have changed
+        if (names_changed) {
+            SaveConfig();
+        }
+    }
+    
+    void UIManager::LockDevicePosition(const std::string& serial, bool lock) {
+        auto it = device_map_.find(serial);
+        if (it != device_map_.end()) {
+            size_t index = it->second;
+            device_positions_[index].locked = lock;
+            
+            // If locking, store the current position as original
+            if (lock) {
+                for (int i = 0; i < 3; i++) device_positions_[index].original_position[i] = device_positions_[index].position[i];
+                for (int i = 0; i < 4; i++) device_positions_[index].original_rotation[i] = device_positions_[index].rotation[i];
+            }
+        }
+    }
+    
+    void UIManager::ActivateGlobalLock(bool activate) {
+        global_lock_active_ = activate;
+        
+        // If activating, store current positions as original for all included devices
+        if (activate) {
+            for (auto& device : device_positions_) {
+                if (device.include_in_locking) {
+                    for (int i = 0; i < 3; i++) device.original_position[i] = device.position[i];
+                    for (int i = 0; i < 4; i++) device.original_rotation[i] = device.rotation[i];
+                    device.position_deviation = 0.0f;
+                    device.exceeds_threshold = false;
+                }
+            }
+            
+            // Play lock sound if enabled
+            if (config_.audio_enabled && config_.lock_audio) {
+                AudioManager::PlayLockSound(config_.audio_volume);
+            }
+        } else {
+            // Play unlock sound if enabled
+            if (config_.audio_enabled && config_.unlock_audio) {
+                AudioManager::PlayUnlockSound(config_.audio_volume);
+            }
+        }
+    }
+    
+    void UIManager::CheckDevicePositionDeviations() {
+        bool warning_triggered = false;
+        bool out_of_bounds_triggered = false;
+        bool success_triggered = false;
+        
+        // Get current time to check if we should play sound again
+        auto current_time = std::chrono::steady_clock::now();
+        
+        for (auto& device : device_positions_) {
+            if (device.include_in_locking && global_lock_active_) {
+                // Calculate Euclidean distance between current position and original position
+                float deviation = 0.0f;
+                for (int i = 0; i < 3; i++) {
+                    float diff = device.position[i] - device.original_position[i];
+                    deviation += diff * diff;
+                }
+                device.position_deviation = std::sqrt(deviation);
+                
+                // Store previous state to detect transitions
+                bool was_exceeding = device.exceeds_threshold;
+                bool was_warning = device.in_warning_zone;
+                
+                // Previous zone status - safe zone is when not in warning or exceeding
+                bool was_in_safe_zone = !was_exceeding && !was_warning;
+                
+                // Check if deviation exceeds threshold
+                device.exceeds_threshold = device.position_deviation > position_threshold_;
+                device.in_warning_zone = device.position_deviation > warning_threshold_ && !device.exceeds_threshold;
+                
+                // Current zone status - safe zone is when not in warning or exceeding
+                bool is_in_safe_zone = !device.exceeds_threshold && !device.in_warning_zone;
+                
+                // For out of bounds, check continuous presence
+                if (device.exceeds_threshold) {
+                    out_of_bounds_triggered = true;
+                }
+                // For warning zone, check continuous presence
+                else if (device.in_warning_zone) {
+                    warning_triggered = true;
+                }
+                // Check for transition from warning/exceeding to safe zone
+                if (!was_in_safe_zone && is_in_safe_zone) {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Debug("Device returned to safe zone, triggering success sound");
+                    }
+                    success_triggered = true;
+                }
+            }
+        }
+        
+        // Sound rate limiting - use longer cooldown to prevent audio from being cut off
+        // Increased from 0.5 to 1.0 seconds to ensure audio files have time to play fully
+        const float sound_cooldown_seconds = 1.0f;
+        
+        // Play sounds if needed and if audio is enabled in config
+        if (config_.audio_enabled) {
+            // Special case for success sound: Always play immediately when triggered, 
+            // regardless of cooldown or other playing sounds
+            if (success_triggered) {
+                std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\success.wav";
+                if (std::filesystem::exists(filePath)) {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Debug("Playing success.wav for return to safe zone");
+                    }
+                    // Stop any currently playing sound first
+                    AudioManager::StopSound();
+                    // Play the success sound
+                    AudioManager::PlaySound("success.wav", config_.audio_volume);
+                    // Reset the cooldown timer
+                    last_sound_time_ = current_time;
+                    return; // Skip other sounds this frame
+                } else {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Warning("success.wav not found, cannot play safe zone return sound");
+                    }
+                }
+            }
+            
+            // For other sounds, respect the cooldown
+            auto elapsed_seconds = std::chrono::duration_cast<std::chrono::duration<float>>(
+                current_time - last_sound_time_).count();
+                
+            if (elapsed_seconds >= sound_cooldown_seconds) {
+                bool played_sound = false;
+                
+                // Out of bounds sound (disobedience.wav)
+                if (out_of_bounds_triggered && config_.out_of_bounds_audio) {
+                    std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+                    if (std::filesystem::exists(filePath)) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Playing disobedience.wav for out of bounds");
+                        }
+                        AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+                        played_sound = true;
+                    } else {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Warning("disobedience.wav not found, cannot play out of bounds sound");
+                        }
+                    }
+                }
+                // Warning sound
+                else if (warning_triggered && config_.warning_audio) {
+                    AudioManager::PlayWarningSound(config_.audio_volume);
+                    played_sound = true;
+                }
+                
+                // If we played a sound, update the timestamp
+                if (played_sound) {
+                    last_sound_time_ = current_time;
+                }
+            }
+        }
+    }
+    
+    void UIManager::ResetAllDevices() {
+        // Reset global lock state
+        global_lock_active_ = false;
+        
+        // Reset individual device states
+        for (auto& device : device_positions_) {
+            device.locked = false;
+            device.include_in_locking = false;
+            device.exceeds_threshold = false;
+            device.position_deviation = 0.0f;
+            
+            for (int i = 0; i < 3; i++) device.position_offset[i] = 0.0f;
+            device.rotation_offset[0] = 0.0f;
+            device.rotation_offset[1] = 0.0f;
+            device.rotation_offset[2] = 0.0f;
+            device.rotation_offset[3] = 1.0f; // Identity quaternion
+        }
+    }
+    
+    void UIManager::ApplyLockedPositions() {
+        // This would apply offsets to devices in a full implementation
+        // For now, this is just a placeholder
+    }
+    
+    bool UIManager::SaveDevicePositions(const std::string& filename) {
+        json config;
+        
+        // Ensure the config directory exists
+        std::filesystem::create_directories(config_dir_);
+        
+        // Create an array of device positions
+        json devices_array = json::array();
+        
+        for (const auto& device : device_positions_) {
+            if (device.locked || device.include_in_locking) {
+                json device_obj;
+                device_obj["serial"] = device.serial;
+                device_obj["locked"] = device.locked;
+                device_obj["include_in_locking"] = device.include_in_locking;
+                
+                // Save device name if it's set
+                if (!device.device_name.empty()) {
+                    device_obj["device_name"] = device.device_name;
+                }
+                
+                json position_array = json::array();
+                for (int i = 0; i < 3; i++) position_array.push_back(device.original_position[i]);
+                device_obj["position"] = position_array;
+                
+                json rotation_array = json::array();
+                for (int i = 0; i < 4; i++) rotation_array.push_back(device.original_rotation[i]);
+                device_obj["rotation"] = rotation_array;
+                
+                devices_array.push_back(device_obj);
+            }
+        }
+        
+        config["devices"] = devices_array;
+        config["position_threshold"] = position_threshold_;
+        config["warning_threshold"] = warning_threshold_;
+        config["disable_threshold"] = disable_threshold_;
+        
+        // Save to file
+        std::string filepath = config_dir_ + "\\" + filename + ".json";
+        std::ofstream out(filepath);
+        if (!out.is_open()) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("UIManager: Failed to open file for writing: " + filepath);
+            }
+            return false;
+        }
+        
+        out << config.dump(4); // Pretty print with 4 spaces indent
+        out.close();
+        
+        if (StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Info("UIManager: Saved device positions to " + filepath);
+        }
+        
+        current_config_file_ = filename;
+        return true;
+    }
+    
+    bool UIManager::LoadDevicePositions(const std::string& filename) {
+        // Reset all devices first
+        ResetAllDevices();
+        
+        // Ensure the config directory exists
+        std::filesystem::create_directories(config_dir_);
+        
+        // Load the config file
+        std::string filepath = config_dir_ + "\\" + filename + ".json";
+        std::ifstream in(filepath);
+        if (!in.is_open()) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("UIManager: Failed to open file for reading: " + filepath);
+            }
+            return false;
+        }
+        
+        json config;
+        try {
+            in >> config;
+        } catch (const std::exception& e) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("UIManager: Error parsing config file: " + std::string(e.what()));
+            }
+            return false;
+        }
+        
+        // Load position threshold if available
+        if (config.contains("position_threshold") && config["position_threshold"].is_number()) {
+            position_threshold_ = config["position_threshold"];
+        }
+        
+        // Load warning threshold if available
+        if (config.contains("warning_threshold") && config["warning_threshold"].is_number()) {
+            warning_threshold_ = config["warning_threshold"];
+        }
+        
+        // Load disable threshold if available
+        if (config.contains("disable_threshold") && config["disable_threshold"].is_number()) {
+            disable_threshold_ = config["disable_threshold"];
+        }
+        
+        // Process device positions
+        if (config.contains("devices") && config["devices"].is_array()) {
+            for (const auto& device_obj : config["devices"]) {
+                if (device_obj.contains("serial") && 
+                    device_obj.contains("position") && 
+                    device_obj.contains("rotation")) {
+                    
+                    std::string serial = device_obj["serial"];
+                    auto it = device_map_.find(serial);
+                    
+                    if (it != device_map_.end()) {
+                        size_t index = it->second;
+                        
+                        // Load device name if available
+                        if (device_obj.contains("device_name") && device_obj["device_name"].is_string()) {
+                            device_positions_[index].device_name = device_obj["device_name"];
+                            // Also store in config
+                            config_.device_names[serial] = device_obj["device_name"];
+                        }
+                        
+                        // Load locked state
+                        if (device_obj.contains("locked") && device_obj["locked"].is_boolean()) {
+                            device_positions_[index].locked = device_obj["locked"];
+                        }
+                        
+                        // Load include_in_locking state
+                        if (device_obj.contains("include_in_locking") && device_obj["include_in_locking"].is_boolean()) {
+                            device_positions_[index].include_in_locking = device_obj["include_in_locking"];
+                        }
+                        
+                        // Load position
+                        auto position_array = device_obj["position"];
+                        for (int i = 0; i < 3 && i < position_array.size(); i++) {
+                            device_positions_[index].original_position[i] = position_array[i];
+                        }
+                        
+                        // Load rotation
+                        auto rotation_array = device_obj["rotation"];
+                        for (int i = 0; i < 4 && i < rotation_array.size(); i++) {
+                            device_positions_[index].original_rotation[i] = rotation_array[i];
+                        }
+                    } else {
+                        // Device not currently connected, but store its name in config anyway
+                        if (device_obj.contains("device_name") && device_obj["device_name"].is_string()) {
+                            config_.device_names[serial] = device_obj["device_name"];
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Save config to ensure device names persist
+        SaveConfig();
+        
+        if (StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Info("UIManager: Loaded device positions from " + filepath);
+        }
+        
+        current_config_file_ = filename;
+        return true;
     }
 
     void UIManager::RenderMainWindow() {
@@ -150,38 +693,1008 @@ namespace StayPutVR {
         ImGui::SetNextWindowPos(viewport->WorkPos);
         ImGui::SetNextWindowSize(viewport->WorkSize);
         
+        // Set window flags to ensure scrolling is available if content doesn't fit
         ImGui::Begin("StayPutVR Control Panel", nullptr, 
             ImGuiWindowFlags_NoDecoration | 
             ImGuiWindowFlags_NoMove | 
             ImGuiWindowFlags_NoResize | 
-            ImGuiWindowFlags_NoSavedSettings);
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_AlwaysVerticalScrollbar);
         
         // Title bar
         ImGui::Text("StayPutVR Control Panel");
         ImGui::Separator();
         
-        // Device list
-        RenderDeviceList();
+        // Render tab bar
+        RenderTabBar();
         
-        // Exit button
-        if (ImGui::Button("Exit")) {
-            *running_ptr_ = false;
+        // Render content based on current tab
+        switch (current_tab_) {
+            case TabType::MAIN:
+                RenderMainTab();
+                break;
+            case TabType::DEVICES:
+                RenderDevicesTab();
+                break;
+            case TabType::BOUNDARIES:
+                RenderBoundariesTab();
+                break;
+            case TabType::NOTIFICATIONS:
+                RenderNotificationsTab();
+                break;
+            case TabType::TIMERS:
+                RenderTimersTab();
+                break;
+            case TabType::OSC:
+                RenderOSCTab();
+                break;
+            case TabType::SETTINGS:
+                RenderSettingsTab();
+                break;
         }
         
         ImGui::End();
+    }
+    
+    void UIManager::RenderTabBar() {
+        if (ImGui::BeginTabBar("##Tabs", ImGuiTabBarFlags_None)) {
+            if (ImGui::BeginTabItem("Main")) {
+                current_tab_ = TabType::MAIN;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Devices")) {
+                current_tab_ = TabType::DEVICES;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Notifications")) {
+                current_tab_ = TabType::NOTIFICATIONS;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Timers")) {
+                current_tab_ = TabType::TIMERS;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("OSC")) {
+                current_tab_ = TabType::OSC;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Settings")) {
+                current_tab_ = TabType::SETTINGS;
+                ImGui::EndTabItem();
+            }
+            
+            ImGui::EndTabBar();
+        }
+    }
+    
+    void UIManager::RenderMainTab() {
+        ImGui::Text("StayPutVR Main Control Panel");
+        ImGui::Separator();
+        
+        // Layout with two columns
+        ImGui::Columns(2, "MainTabColumns", false);
+        
+        // Status panel on the left column
+        ImGui::BeginChild("StatusPanel", ImVec2(0, 200), true);
+        ImGui::Text("Current Status:");
+        ImGui::Separator();
+        
+        // Display active device count
+        int active_devices = 0;
+        int locked_devices = 0;
+        int warning_devices = 0;
+        int out_of_bounds_devices = 0;
+        
+        for (const auto& device : device_positions_) {
+            active_devices++;
+            if (device.locked || (device.include_in_locking && global_lock_active_)) {
+                locked_devices++;
+                
+                // Calculate position deviation to check for warning/out of bounds
+                float deviation = 0.0f;
+                for (int i = 0; i < 3; i++) {
+                    float diff = device.position[i] - device.original_position[i];
+                    deviation += diff * diff;
+                }
+                deviation = std::sqrt(deviation);
+                
+                // Use the actual thresholds
+                if (deviation > position_threshold_) {
+                    out_of_bounds_devices++;
+                } else if (deviation > warning_threshold_) {
+                    warning_devices++;
+                }
+            }
+        }
+        
+        ImGui::Text("Active Devices: %d", active_devices);
+        ImGui::Text("Locked Devices: %d", locked_devices);
+        
+        if (global_lock_active_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Global Lock Active");
+        }
+        
+        // Show any warnings
+        if (warning_devices > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 
+                "%d device(s) in warning zone", warning_devices);
+        }
+        
+        if (out_of_bounds_devices > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
+                "%d device(s) out of bounds", out_of_bounds_devices);
+        }
+        
+        if (locked_devices > 0 && warning_devices == 0 && out_of_bounds_devices == 0) {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "All devices within safe zone");
+        }
+        
+        ImGui::EndChild();
+        
+        ImGui::NextColumn();
+        
+        // Boundary Configuration (moved from Boundaries tab)
+        ImGui::Text("Boundary Thresholds:");
+        ImGui::Separator();
+        
+        bool changed = false;
+        
+        // Warning distance
+        ImGui::Text("Safe Zone Radius:");
+        if (ImGui::SliderFloat("##WarningDistance", &warning_threshold_, 0.01f, 0.5f, "%.2f m")) {
+            config_.warning_threshold = warning_threshold_;
+            changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Distance at which warning feedback begins");
+            ImGui::EndTooltip();
+        }
+        
+        // Out of bounds distance
+        ImGui::Text("Warning Zone Radius:");
+        if (ImGui::SliderFloat("##OutOfBoundsDistance", &position_threshold_, 0.05f, 1.0f, "%.2f m")) {
+            config_.bounds_threshold = position_threshold_;
+            changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Distance at which the device is considered out of bounds");
+            ImGui::EndTooltip();
+        }
+        
+        // Disable threshold
+        ImGui::Text("Disable Distance:");
+        if (ImGui::SliderFloat("##DisableThreshold", &disable_threshold_, 0.2f, 2.0f, "%.2f m")) {
+            config_.disable_threshold = disable_threshold_;
+            changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Distance at which locking is automatically disabled (safety feature)");
+            ImGui::EndTooltip();
+        }
+        
+        // Save changes if needed
+        if (changed) {
+            SaveConfig();
+        }
+        
+        ImGui::Columns(1);
+        
+        // Device visualization with all boundary rings
+        ImGui::BeginChild("DeviceVisualization", ImVec2(0, 300), true);
+        ImGui::Text("Device Positions:");
+        ImGui::Separator();
+        
+        // Create a visualization with all three rings
+        const float canvas_size = 300.0f; // Increased size for better zoom
+        ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+        ImVec2 canvas_center(canvas_pos.x + canvas_size/2, canvas_pos.y + canvas_size/2);
+        
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+        
+        // Visualization scaling factor (increased for better zoom)
+        // Adjust scale factor to make the rings match real-world distances better
+        const float scale_factor = canvas_size/1.0f; // Changed from 1.5f to 1.0f for better scaling
+        
+        // Draw the boundary circles with consistent ratios
+        float disable_radius = disable_threshold_ * scale_factor;
+        float out_of_bounds_radius = position_threshold_ * scale_factor;
+        float warning_radius = warning_threshold_ * scale_factor;
+        
+        draw_list->AddCircle(canvas_center, disable_radius, IM_COL32(255, 0, 0, 100), 0, 2.0f);
+        draw_list->AddCircle(canvas_center, out_of_bounds_radius, IM_COL32(255, 128, 0, 150), 0, 2.0f);
+        draw_list->AddCircle(canvas_center, warning_radius, IM_COL32(255, 255, 0, 150), 0, 2.0f);
+        
+        // Draw the safe zone
+        draw_list->AddCircleFilled(canvas_center, warning_radius, IM_COL32(0, 255, 0, 50));
+        
+        // Draw each device that's included in locking
+        for (const auto& device : device_positions_) {
+            if (device.include_in_locking || device.locked) {
+                // Calculate position deviation
+                float deviation_x = 0.0f;
+                float deviation_z = 0.0f;
+                
+                if (device.locked || (device.include_in_locking && global_lock_active_)) {
+                    deviation_x = device.position[0] - device.original_position[0];
+                    deviation_z = device.position[2] - device.original_position[2];
+                }
+                
+                // Scale deviation to canvas (with better zoom)
+                float scaled_x = deviation_x * scale_factor;
+                float scaled_z = deviation_z * scale_factor;
+                
+                // Calculate device position on canvas
+                ImVec2 device_pos(canvas_center.x + scaled_x, canvas_center.y + scaled_z);
+                
+                // Choose color based on device state and deviation
+                ImU32 device_color;
+                float total_deviation = std::sqrt(deviation_x*deviation_x + deviation_z*deviation_z);
+                
+                if (total_deviation > position_threshold_) {
+                    device_color = IM_COL32(255, 0, 0, 255); // Red for out of bounds
+                } else if (total_deviation > warning_threshold_) {
+                    device_color = IM_COL32(255, 255, 0, 255); // Yellow for warning
+                } else {
+                    device_color = IM_COL32(0, 255, 0, 255); // Green for within bounds
+                }
+                
+                // Draw the device as a small circle
+                draw_list->AddCircleFilled(device_pos, 5.0f, device_color);
+                
+                // Use custom name if available, otherwise use device type
+                std::string label;
+                if (!device.device_name.empty()) {
+                    label = device.device_name;
+                } else {
+                    // Default to device type
+                    switch (device.type) {
+                        case DeviceType::HMD: label = "HMD"; break;
+                        case DeviceType::CONTROLLER: label = "CTRL"; break;
+                        case DeviceType::TRACKER: label = "TRK"; break;
+                        case DeviceType::TRACKING_REFERENCE: label = "BASE"; break;
+                        default: label = "UNK"; break;
+                    }
+                }
+                
+                // Draw the label
+                draw_list->AddText(ImVec2(device_pos.x + 7, device_pos.y - 7), device_color, label.c_str());
+            }
+        }
+        
+        // Add labels for the zones
+        draw_list->AddText(ImVec2(canvas_center.x - 25, canvas_center.y - warning_radius - 15), 
+                          IM_COL32(255, 255, 0, 255), "Warning Zone");
+        draw_list->AddText(ImVec2(canvas_center.x - 35, canvas_center.y - out_of_bounds_radius - 15), 
+                          IM_COL32(255, 128, 0, 255), "Out of Bounds Zone");
+        draw_list->AddText(ImVec2(canvas_center.x - 15, canvas_center.y - disable_radius - 15), 
+                          IM_COL32(255, 0, 0, 255), "Disable Zone");
+        
+        // Add the canvas space to ImGui
+        ImGui::Dummy(ImVec2(canvas_size, canvas_size));
+        
+        ImGui::EndChild();
+        
+        // Add the lock button at the bottom of the Main tab
+        ImGui::Separator();
+        ImGui::Text("Lock Controls:");
+        
+        if (!global_lock_active_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f)); // Green
+            if (ImGui::Button("Lock Selected Devices", ImVec2(200, 40))) {
+                ActivateGlobalLock(true);
+            }
+            ImGui::PopStyleColor();
+            
+            // Prompt to select devices if none are selected
+            int devices_to_lock = 0;
+            for (const auto& device : device_positions_) {
+                if (device.include_in_locking) {
+                    devices_to_lock++;
+                }
+            }
+            
+            if (devices_to_lock == 0) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Select devices to lock in the Devices tab first");
+            } else {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.0f, 0.7f, 0.0f, 1.0f), "%d device(s) will be locked", devices_to_lock);
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f)); // Red
+            if (ImGui::Button("Unlock All Devices", ImVec2(200, 40))) {
+                ActivateGlobalLock(false);
+            }
+            ImGui::PopStyleColor();
+        }
+    }
+    
+    void UIManager::RenderDevicesTab() {
+        ImGui::Text("Device Management");
+        ImGui::Separator();
+        RenderDeviceList();
+    }
+    
+    void UIManager::RenderBoundariesTab() {
+        // This tab is no longer used, as boundary settings were moved to the Main tab.
+        ImGui::Text("Boundary settings have been moved to the Main tab.");
+    }
+    
+    void UIManager::RenderNotificationsTab() {
+        ImGui::Text("Notification Settings");
+        ImGui::Separator();
+        
+        bool changed = false;
+        
+        // Audio notification settings
+        ImGui::Text("Audio Notifications");
+        ImGui::Separator();
+        
+        bool enable_audio = config_.audio_enabled;
+        if (ImGui::Checkbox("Enable Audio Notifications", &enable_audio)) {
+            config_.audio_enabled = enable_audio;
+            changed = true;
+        }
+        
+        // Audio volume
+        float audio_volume = config_.audio_volume;
+        if (ImGui::SliderFloat("Audio Volume", &audio_volume, 0.0f, 1.0f, "%.1f")) {
+            config_.audio_volume = audio_volume;
+            changed = true;
+        }
+        
+        // Audio cue types
+        bool warning_audio = config_.warning_audio;
+        if (ImGui::Checkbox("Warning Sound", &warning_audio)) {
+            config_.warning_audio = warning_audio;
+            changed = true;
+        }
+        
+        bool out_of_bounds_audio = config_.out_of_bounds_audio;
+        if (ImGui::Checkbox("Out of Bounds Sound", &out_of_bounds_audio)) {
+            config_.out_of_bounds_audio = out_of_bounds_audio;
+            changed = true;
+        }
+        
+        bool lock_audio = config_.lock_audio;
+        if (ImGui::Checkbox("Lock Sound", &lock_audio)) {
+            config_.lock_audio = lock_audio;
+            changed = true;
+        }
+        
+        bool unlock_audio = config_.unlock_audio;
+        if (ImGui::Checkbox("Unlock Sound", &unlock_audio)) {
+            config_.unlock_audio = unlock_audio;
+            changed = true;
+        }
+        
+        // Test buttons for sound effects
+        ImGui::Separator();
+        ImGui::Text("Test Audio:");
+        
+        if (ImGui::Button("Test Warning Sound")) {
+            AudioManager::PlayWarningSound(config_.audio_volume);
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test Disobedience Sound")) {
+            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+            if (std::filesystem::exists(filePath)) {
+                AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+            } else {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Warning("disobedience.wav not found, please add it to the resources folder");
+                }
+                // Show a message in the UI that the file is missing
+                ImGui::OpenPopup("Disobedience Sound Missing");
+            }
+        }
+        
+        if (ImGui::BeginPopup("Disobedience Sound Missing")) {
+            ImGui::Text("disobedience.wav not found in resources folder");
+            ImGui::Text("Please add the file to:");
+            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
+            ImGui::EndPopup();
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test Success Sound")) {
+            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\success.wav";
+            if (std::filesystem::exists(filePath)) {
+                AudioManager::PlaySound("success.wav", config_.audio_volume);
+            } else {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Warning("success.wav not found, please add it to the resources folder");
+                }
+                // Show a message in the UI that the file is missing
+                ImGui::OpenPopup("Success Sound Missing");
+            }
+        }
+        
+        if (ImGui::BeginPopup("Success Sound Missing")) {
+            ImGui::Text("success.wav not found in resources folder");
+            ImGui::Text("Please add the file to:");
+            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
+            ImGui::EndPopup();
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test Lock Sound")) {
+            AudioManager::PlayLockSound(config_.audio_volume);
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test Unlock Sound")) {
+            AudioManager::PlayUnlockSound(config_.audio_volume);
+        }
+        
+        // Haptic feedback
+        ImGui::Text("Haptic Feedback");
+        ImGui::Separator();
+        
+        bool enable_haptic = config_.haptic_enabled;
+        if (ImGui::Checkbox("Enable Haptic Feedback (if supported)", &enable_haptic)) {
+            config_.haptic_enabled = enable_haptic;
+            changed = true;
+        }
+        
+        // Haptic intensity
+        float haptic_intensity = config_.haptic_intensity;
+        if (ImGui::SliderFloat("Haptic Intensity", &haptic_intensity, 0.0f, 1.0f, "%.1f")) {
+            config_.haptic_intensity = haptic_intensity;
+            changed = true;
+        }
+        
+        // Save changes if anything was modified
+        if (changed) {
+            SaveConfig();
+        }
+    }
+    
+    void UIManager::RenderTimersTab() {
+        ImGui::Text("Timer Settings");
+        ImGui::Separator();
+        
+        bool changed = false;
+        
+        // Cooldown timeout
+        ImGui::Text("Cooldown Timer");
+        ImGui::Separator();
+        
+        bool cooldown_enabled = config_.cooldown_enabled;
+        if (ImGui::Checkbox("Enable Cooldown After Unlock", &cooldown_enabled)) {
+            config_.cooldown_enabled = cooldown_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("After unlocking, disables being locked again for this amount of time");
+            ImGui::EndTooltip();
+        }
+        
+        float cooldown_seconds = config_.cooldown_seconds;
+        if (ImGui::SliderFloat("Cooldown Duration", &cooldown_seconds, 1.0f, 60.0f, "%.1f seconds")) {
+            config_.cooldown_seconds = cooldown_seconds;
+            changed = true;
+        }
+        
+        // Countdown timer
+        ImGui::Text("Countdown Timer");
+        ImGui::Separator();
+        
+        bool countdown_enabled = config_.countdown_enabled;
+        if (ImGui::Checkbox("Enable Countdown Before Lock", &countdown_enabled)) {
+            config_.countdown_enabled = countdown_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("When set, will give you time to prepare to be locked");
+            ImGui::EndTooltip();
+        }
+        
+        float countdown_seconds = config_.countdown_seconds;
+        if (ImGui::SliderFloat("Countdown Duration", &countdown_seconds, 1.0f, 3.0f, "%.1f seconds")) {
+            config_.countdown_seconds = countdown_seconds;
+            changed = true;
+        }
+        
+        // Save changes if anything was modified
+        if (changed) {
+            SaveConfig();
+        }
+    }
+    
+    void UIManager::RenderOSCTab() {
+        ImGui::Text("OSC Configuration");
+        ImGui::Separator();
+        
+        // Ready state toggle button (moved from Main tab)
+        if (osc_enabled_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+            if (ImGui::Button("Disable OSC", ImVec2(150, 40))) {
+                osc_enabled_ = false;
+                config_.osc_enabled = false;
+                SaveConfig();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "ACTIVE - Listening for OSC commands");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+            if (ImGui::Button("Enable OSC", ImVec2(150, 40))) {
+                osc_enabled_ = true;
+                config_.osc_enabled = true;
+                SaveConfig();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "INACTIVE - Not listening for OSC commands");
+        }
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        
+        // OSC connection settings
+        ImGui::Text("OSC Connection");
+        ImGui::Separator();
+        
+        // Create buffers for editing
+        static char osc_ip[128];
+        static int osc_port = 9000;
+        static char osc_address_bounds[128];
+        static char osc_address_warning[128];
+        static char osc_address_disable[128];
+        
+        // Initialize with current values
+        if (strlen(osc_ip) == 0) {
+            strcpy_s(osc_ip, sizeof(osc_ip), config_.osc_address.c_str());
+        }
+        if (osc_port != config_.osc_port) {
+            osc_port = config_.osc_port;
+        }
+        if (strlen(osc_address_bounds) == 0) {
+            strcpy_s(osc_address_bounds, sizeof(osc_address_bounds), config_.osc_address_bounds.c_str());
+        }
+        if (strlen(osc_address_warning) == 0) {
+            strcpy_s(osc_address_warning, sizeof(osc_address_warning), config_.osc_address_warning.c_str());
+        }
+        if (strlen(osc_address_disable) == 0) {
+            strcpy_s(osc_address_disable, sizeof(osc_address_disable), config_.osc_address_disable.c_str());
+        }
+        
+        // Inputs for OSC settings
+        bool changed = false;
+        
+        if (ImGui::InputText("OSC IP Address", osc_ip, IM_ARRAYSIZE(osc_ip))) {
+            config_.osc_address = osc_ip;
+            changed = true;
+        }
+        
+        if (ImGui::InputInt("OSC Port", &osc_port)) {
+            config_.osc_port = osc_port;
+            changed = true;
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("OSC Message Addresses");
+        
+        if (ImGui::InputText("Out of Bounds Address", osc_address_bounds, IM_ARRAYSIZE(osc_address_bounds))) {
+            config_.osc_address_bounds = osc_address_bounds;
+            changed = true;
+        }
+        
+        if (ImGui::InputText("Warning Address", osc_address_warning, IM_ARRAYSIZE(osc_address_warning))) {
+            config_.osc_address_warning = osc_address_warning;
+            changed = true;
+        }
+        
+        if (ImGui::InputText("Disable Address", osc_address_disable, IM_ARRAYSIZE(osc_address_disable))) {
+            config_.osc_address_disable = osc_address_disable;
+            changed = true;
+        }
+        
+        // Chaining mode
+        ImGui::Text("Chaining Mode");
+        ImGui::Separator();
+        
+        bool chaining_mode = config_.chaining_mode;
+        if (ImGui::Checkbox("Enable Chaining Mode", &chaining_mode)) {
+            config_.chaining_mode = chaining_mode;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("When a device is locked via OSC, all devices will be locked");
+            ImGui::EndTooltip();
+        }
+        
+        // OSC test controls
+        ImGui::Text("OSC Test Controls");
+        ImGui::Separator();
+        
+        if (ImGui::Button("Test OSC Output")) {
+            // Handle OSC test output
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test OSC Input")) {
+            // Handle OSC test input
+        }
+        
+        // Save changes
+        if (changed) {
+            SaveConfig();
+        }
+    }
+    
+    void UIManager::RenderSettingsTab() {
+        ImGui::Text("Application Settings");
+        ImGui::Separator();
+        
+        bool changed = false;
+        
+        // Configuration file management
+        ImGui::Text("Configuration Management");
+        ImGui::Separator();
+        
+        RenderConfigControls();
+        
+        // Data folders
+        ImGui::Text("Data Folders");
+        ImGui::Separator();
+        
+        // Get data folders
+        std::string appDataPath = GetAppDataPath();
+        std::string logPath = appDataPath + "\\logs";
+        std::string configPath = appDataPath + "\\config";
+        std::string resourcesPath = appDataPath + "\\resources";
+        
+        // Create directories if they don't exist
+        try {
+            std::filesystem::create_directories(logPath);
+            std::filesystem::create_directories(configPath);
+            std::filesystem::create_directories(resourcesPath);
+            
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("Created directories if needed: " + logPath);
+            }
+        } catch (const std::exception& e) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("Failed to create directories: " + std::string(e.what()));
+            }
+        }
+        
+        // Display paths
+        ImGui::Text("Settings Path: %s", configPath.c_str());
+        ImGui::Text("Log Path: %s", logPath.c_str());
+        ImGui::Text("Resources Path: %s", resourcesPath.c_str());
+        
+        // Add buttons to open folders in Explorer
+        if (ImGui::Button("Open Settings Folder")) {
+            ShellExecuteA(NULL, "open", configPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Open Log Folder")) {
+            ShellExecuteA(NULL, "open", logPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Open Resources Folder")) {
+            ShellExecuteA(NULL, "open", resourcesPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+        }
+        
+        // Audio files information
+        ImGui::Separator();
+        ImGui::Text("Audio Resources");
+        ImGui::TextWrapped("To use custom sounds, place your audio files in the Resources folder:");
+        ImGui::TextWrapped("- warning.wav - Played when device is in warning zone");
+        ImGui::TextWrapped("- disobedience.wav - Played when device exceeds bounds");
+        ImGui::TextWrapped("- success.wav - Played when device returns to safe zone");
+        ImGui::TextWrapped("- lock.wav - Played when devices are locked");
+        ImGui::TextWrapped("- unlock.wav - Played when devices are unlocked");
+        ImGui::TextWrapped("(Windows system sounds will be used as fallbacks)");
+        
+        ImGui::Separator();
+        
+        // Application settings
+        ImGui::Text("Application Settings");
+        ImGui::Separator();
+        
+        bool start_with_steamvr = config_.start_with_steamvr;
+        if (ImGui::Checkbox("Start With SteamVR", &start_with_steamvr)) {
+            config_.start_with_steamvr = start_with_steamvr;
+            changed = true;
+        }
+        
+        bool minimize_to_tray = config_.minimize_to_tray;
+        if (ImGui::Checkbox("Minimize To Tray", &minimize_to_tray)) {
+            config_.minimize_to_tray = minimize_to_tray;
+            changed = true;
+        }
+        
+        bool show_notifications = config_.show_notifications;
+        if (ImGui::Checkbox("Show Desktop Notifications", &show_notifications)) {
+            config_.show_notifications = show_notifications;
+            changed = true;
+        }
+        
+        // Force save all current configuration settings
+        if (ImGui::Button("Save All Settings", ImVec2(150, 30))) {
+            SaveConfig();
+            ImGui::OpenPopup("SettingsSaved");
+        }
+        
+        if (ImGui::BeginPopupModal("SettingsSaved", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("All settings have been saved!");
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        // About section
+        ImGui::Text("About StayPutVR");
+        ImGui::Separator();
+        
+        ImGui::Text("StayPutVR - Virtual Reality Position Locking");
+        ImGui::Text("Version: 1.0.0");
+        ImGui::Text("© 2023 Foxipso");
+        ImGui::Text("foxipso.com");
+        
+        if (ImGui::Button("Visit Website")) {
+            ShellExecuteA(NULL, "open", "https://foxipso.com", NULL, NULL, SW_SHOWDEFAULT);
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Check for Updates")) {
+            // Handle update check
+        }
+        
+        // Save changes if anything was modified
+        if (changed) {
+            SaveConfig();
+        }
+    }
+
+    void UIManager::RenderConfigControls() {
+        // Check for existing config files
+        std::vector<std::string> config_files;
+        
+        // Ensure the config directory exists
+        std::filesystem::create_directories(config_dir_);
+        
+        for (const auto& entry : std::filesystem::directory_iterator(config_dir_)) {
+            if (entry.is_regular_file() && entry.path().extension() == ".json") {
+                config_files.push_back(entry.path().stem().string());
+            }
+        }
+        
+        ImGui::PushID("ConfigSection");
+        
+        ImGui::Text("Configuration");
+        ImGui::Separator();
+        
+        // Save current configuration
+        static char config_name[128] = "";
+        ImGui::InputText("Config Name", config_name, IM_ARRAYSIZE(config_name));
+        
+        ImGui::SameLine();
+        if (ImGui::Button("Save") && strlen(config_name) > 0) {
+            if (SaveDevicePositions(config_name)) {
+                ImGui::OpenPopup("SaveSuccess");
+            } else {
+                ImGui::OpenPopup("SaveFailed");
+            }
+        }
+        
+        // Load configuration
+        if (!config_files.empty()) {
+            static int selected_config = -1;
+            if (selected_config >= (int)config_files.size()) {
+                selected_config = -1;
+            }
+            
+            ImGui::Text("Load Configuration:");
+            
+            if (ImGui::BeginListBox("##ConfigList")) {
+                for (int i = 0; i < config_files.size(); i++) {
+                    const bool is_selected = (selected_config == i);
+                    if (ImGui::Selectable(config_files[i].c_str(), is_selected)) {
+                        selected_config = i;
+                    }
+                    
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndListBox();
+            }
+            
+            if (selected_config >= 0) {
+                if (ImGui::Button("Load Selected")) {
+                    if (LoadDevicePositions(config_files[selected_config])) {
+                        ImGui::OpenPopup("LoadSuccess");
+                    } else {
+                        ImGui::OpenPopup("LoadFailed");
+                    }
+                }
+                
+                ImGui::SameLine();
+                if (ImGui::Button("Delete Selected")) {
+                    ImGui::OpenPopup("ConfirmDelete");
+                }
+                
+                // Confirm delete popup
+                if (ImGui::BeginPopupModal("ConfirmDelete", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::Text("Are you sure you want to delete this configuration?");
+                    ImGui::Text("%s", config_files[selected_config].c_str());
+                    ImGui::Separator();
+                    
+                    if (ImGui::Button("Yes", ImVec2(120, 0))) {
+                        std::string filepath = config_dir_ + "\\" + config_files[selected_config] + ".json";
+                        try {
+                            std::filesystem::remove(filepath);
+                            selected_config = -1;
+                        } catch (const std::exception& e) {
+                            // Handle error
+                            if (StayPutVR::Logger::IsInitialized()) {
+                                StayPutVR::Logger::Error("UIManager: Failed to delete config file: " + std::string(e.what()));
+                            }
+                        }
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("No", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+            }
+        } else {
+            ImGui::Text("No saved configurations found.");
+        }
+        
+        // Reset all devices
+        if (ImGui::Button("Reset All Devices")) {
+            ResetAllDevices();
+        }
+        
+        // Success/Failure popups
+        if (ImGui::BeginPopupModal("SaveSuccess", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Configuration saved successfully!");
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopupModal("SaveFailed", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Failed to save configuration!");
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopupModal("LoadSuccess", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Configuration loaded successfully!");
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopupModal("LoadFailed", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Failed to load configuration!");
+            if (ImGui::Button("OK", ImVec2(120, 0))) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        
+        ImGui::PopID();
+        ImGui::Separator();
+    }
+
+    void UIManager::RenderLockControls() {
+        ImGui::PushID("LockSection");
+        
+        ImGui::Text("Position Lock Controls");
+        ImGui::Separator();
+        
+        // Position threshold slider
+        ImGui::Text("Position Threshold:");
+        ImGui::SliderFloat("##PosThreshold", &position_threshold_, 0.01f, 0.5f, "%.2f m");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+            ImGui::TextUnformatted("Maximum distance a device can move from its locked position before being flagged.");
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+        
+        // Global lock button
+        if (global_lock_active_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+            if (ImGui::Button("Unlock All Devices")) {
+                ActivateGlobalLock(false);
+            }
+            ImGui::PopStyleColor();
+            
+            // Display status if any device exceeds threshold
+            bool any_exceeds = false;
+            for (const auto& device : device_positions_) {
+                if (device.include_in_locking && device.exceeds_threshold) {
+                    any_exceeds = true;
+                    break;
+                }
+            }
+            
+            if (any_exceeds) {
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Some devices have moved beyond threshold!");
+            }
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+            if (ImGui::Button("Lock Selected Devices")) {
+                ActivateGlobalLock(true);
+            }
+            ImGui::PopStyleColor();
+        }
+        
+        ImGui::PopID();
+        ImGui::Separator();
     }
 
     void UIManager::RenderDeviceList() {
         ImGui::Text("Connected Devices: %zu", device_positions_.size());
         ImGui::Separator();
         
-        if (ImGui::BeginTable("DevicesTable", 3, ImGuiTableFlags_Borders)) {
+        if (ImGui::BeginTable("DevicesTable", 6, ImGuiTableFlags_Borders)) {
             ImGui::TableSetupColumn("Device Type");
             ImGui::TableSetupColumn("Serial");
+            ImGui::TableSetupColumn("Custom Name");
             ImGui::TableSetupColumn("Position & Rotation");
+            ImGui::TableSetupColumn("Status");
+            ImGui::TableSetupColumn("Actions");
             ImGui::TableHeadersRow();
             
-            for (const auto& device : device_positions_) {
+            for (auto& device : device_positions_) {
                 ImGui::TableNextRow();
                 
                 // Device Type
@@ -199,13 +1712,131 @@ namespace StayPutVR {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", device.serial.c_str());
                 
+                // Custom Name
+                ImGui::TableNextColumn();
+                
+                // Create a unique ID for input
+                ImGui::PushID(("deviceName" + device.serial).c_str());
+                
+                // Create a buffer for the device name
+                char name_buffer[64] = "";
+                if (!device.device_name.empty()) {
+                    strcpy_s(name_buffer, sizeof(name_buffer), device.device_name.c_str());
+                }
+                
+                // Input field for the device name
+                if (ImGui::InputText("##DeviceName", name_buffer, sizeof(name_buffer))) {
+                    device.device_name = name_buffer;
+                    config_.device_names[device.serial] = name_buffer;
+                    
+                    // Save config immediately when a device name changes
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Info("Device name changed: " + device.serial + " -> " + name_buffer);
+                    }
+                    SaveConfig();
+                }
+                
+                ImGui::PopID();
+                
                 // Position & Rotation
                 ImGui::TableNextColumn();
+                
+                // Check if position has been updated recently (within last 500ms)
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - device.last_update_time).count();
+                bool recently_updated = elapsed < 500;
+                
+                // Show position with color indicator if recently updated
+                if (recently_updated && !device.locked) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 1.0f, 0.0f, 1.0f)); // Green text for active updates
+                } else if (device.locked) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.0f, 1.0f)); // Orange text for locked devices
+                } else if (device.include_in_locking && global_lock_active_) {
+                    if (device.exceeds_threshold) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.0f, 0.0f, 1.0f)); // Red text for devices exceeding threshold
+                    } else {
+                        // Calculate position deviation to check for warning
+                        float deviation = 0.0f;
+                        for (int i = 0; i < 3; i++) {
+                            float diff = device.position[i] - device.original_position[i];
+                            deviation += diff * diff;
+                        }
+                        deviation = std::sqrt(deviation);
+                        
+                        // Use the actual warning threshold
+                        if (deviation > warning_threshold_) {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 0.0f, 1.0f)); // Yellow text for warning
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.0f, 0.7f, 1.0f, 1.0f)); // Blue text for globally locked devices
+                        }
+                    }
+                }
+                
                 ImGui::Text("Pos: (%.2f, %.2f, %.2f)", 
                     device.position[0], device.position[1], device.position[2]);
                 ImGui::Text("Rot: (%.2f, %.2f, %.2f, %.2f)", 
                     device.rotation[0], device.rotation[1], 
                     device.rotation[2], device.rotation[3]);
+                
+                if (recently_updated || device.locked || (device.include_in_locking && global_lock_active_)) {
+                    ImGui::PopStyleColor();
+                }
+                
+                // Status column
+                ImGui::TableNextColumn();
+                
+                // Show movement indicator
+                float movement = 0.0f;
+                for (int i = 0; i < 3; i++) {
+                    movement += std::abs(device.position[i] - device.previous_position[i]);
+                }
+                
+                if (movement > 0.001f && !device.locked && !(device.include_in_locking && global_lock_active_)) {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[MOVING]");
+                }
+                
+                if (device.include_in_locking && global_lock_active_) {
+                    // Calculate position deviation to check for warning/out of bounds
+                    float deviation = 0.0f;
+                    for (int i = 0; i < 3; i++) {
+                        float diff = device.position[i] - device.original_position[i];
+                        deviation += diff * diff;
+                    }
+                    deviation = std::sqrt(deviation);
+                    
+                    if (device.exceeds_threshold) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
+                            "[OUT OF BOUNDS: %.2f m]", device.position_deviation);
+                    } else if (deviation > warning_threshold_) {
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 
+                            "[WARNING: %.2f m]", deviation);
+                    } else {
+                        ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), 
+                            "[LOCKED: %.2f m]", device.position_deviation);
+                    }
+                }
+                
+                // Actions column
+                ImGui::TableNextColumn();
+                ImGui::PushID(device.serial.c_str());
+                
+                // Include in locking checkbox
+                bool include = device.include_in_locking;
+                if (ImGui::Checkbox("Include in Lock", &include)) {
+                    device.include_in_locking = include;
+                    
+                    // Update the setting in config directly
+                    config_.device_settings[device.serial] = include;
+                    
+                    // Save the setting immediately
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to " + 
+                                                (include ? "true" : "false"));
+                    }
+                    SaveConfig();
+                }
+                
+                ImGui::PopID();
             }
             
             ImGui::EndTable();
@@ -214,6 +1845,122 @@ namespace StayPutVR {
 
     void UIManager::GlfwErrorCallback(int error, const char* description) {
         std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+    }
+
+    bool UIManager::LoadConfig() {
+        try {
+            // Use AppData path for the config file instead of hardcoded SteamVR path
+            std::string configDir = GetAppDataPath() + "\\config";
+            std::filesystem::create_directories(configDir);
+            
+            config_file_ = configDir + "\\config.ini";
+            
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("UIManager: Loading config from " + config_file_);
+            }
+            
+            bool result = config_.LoadFromFile(config_file_);
+            if (result) {
+                UpdateUIFromConfig();
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Info("UIManager: Config loaded successfully");
+                }
+            } else {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Error("UIManager: Failed to load config");
+                }
+            }
+            return result;
+        }
+        catch (const std::exception& e) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("UIManager: Exception in LoadConfig: " + std::string(e.what()));
+            }
+            return false;
+        }
+    }
+
+    bool UIManager::SaveConfig() {
+        try {
+            UpdateConfigFromUI();
+            
+            // Use AppData path instead of hardcoded path
+            std::string configDir = GetAppDataPath() + "\\config";
+            std::filesystem::create_directories(configDir);
+            
+            config_file_ = configDir + "\\config.ini";
+            
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("UIManager: Saving config to " + config_file_);
+            }
+            
+            bool result = config_.SaveToFile(config_file_);
+            if (!result && StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("UIManager: Failed to save config");
+            }
+            return result;
+        }
+        catch (const std::exception& e) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("UIManager: Exception in SaveConfig: " + std::string(e.what()));
+            }
+            return false;
+        }
+    }
+
+    void UIManager::UpdateConfigFromUI() {
+        // Boundary settings
+        config_.warning_threshold = warning_threshold_;
+        config_.bounds_threshold = position_threshold_;
+        config_.disable_threshold = disable_threshold_;
+        
+        // Store device names and settings
+        config_.device_names.clear();
+        config_.device_settings.clear();
+        
+        for (const auto& device : device_positions_) {
+            // Store device name if not empty
+            if (!device.device_name.empty()) {
+                config_.device_names[device.serial] = device.device_name;
+            }
+            
+            // Store include_in_locking setting
+            config_.device_settings[device.serial] = device.include_in_locking;
+        }
+        
+        if (StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Info("Updated configuration from UI for " + 
+                                    std::to_string(device_positions_.size()) + " devices");
+        }
+    }
+
+    void UIManager::UpdateUIFromConfig() {
+        // Boundary settings
+        warning_threshold_ = config_.warning_threshold;
+        position_threshold_ = config_.bounds_threshold;
+        disable_threshold_ = config_.disable_threshold;
+        
+        // Update OSC status
+        osc_enabled_ = config_.osc_enabled;
+        
+        // Apply device names and settings
+        for (auto& device : device_positions_) {
+            // Apply device name if available
+            auto nameIt = config_.device_names.find(device.serial);
+            if (nameIt != config_.device_names.end()) {
+                device.device_name = nameIt->second;
+            }
+            
+            // Apply include_in_locking setting if available
+            auto settingIt = config_.device_settings.find(device.serial);
+            if (settingIt != config_.device_settings.end()) {
+                device.include_in_locking = settingIt->second;
+                
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Info("Applied include_in_locking setting for device: " + device.serial);
+                }
+            }
+        }
     }
 
 } // namespace StayPutVR 

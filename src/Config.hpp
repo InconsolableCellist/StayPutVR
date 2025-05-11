@@ -3,7 +3,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <nlohmann/json.hpp>
 
 class Config {
 public:
@@ -49,9 +48,7 @@ public:
     bool minimize_to_tray;
     bool show_notifications;
 
-    // Device naming map
+    // Device settings maps
     std::unordered_map<std::string, std::string> device_names; // serial -> name
-    
-    // Custom data storage
-    nlohmann::json custom_data; // For storing arbitrary settings
+    std::unordered_map<std::string, bool> device_settings; // serial -> include_in_locking
 }; 

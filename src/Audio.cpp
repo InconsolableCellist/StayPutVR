@@ -91,16 +91,12 @@ namespace StayPutVR {
     }
 
     bool AudioManager::PlayOutOfBoundsSound(float volume) {
-        // If outofbounds.wav doesn't exist, use warning.wav as fallback
-        std::string filePath = resources_path_ + "\\outofbounds.wav";
-        if (std::filesystem::exists(filePath)) {
-            return PlaySound("outofbounds.wav", volume);
-        } else {
-            if (Logger::IsInitialized()) {
-                Logger::Warning("AudioManager: outofbounds.wav not found, using warning.wav as fallback");
-            }
-            return PlaySound("warning.wav", volume);
+        // Just use warning.wav as fallback - disobedience.wav is explicitly 
+        // checked in the UIManager when needed
+        if (StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Warning("AudioManager: Using warning.wav for out of bounds");
         }
+        return PlaySound("warning.wav", volume);
     }
 
     bool AudioManager::PlayLockSound(float volume) {
@@ -130,6 +126,15 @@ namespace StayPutVR {
             // Use Windows system sound (exclamation) as fallback
             DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
             return ::PlaySoundW(L"SystemExclamation", NULL, flags);
+        }
+    }
+
+    void AudioManager::StopSound() {
+        // Use the PlaySound Windows API with the SND_PURGE flag to stop current sound
+        ::PlaySoundW(NULL, NULL, SND_PURGE);
+        
+        if (Logger::IsInitialized()) {
+            Logger::Debug("AudioManager: Stopped all playing sounds");
         }
     }
 

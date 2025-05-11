@@ -4,7 +4,7 @@
 #include <Windows.h>
 #include <sstream>
 
-static std::shared_ptr<StayPutVR::IVRDriver> driver;
+static std::shared_ptr<StayPutVR::VRDriver> driver;
 
 // This is the main entry point for the driver
 void* HmdDriverFactory(const char* interface_name, int* return_code) {

@@ -106,13 +106,25 @@ bool Config::LoadFromFile(const std::string& filename) {
         minimize_to_tray = reader.GetBoolean("application", "minimize_to_tray", minimize_to_tray);
         show_notifications = reader.GetBoolean("application", "show_notifications", show_notifications);
         
-        // Load device names from all sections that start with "device:"
+        // Load device names and settings from all sections that start with "device:"
         const std::set<std::string>& sections = reader.Sections();
         for (const auto& section : sections) {
             if (section.find("device:") == 0) {
                 std::string serial = section.substr(7); // Skip "device:"
+                
+                // Load device name
                 std::string name = reader.Get(section, "name", "Unknown Device");
                 device_names[serial] = name;
+                
+                // Load include_in_locking setting
+                bool include_in_locking = reader.GetBoolean(section, "include_in_locking", false);
+                device_settings[serial] = include_in_locking;
+                
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Info("Loaded device settings for: " + serial + 
+                        " (name: " + name + ", include_in_locking: " + 
+                        (include_in_locking ? "true" : "false") + ")");
+                }
             }
         }
         
@@ -188,7 +200,16 @@ bool Config::SaveToFile(const std::string& filename) const {
         // Write device settings
         for (const auto& [serial, name] : device_names) {
             out << "[device:" << serial << "]\n";
-            out << "name = " << name << "\n\n";
+            out << "name = " << name << "\n";
+            
+            // Get the include_in_locking setting for this device, default to false if not found
+            bool include_in_locking = false;
+            auto it = device_settings.find(serial);
+            if (it != device_settings.end()) {
+                include_in_locking = it->second;
+            }
+            
+            out << "include_in_locking = " << (include_in_locking ? "true" : "false") << "\n\n";
         }
         
         out.close();

@@ -21,8 +21,13 @@ namespace StayPutVR {
         static bool PlayLockSound(float volume = 1.0f);
         static bool PlayUnlockSound(float volume = 1.0f);
         
-    private:
+        // Make PlaySound public so we can call it directly for custom sounds
         static bool PlaySound(const std::string& filename, float volume = 1.0f);
+        
+        // Stop any currently playing sound
+        static void StopSound();
+        
+    private:
         static std::string resources_path_;
         static bool initialized_;
     };
