@@ -2,15 +2,14 @@
 #include <atomic>
 #include <memory>
 #include <filesystem>
-#include "Driver/VRDriver.hpp"
 #include "UI/UIManager.hpp"
-#include "Logger.hpp"
-#include "PathUtils.hpp"
-#include "Audio.hpp"
+#include "../../common/Logger.hpp"
+#include "../../common/PathUtils.hpp"
+#include "../../common/Audio.hpp"
+#include "../../common/Config.hpp"
 
-// Global variables for communication between driver and UI
+// Global variables
 std::atomic<bool> g_running = true;
-std::shared_ptr<StayPutVR::VRDriver> g_driver;
 
 // Main entry point when run as a standalone application
 int main(int argc, char* argv[]) {
@@ -80,22 +79,18 @@ int main(int argc, char* argv[]) {
                 std::filesystem::create_directory("./resources");
             } catch (const std::exception& e2) {
                 std::cerr << "Error creating fallback directories: " << e2.what() << std::endl;
+                // Continue anyway - we'll try to run without proper directories
             }
         }
         
-        StayPutVR::Logger::Init(logPath);
-        StayPutVR::Logger::Info("StayPutVR starting up");
+        StayPutVR::Logger::Init(logPath, StayPutVR::Logger::LogType::APPLICATION);
+        StayPutVR::Logger::Info("StayPutVR application starting up");
         StayPutVR::Logger::Info("Log path: " + logPath);
         StayPutVR::Logger::Info("Current directory: " + std::filesystem::current_path().string());
         
         // Initialize the audio system
         StayPutVR::Logger::Info("Initializing audio system");
         StayPutVR::AudioManager::Initialize();
-        
-        // Create an instance of the driver
-        StayPutVR::Logger::Info("Creating VRDriver instance");
-        auto driver = std::make_shared<StayPutVR::VRDriver>();
-        g_driver = driver;
         
         // Create an instance of the UI manager
         StayPutVR::Logger::Info("Creating UIManager instance");
@@ -115,11 +110,8 @@ int main(int argc, char* argv[]) {
         // Main loop
         while (g_running) {
             try {
+                // Update UI (which will also update the device manager)
                 ui_manager.Update();
-                
-                // Get device positions and update UI
-                auto devices = driver->GetDevices();
-                ui_manager.UpdateDevicePositions(devices);
                 
                 // Render the UI
                 ui_manager.Render();
@@ -129,9 +121,11 @@ int main(int argc, char* argv[]) {
             }
             catch (const std::exception& e) {
                 StayPutVR::Logger::Error("Exception in main loop: " + std::string(e.what()));
+                // Continue running despite exceptions
             }
             catch (...) {
                 StayPutVR::Logger::Error("Unknown exception in main loop");
+                // Continue running despite exceptions
             }
         }
         

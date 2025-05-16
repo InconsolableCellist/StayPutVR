@@ -17,9 +17,12 @@
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
-#include "../Driver/IVRDevice.hpp"
-#include "../Config.hpp"
-#include "../Audio.hpp"
+#include "../../../common/DeviceTypes.hpp"
+#include "../../../common/Config.hpp"
+#include "../../../common/Audio.hpp"
+#include "../../../common/Logger.hpp"
+#include "../../../common/PathUtils.hpp"
+#include "../DeviceManager/DeviceManager.hpp"
 
 namespace StayPutVR {
 
@@ -72,8 +75,8 @@ namespace StayPutVR {
         void Render();
         void Shutdown();
         
-        // Update device positions from driver
-        void UpdateDevicePositions(const std::vector<std::shared_ptr<IVRDevice>>& devices);
+        // Update device positions from device manager
+        void UpdateDevicePositions(const std::vector<DevicePositionData>& devices);
         
         // Save and load positions
         bool SaveDevicePositions(const std::string& filename);
@@ -111,7 +114,7 @@ namespace StayPutVR {
         
         // Application configuration
         Config config_;
-        std::string config_file_ = "config.ini";
+        std::string config_file_ = "config.ini"; // Just the filename, not the full path
         
         // OSC status
         bool osc_enabled_ = false;
@@ -156,6 +159,8 @@ namespace StayPutVR {
         
         // Timestamp of last played sound for rate limiting
         std::chrono::steady_clock::time_point last_sound_time_ = std::chrono::steady_clock::now();
+        
+        // DeviceManager reference
+        DeviceManager* device_manager_ = nullptr;
     };
-
 } 

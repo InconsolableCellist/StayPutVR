@@ -6,11 +6,15 @@ namespace StayPutVR {
 
     std::ofstream Logger::logFile;
     bool Logger::initialized = false;
+    Logger::LogLevel Logger::minLogLevel = Logger::LogLevel::DEBUG;
+    Logger::LogType Logger::logType = Logger::LogType::APPLICATION;
 
-    void Logger::Init(const std::string& logDirPath) {
+    void Logger::Init(const std::string& logDirPath, LogType type) {
         if (initialized) {
             return;
         }
+
+        logType = type;
 
         try {
             std::filesystem::path logDir(logDirPath);
@@ -18,7 +22,15 @@ namespace StayPutVR {
                 std::filesystem::create_directories(logDir);
             }
 
-            std::filesystem::path logFilePath = logDir / "stayputvr.log";
+            // Create different log files for driver and application
+            std::string logFileName;
+            if (logType == LogType::DRIVER) {
+                logFileName = "stayputvr_driver.log";
+            } else {
+                logFileName = "stayputvr_application.log";
+            }
+
+            std::filesystem::path logFilePath = logDir / logFileName;
             logFile.open(logFilePath, std::ios::out | std::ios::app);
             
             if (logFile.is_open()) {
@@ -28,11 +40,17 @@ namespace StayPutVR {
                 logFile << "Log started at " << GetTimeString() << std::endl;
                 logFile << separator << std::endl;
                 logFile.flush();
+                
+                std::cout << "StayPutVR Logger initialized with log file: " << logFilePath << std::endl;
             }
         }
         catch (const std::exception& e) {
             std::cerr << "Error initializing logger: " << e.what() << std::endl;
         }
+    }
+
+    void Logger::SetLogLevel(LogLevel level) {
+        minLogLevel = level;
     }
 
     void Logger::Shutdown() {
@@ -44,13 +62,24 @@ namespace StayPutVR {
     }
 
     void Logger::Log(LogLevel level, const std::string& message) {
+        if (level < minLogLevel) {
+            return;
+        }
+
         if (!initialized || !logFile.is_open()) {
+            std::cerr << GetTimeString() << " [" << GetLevelString(level) << "] " << message << std::endl;
             return;
         }
 
         try {
-            logFile << GetTimeString() << " [" << GetLevelString(level) << "] " << message << std::endl;
-            logFile.flush(); // Ensure it's written immediately in case of crashes
+            std::string logEntry = GetTimeString() + " [" + GetLevelString(level) + "] " + message;
+            
+            logFile << logEntry << std::endl;
+            logFile.flush();
+            
+            if (level >= LogLevel::WARNING) {
+                std::cerr << logEntry << std::endl;
+            }
         }
         catch (const std::exception& e) {
             std::cerr << "Error writing to log: " << e.what() << std::endl;

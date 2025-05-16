@@ -9,6 +9,8 @@ public:
     Config();
     ~Config() = default;
 
+    // These methods expect just the filename (e.g., "config.ini"), not a full path.
+    // The path will be constructed internally using GetAppDataPath() + "\\config\\" + filename
     bool LoadFromFile(const std::string& filename);
     bool SaveToFile(const std::string& filename) const;
     bool CreateDefaultConfigFile(const std::string& filename);

@@ -18,10 +18,6 @@ if(NOT EXISTS "${OPENVR_SDK_PATH}/headers/openvr.h")
     message(FATAL_ERROR "OpenVR SDK not found at ${OPENVR_SDK_PATH}/headers/openvr.h")
 endif()
 
-# Add OpenVR includes and libraries
-include_directories(${OPENVR_SDK_PATH}/headers)
-link_directories(${OPENVR_SDK_PATH}/lib/win64)
-
 # Configure third-party libraries to not install globally
 # Disable all library installation options
 set(BUILD_SHARED_LIBS OFF)
@@ -30,76 +26,44 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "Build the GLFW example programs" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "Build the GLFW test programs" FORCE)
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "Build the GLFW documentation" FORCE)
 
+# Add third-party libraries
 # Add Dear ImGui
 add_subdirectory(thirdparty/imgui)
-include_directories(thirdparty/imgui)
-
-# Add GLAD
-include_directories(thirdparty/glad/include)
-file(GLOB GLAD_SOURCES "thirdparty/glad/src/glad.c")
-
 # Add GLFW
-include_directories(thirdparty/glfw-3.4/include)
 add_subdirectory(thirdparty/glfw-3.4)
 
-# Add nlohmann/json
-include_directories(thirdparty/json/include)
-include_directories(thirdparty/json/single_include)
-
-# Add inih library
-include_directories(thirdparty/inih)
-set(INIH_SOURCES "thirdparty/inih/INIReader.h")
-
-# Add sources
-set(SOURCES
-    src/main.cpp
-    src/Native/DriverFactory.cpp
-    src/Driver/VRDriver.cpp
-    src/ui/UIManager.cpp
-    src/Config.cpp
-    src/Logger.cpp
-    src/Audio.cpp
-    ${GLAD_SOURCES}
-    ${INIH_SOURCES}
+# Add common include directories for third-party libraries
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    thirdparty/imgui
+    thirdparty/glad/include
+    thirdparty/glfw-3.4/include
+    thirdparty/json/include
+    thirdparty/json/single_include
+    thirdparty/inih
+    ${OPENVR_SDK_PATH}/headers
 )
 
-# Create driver library
-add_library(driver_stayputvr SHARED ${SOURCES})
-target_include_directories(driver_stayputvr PRIVATE 
-    src
-    thirdparty
-)
+# Add link directories
+link_directories(${OPENVR_SDK_PATH}/lib/win64)
 
-# Add ImGui backends
-target_sources(driver_stayputvr PRIVATE
-    thirdparty/imgui/backends/imgui_impl_glfw.cpp
-    thirdparty/imgui/backends/imgui_impl_opengl3.cpp
-)
+# Add subdirectories for our components
+add_subdirectory(common)
+add_subdirectory(driver)
+add_subdirectory(application)
 
-target_link_libraries(driver_stayputvr PRIVATE
-    openvr_api.lib
-    imgui
-    glfw
-    winmm.lib
-)
-
-# Custom install target for our driver only
-install(CODE "message(STATUS \"Installing driver to SteamVR\")")
-
-# Copy the driver binary
-install(FILES "$<TARGET_FILE:driver_stayputvr>"
-    DESTINATION "${STEAMVR_PATH}/drivers/stayputvr/bin/win64"
-)
-
-# Install driver manifest 
-install(FILES "driver.vrdrivermanifest"
-    DESTINATION "${STEAMVR_PATH}/drivers/stayputvr"
-)
-
-# Create and install configs directory
-install(DIRECTORY "${CMAKE_BINARY_DIR}/configs"
-    DESTINATION "${STEAMVR_PATH}/drivers/stayputvr"
-)
+# Create a simple batch file to launch the application
+if(WIN32)
+    file(WRITE "${CMAKE_BINARY_DIR}/launch_stayputvr.bat" 
+        "@echo off\n"
+        "echo Starting StayPutVR Application...\n"
+        "start \"\" \"${CMAKE_INSTALL_PREFIX}/bin/stayputvr_app.exe\"\n"
+    )
+    
+    install(FILES "${CMAKE_BINARY_DIR}/launch_stayputvr.bat"
+        DESTINATION "${CMAKE_INSTALL_PREFIX}"
+    )
+endif()
 
 # Add a convenient target for launching in development
 add_custom_target(install_and_run

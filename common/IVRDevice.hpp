@@ -2,7 +2,7 @@
 
 #include <variant>
 #include <openvr_driver.h>
-#include "DeviceType.hpp"
+#include "DeviceTypes.hpp"
 
 namespace StayPutVR {
 

@@ -6,10 +6,11 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <nlohmann/json.hpp>
-#include "../Logger.hpp"
-#include "../PathUtils.hpp"
-#include "../Audio.hpp"
+#include "../../common/Logger.hpp"
+#include "../../common/PathUtils.hpp"
+#include "../../common/Audio.hpp"
 #include <shellapi.h> // For ShellExecuteA
+#include <thread> // For std::this_thread::sleep_for
 
 using json = nlohmann::json;
 
@@ -20,12 +21,23 @@ namespace StayPutVR {
     UIManager::UIManager() : window_(nullptr), imgui_context_(nullptr), running_ptr_(&g_running) {
         // Initialize config_dir_ with AppData path
         config_dir_ = GetAppDataPath() + "\\configs";
+        // Initialize config_file_ with just the filename, not the full path
+        config_file_ = "config.ini";
         // Increase window height to prevent cutting off UI elements
         window_height_ = 700;
+        
+        // Create device manager instance
+        device_manager_ = new DeviceManager();
     }
 
     UIManager::~UIManager() {
         Shutdown();
+        
+        // Clean up device manager
+        if (device_manager_) {
+            delete device_manager_;
+            device_manager_ = nullptr;
+        }
     }
 
     bool UIManager::Initialize() {
@@ -90,6 +102,16 @@ namespace StayPutVR {
         // Load configuration
         LoadConfig();
         
+        // Initialize device manager - but continue even if it fails
+        if (device_manager_) {
+            if (!device_manager_->Initialize()) {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Warning("Failed to connect to driver IPC server - continuing without device connection");
+                }
+                // Don't return false here, just continue with the UI
+            }
+        }
+        
         return true;
     }
 
@@ -110,6 +132,17 @@ namespace StayPutVR {
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        
+        // Update device manager
+        if (device_manager_) {
+            device_manager_->Update();
+            
+            // Get updated device positions
+            const auto& devices = device_manager_->GetDevices();
+            
+            // Process device positions for UI
+            UpdateDevicePositions(devices);
+        }
     }
 
     void UIManager::Render() {
@@ -136,6 +169,19 @@ namespace StayPutVR {
         // Save configuration before shutting down
         SaveConfig();
         
+        // Shutdown device manager and IPC connection first
+        if (device_manager_) {
+            Logger::Info("UIManager: Shutting down device manager");
+            try {
+                device_manager_->Shutdown();
+                // Give some time for the IPC connection to properly close
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            catch (const std::exception& e) {
+                Logger::Error("Exception when shutting down device manager: " + std::string(e.what()));
+            }
+        }
+        
         // Shutdown audio system
         AudioManager::Shutdown();
         
@@ -153,7 +199,7 @@ namespace StayPutVR {
         }
     }
 
-    void UIManager::UpdateDevicePositions(const std::vector<std::shared_ptr<IVRDevice>>& devices) {
+    void UIManager::UpdateDevicePositions(const std::vector<DevicePositionData>& devices) {
         // Mark current time for tracking device activity
         auto now = std::chrono::steady_clock::now();
         
@@ -162,10 +208,7 @@ namespace StayPutVR {
         
         // Update device map
         for (const auto& device : devices) {
-            if (!device)
-                continue;
-            
-            std::string serial = device->GetSerial();
+            std::string serial = device.serial;
             current_device_serials.insert(serial);
             
             // Check if this device exists in our map
@@ -175,21 +218,18 @@ namespace StayPutVR {
                 // New device, add it
                 DevicePosition pos;
                 pos.serial = serial;
-                pos.type = device->GetDeviceType();
-                
-                // Get pose from device
-                vr::DriverPose_t pose = device->GetPose();
+                pos.type = device.type;
                 
                 // Store position
-                pos.position[0] = pose.vecPosition[0];
-                pos.position[1] = pose.vecPosition[1];
-                pos.position[2] = pose.vecPosition[2];
+                pos.position[0] = device.position[0];
+                pos.position[1] = device.position[1];
+                pos.position[2] = device.position[2];
                 
                 // Store rotation
-                pos.rotation[0] = pose.qRotation.x;
-                pos.rotation[1] = pose.qRotation.y;
-                pos.rotation[2] = pose.qRotation.z;
-                pos.rotation[3] = pose.qRotation.w;
+                pos.rotation[0] = device.rotation[0];
+                pos.rotation[1] = device.rotation[1];
+                pos.rotation[2] = device.rotation[2];
+                pos.rotation[3] = device.rotation[3];
                 
                 // Initialize original position and rotation with current values
                 for (int i = 0; i < 3; i++) {
@@ -231,7 +271,6 @@ namespace StayPutVR {
             } else {
                 // Existing device, update it
                 size_t index = it->second;
-                vr::DriverPose_t pose = device->GetPose();
                 
                 // Save previous position
                 for (int i = 0; i < 3; i++) {
@@ -240,15 +279,15 @@ namespace StayPutVR {
                 
                 // Store current position
                 float current_pos[3] = {
-                    pose.vecPosition[0],
-                    pose.vecPosition[1],
-                    pose.vecPosition[2]
+                    device.position[0],
+                    device.position[1],
+                    device.position[2]
                 };
                 float current_rot[4] = {
-                    pose.qRotation.x,
-                    pose.qRotation.y,
-                    pose.qRotation.z,
-                    pose.qRotation.w
+                    device.rotation[0],
+                    device.rotation[1],
+                    device.rotation[2],
+                    device.rotation[3]
                 };
                 
                 // Update position and rotation
@@ -775,6 +814,38 @@ namespace StayPutVR {
     void UIManager::RenderMainTab() {
         ImGui::Text("StayPutVR Main Control Panel");
         ImGui::Separator();
+        
+        // Connection status panel at the top
+        ImGui::BeginChild("ConnectionPanel", ImVec2(0, 60), true);
+        
+        bool isConnected = device_manager_ && device_manager_->IsConnected();
+        
+        if (isConnected) {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Connected to driver");
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "✗ Not connected to driver");
+            ImGui::Text("The driver is not running or could not be reached");
+            
+            if (ImGui::Button("Retry Connection")) {
+                if (device_manager_) {
+                    // First disconnect if needed
+                    device_manager_->Shutdown();
+                    
+                    // Then try to reconnect
+                    if (device_manager_->Initialize()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Successfully reconnected to driver");
+                        }
+                    } else {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Warning("Failed to reconnect to driver");
+                        }
+                    }
+                }
+            }
+        }
+        
+        ImGui::EndChild();
         
         // Layout with two columns
         ImGui::Columns(2, "MainTabColumns", false);
@@ -1849,16 +1920,18 @@ namespace StayPutVR {
 
     bool UIManager::LoadConfig() {
         try {
-            // Use AppData path for the config file instead of hardcoded SteamVR path
+            // Use AppData path for the config file
             std::string configDir = GetAppDataPath() + "\\config";
             std::filesystem::create_directories(configDir);
             
-            config_file_ = configDir + "\\config.ini";
+            // Store just the filename in the member variable
+            config_file_ = "config.ini";
             
             if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Info("UIManager: Loading config from " + config_file_);
+                StayPutVR::Logger::Info("UIManager: Loading config from " + configDir + "\\" + config_file_);
             }
             
+            // Pass just the filename to LoadFromFile
             bool result = config_.LoadFromFile(config_file_);
             if (result) {
                 UpdateUIFromConfig();
@@ -1884,16 +1957,17 @@ namespace StayPutVR {
         try {
             UpdateConfigFromUI();
             
-            // Use AppData path instead of hardcoded path
+            // Use AppData path for reference only
             std::string configDir = GetAppDataPath() + "\\config";
             std::filesystem::create_directories(configDir);
             
-            config_file_ = configDir + "\\config.ini";
+            // config_file_ should already be set to just the filename
             
             if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Info("UIManager: Saving config to " + config_file_);
+                StayPutVR::Logger::Info("UIManager: Saving config to " + configDir + "\\" + config_file_);
             }
             
+            // Pass just the filename to SaveToFile
             bool result = config_.SaveToFile(config_file_);
             if (!result && StayPutVR::Logger::IsInitialized()) {
                 StayPutVR::Logger::Error("UIManager: Failed to save config");

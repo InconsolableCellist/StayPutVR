@@ -52,6 +52,7 @@ bool Config::CreateDefaultConfigFile(const std::string& filename) {
 
 bool Config::LoadFromFile(const std::string& filename) {
     try {
+        // This function expects just the filename, not a full path
         std::string configPath = StayPutVR::GetAppDataPath() + "\\config\\" + filename;
         
         if (!std::filesystem::exists(configPath)) {
@@ -144,6 +145,7 @@ bool Config::LoadFromFile(const std::string& filename) {
 
 bool Config::SaveToFile(const std::string& filename) const {
     try {
+        // This function expects just the filename, not a full path
         std::string configPath = StayPutVR::GetAppDataPath() + "\\config\\" + filename;
         
         // Make sure the directory exists

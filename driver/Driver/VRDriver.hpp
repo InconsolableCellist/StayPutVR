@@ -10,6 +10,7 @@
 
 #include "IVRDriver.hpp"
 #include "IVRDevice.hpp"
+#include "../IPC/IPCServer.hpp"
 
 namespace StayPutVR {
     // Global variable for communicating between driver and UI
@@ -58,9 +59,8 @@ namespace StayPutVR {
         std::chrono::system_clock::time_point last_frame_time_ = std::chrono::system_clock::now();
         std::string settings_key_ = "driver_stayputvr";
         
-        // UI thread
-        std::thread ui_thread_;
-        void StartUIThread();
+        // IPC Server for communication with application
+        IPCServer ipc_server_;
         
         // Device type mapping helper
         DeviceType GetDeviceTypeFromClass(vr::ETrackedDeviceClass device_class);
