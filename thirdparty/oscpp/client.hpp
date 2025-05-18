@@ -48,8 +48,8 @@ class Packet
     {
         // Make sure pointer difference fits into int32_t
         const intptr_t diff = a - b;
-        if (diff < std::numeric_limits<int32_t>::min() ||
-            diff > std::numeric_limits<int32_t>::max())
+        if (diff < (std::numeric_limits<int32_t>::min)() ||
+            diff > (std::numeric_limits<int32_t>::max)())
         {
             std::stringstream s;
             s << "Pointer difference " << diff
@@ -262,7 +262,7 @@ public:
     // std::numeric_limits<int32_t>::max()
     Packet& blob(const Blob& arg)
     {
-        if (arg.size() > (size_t)std::numeric_limits<int32_t>::max())
+        if (arg.size() > (size_t)(std::numeric_limits<int32_t>::max)())
         {
             throw std::invalid_argument("Blob size greater than maximum "
                                         "value representable by int32_t");

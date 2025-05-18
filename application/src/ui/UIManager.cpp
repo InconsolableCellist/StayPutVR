@@ -93,6 +93,26 @@ namespace StayPutVR {
             }
         });
         
+        // Create all necessary directories
+        std::string appDataPath = GetAppDataPath();
+        std::string logPath = appDataPath + "\\logs";
+        std::string configPath = appDataPath + "\\config";
+        std::string resourcesPath = appDataPath + "\\resources";
+        
+        try {
+            std::filesystem::create_directories(logPath);
+            std::filesystem::create_directories(configPath);
+            std::filesystem::create_directories(resourcesPath);
+            
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("Created directories if needed: " + logPath);
+            }
+        } catch (const std::exception& e) {
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Error("Failed to create directories: " + std::string(e.what()));
+            }
+        }
+        
         // Create config directories
         std::filesystem::create_directories(config_dir_);
         std::filesystem::create_directories(GetAppDataPath() + "\\config");
@@ -1410,14 +1430,18 @@ namespace StayPutVR {
         
         // Create buffers for editing
         static char osc_ip[128];
-        static int osc_port = 9000;
+        static int osc_send_port = 9000;
+        static int osc_receive_port = 9005;
         
         // Initialize with current values
         if (strlen(osc_ip) == 0) {
             strcpy_s(osc_ip, sizeof(osc_ip), config_.osc_address.c_str());
         }
-        if (osc_port != config_.osc_port) {
-            osc_port = config_.osc_port;
+        if (osc_send_port != config_.osc_send_port) {
+            osc_send_port = config_.osc_send_port;
+        }
+        if (osc_receive_port != config_.osc_receive_port) {
+            osc_receive_port = config_.osc_receive_port;
         }
         
         // Inputs for OSC settings
@@ -1428,9 +1452,28 @@ namespace StayPutVR {
             changed = true;
         }
         
-        if (ImGui::InputInt("OSC Port", &osc_port)) {
-            config_.osc_port = osc_port;
+        if (ImGui::InputInt("OSC Send Port", &osc_send_port)) {
+            config_.osc_send_port = osc_send_port;
             changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Port used to send locking status to VRChat");
+            ImGui::EndTooltip();
+        }
+        
+        if (ImGui::InputInt("OSC Receive Port", &osc_receive_port)) {
+            config_.osc_receive_port = osc_receive_port;
+            changed = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Port used to receive interaction data from VRChat, such as locking and unlocking");
+            ImGui::EndTooltip();
         }
         
         // Chaining mode
@@ -1463,7 +1506,7 @@ namespace StayPutVR {
         }
 
         // Initialize OSC manager
-        if (OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_port)) {
+        if (OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_send_port, config_.osc_receive_port)) {
             osc_enabled_ = true;
             config_.osc_enabled = true;
             SaveConfig();
@@ -1638,21 +1681,6 @@ namespace StayPutVR {
         std::string logPath = appDataPath + "\\logs";
         std::string configPath = appDataPath + "\\config";
         std::string resourcesPath = appDataPath + "\\resources";
-        
-        // Create directories if they don't exist
-        try {
-            std::filesystem::create_directories(logPath);
-            std::filesystem::create_directories(configPath);
-            std::filesystem::create_directories(resourcesPath);
-            
-            if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Info("Created directories if needed: " + logPath);
-            }
-        } catch (const std::exception& e) {
-            if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Error("Failed to create directories: " + std::string(e.what()));
-            }
-        }
         
         // Display paths
         ImGui::Text("Settings Path: %s", configPath.c_str());
@@ -2115,10 +2143,23 @@ namespace StayPutVR {
             bool result = config_.LoadFromFile(config_file_);
             if (result) {
                 UpdateUIFromConfig();
+                
+                // Set default OSC ports if they're not set
+                if (config_.osc_send_port <= 0) {
+                    config_.osc_send_port = 9000;
+                }
+                if (config_.osc_receive_port <= 0) {
+                    config_.osc_receive_port = 9005;
+                }
+                
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Info("UIManager: Config loaded successfully");
                 }
             } else {
+                // Set default OSC ports for new config
+                config_.osc_send_port = 9000;
+                config_.osc_receive_port = 9005;
+                
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Error("UIManager: Failed to load config");
                 }
@@ -2228,7 +2269,23 @@ namespace StayPutVR {
             ImGui::Separator();
         }
         
-        // Main enable/disable checkbox for PiShock
+        // Safety warning (moved to the top)
+        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
+        ImGui::Text("PiShock should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of PiShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
+        ImGui::PopTextWrapPos();
+        
+        // Add agreement checkbox right after the disclaimer
+        bool user_agreement = config_.pishock_user_agreement;
+        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
+            config_.pishock_user_agreement = user_agreement;
+            SaveConfig();
+        }
+        
+        ImGui::Separator();
+        
+        // Main enable/disable checkbox for PiShock (disabled until agreement is checked)
+        ImGui::BeginDisabled(!user_agreement);
         bool pishock_enabled = config_.pishock_enabled;
         if (ImGui::Checkbox("Send VRCOSC PiShock Module Messages", &pishock_enabled)) {
             config_.pishock_enabled = pishock_enabled;
@@ -2362,13 +2419,7 @@ namespace StayPutVR {
         }
         
         ImGui::EndDisabled();
-        
-        // Safety warning
-        ImGui::Separator();
-        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
-        ImGui::Text("PiShocks should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of PiShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The creators are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly, though every effort has been taken in testing to ensure this works as expected.");
-        ImGui::PopTextWrapPos();
+        ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
     
     void UIManager::SendPiShockWarningActions() {

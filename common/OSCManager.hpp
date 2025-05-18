@@ -1,13 +1,8 @@
 #pragma once
 
-// Include WinSock2.h before any possible Windows.h inclusion
 #include <WinSock2.h>
 #include <WS2tcpip.h>
 
-// Now include Windows configuration
-#include "WindowsConfig.hpp"
-
-// Standard includes
 #include <string>
 #include <memory>
 #include <functional>
@@ -45,7 +40,7 @@ class OSCManager {
 public:
     static OSCManager& GetInstance();
 
-    bool Initialize(const std::string& address, int port);
+    bool Initialize(const std::string& address, int send_port, int receive_port);
     void Shutdown();
     bool IsInitialized() const { return initialized_; }
 
@@ -71,7 +66,8 @@ private:
 
     bool initialized_ = false;
     std::string address_;
-    int port_ = 9000;
+    int send_port_ = 9000;
+    int receive_port_ = 9005;
     
     // Socket and buffer
     SOCKET socket_ = INVALID_SOCKET;

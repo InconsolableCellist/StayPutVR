@@ -24,7 +24,8 @@ public:
     // OSC Settings
     bool osc_enabled = false;
     std::string osc_address = "127.0.0.1";
-    int osc_port = 9000;
+    int osc_send_port = 9000;
+    int osc_receive_port = 9005;
     bool chaining_mode = false;
     std::string osc_address_bounds;
     std::string osc_address_warning;
@@ -33,6 +34,7 @@ public:
     // PiShock Settings via VRCOSC
     bool pishock_enabled = false;
     int pishock_group = 0;
+    bool pishock_user_agreement = false;
     
     // Warning Zone PiShock Settings
     bool pishock_warning_beep = false;

@@ -15,16 +15,19 @@ OSCManager::~OSCManager() {
     }
 }
 
-bool OSCManager::Initialize(const std::string& address, int port) {
+bool OSCManager::Initialize(const std::string& address, int send_port, int receive_port) {
     if (initialized_) {
         if (Logger::IsInitialized()) {
-            Logger::Debug("OSCManager: Already initialized with address " + address_ + ":" + std::to_string(port_));
+            Logger::Debug("OSCManager: Already initialized with address " + address_ + 
+                          " (send port: " + std::to_string(send_port_) + 
+                          ", receive port: " + std::to_string(receive_port_) + ")");
         }
         return true;
     }
 
     address_ = address;
-    port_ = port;
+    send_port_ = send_port;
+    receive_port_ = receive_port;
 
     // Initialize Winsock
     WSADATA wsaData;
@@ -46,11 +49,11 @@ bool OSCManager::Initialize(const std::string& address, int port) {
         return false;
     }
 
-    // Allocate and set up the server address structure
+    // Allocate and set up the server address structure for sending
     server_addr_ = new sockaddr_in();
     ZeroMemory(server_addr_, sizeof(sockaddr_in));
     server_addr_->sin_family = AF_INET;
-    server_addr_->sin_port = htons(static_cast<u_short>(port));
+    server_addr_->sin_port = htons(static_cast<u_short>(send_port));
     
     // Convert IPv4 address from text to binary form
     result = inet_pton(AF_INET, address.c_str(), &(server_addr_->sin_addr));
@@ -65,11 +68,16 @@ bool OSCManager::Initialize(const std::string& address, int port) {
         return false;
     }
     
+    // TODO: Set up receive socket handling using receive_port
+    // This would require another socket bound to the receive port
+    // and a thread for handling incoming messages
+    
     initialized_ = true;
 
     if (Logger::IsInitialized()) {
-        Logger::Info("OSCManager: Initialized with address " + address + ":" + std::to_string(port));
-        Logger::Debug("OSCManager: OSC client initialization details - address=" + address + ", port=" + std::to_string(port));
+        Logger::Info("OSCManager: Initialized with address " + address + 
+                    " (send port: " + std::to_string(send_port) + 
+                    ", receive port: " + std::to_string(receive_port) + ")");
     }
 
     return true;
@@ -143,7 +151,7 @@ void OSCManager::SendPiShockDuration(float duration) {
     }
     
     // Clamp duration to 0-1 range
-    duration = std::max(0.0f, std::min(duration, 1.0f));
+    duration = (std::max)(0.0f, (std::min)(duration, 1.0f));
     
     std::string path = "/VRCOSC/PiShock/Duration";
     
@@ -162,7 +170,7 @@ void OSCManager::SendPiShockIntensity(float intensity) {
     }
     
     // Clamp intensity to 0-1 range
-    intensity = std::max(0.0f, std::min(intensity, 1.0f));
+    intensity = (std::max)(0.0f, (std::min)(intensity, 1.0f));
     
     std::string path = "/VRCOSC/PiShock/Intensity";
     

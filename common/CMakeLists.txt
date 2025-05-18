@@ -6,9 +6,11 @@ set(HEADER_FILES
     DeviceTypes.hpp
     Logger.hpp
     OSCManager.hpp
-    WindowsConfig.hpp
-    Wrapper_oscpp_client.hpp
-    Wrapper_oscpp_server.hpp
+    Audio.hpp
+    PathUtils.hpp
+    IVRDevice.hpp
+    IPCProtocol.hpp
+    IVRDriver.hpp
 )
 
 # Common library for shared code between driver and application
@@ -40,4 +42,5 @@ endif()
 # Link with Windows libraries for audio
 target_link_libraries(stayputvr_common PRIVATE
     winmm.lib
+    ws2_32.lib
 ) 

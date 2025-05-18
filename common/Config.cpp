@@ -13,7 +13,8 @@ namespace StayPutVR {
 Config::Config()
     : log_level("WARNING")
     , osc_address("127.0.0.1")
-    , osc_port(9000)
+    , osc_send_port(9000)
+    , osc_receive_port(9005)
     , osc_address_bounds("/stayputvr/bounds")
     , osc_address_warning("/stayputvr/warning")
     , osc_address_disable("/stayputvr/disable")
@@ -21,6 +22,7 @@ Config::Config()
     , chaining_mode(false)
     , pishock_enabled(false)
     , pishock_group(0)
+    , pishock_user_agreement(false)
     , pishock_warning_beep(false)
     , pishock_warning_shock(false)
     , pishock_warning_vibrate(false)
@@ -81,12 +83,23 @@ bool Config::LoadFromFile(const std::string& filename) {
         // OSC settings
         osc_enabled = j.value("osc_enabled", false);
         osc_address = j.value("osc_address", "127.0.0.1");
-        osc_port = j.value("osc_port", 9000);
+        
+        // Check if we're loading from an old config that had a single osc_port
+        if (j.contains("osc_port")) {
+            int old_port = j.value("osc_port", 9000);
+            osc_send_port = old_port;
+            osc_receive_port = 9005; // Default receive port for older configs
+        } else {
+            osc_send_port = j.value("osc_send_port", 9000);
+            osc_receive_port = j.value("osc_receive_port", 9005);
+        }
+        
         chaining_mode = j.value("chaining_mode", false);
 
         // PiShock settings
         pishock_enabled = j.value("pishock_enabled", false);
         pishock_group = j.value("pishock_group", 0);
+        pishock_user_agreement = j.value("pishock_user_agreement", false);
         
         // Warning Zone PiShock Settings
         pishock_warning_beep = j.value("pishock_warning_beep", false);
@@ -167,12 +180,14 @@ bool Config::SaveToFile(const std::string& filename) const {
         // OSC settings
         j["osc_enabled"] = osc_enabled;
         j["osc_address"] = osc_address;
-        j["osc_port"] = osc_port;
+        j["osc_send_port"] = osc_send_port;
+        j["osc_receive_port"] = osc_receive_port;
         j["chaining_mode"] = chaining_mode;
 
         // PiShock settings
         j["pishock_enabled"] = pishock_enabled;
         j["pishock_group"] = pishock_group;
+        j["pishock_user_agreement"] = pishock_user_agreement;
         
         // Warning Zone PiShock Settings
         j["pishock_warning_beep"] = pishock_warning_beep;
