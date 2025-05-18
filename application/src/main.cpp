@@ -2,6 +2,7 @@
 #include <atomic>
 #include <memory>
 #include <filesystem>
+#include "../../common/OSCManager.hpp"
 #include "UI/UIManager.hpp"
 #include "../../common/Logger.hpp"
 #include "../../common/PathUtils.hpp"
@@ -18,7 +19,6 @@ int main(int argc, char* argv[]) {
         std::string appDataPath = StayPutVR::GetAppDataPath();
         std::string logPath = appDataPath + "\\logs";
         std::string configPath = appDataPath + "\\config";
-        std::string configsPath = appDataPath + "\\configs";
         std::string resourcesPath = appDataPath + "\\resources";
         
         // Create all required directories if they don't exist
@@ -40,11 +40,6 @@ int main(int argc, char* argv[]) {
             if (!std::filesystem::exists(configPath)) {
                 std::cerr << "Creating config directory: " << configPath << std::endl;
                 std::filesystem::create_directory(configPath);
-            }
-            
-            if (!std::filesystem::exists(configsPath)) {
-                std::cerr << "Creating configs directory: " << configsPath << std::endl;
-                std::filesystem::create_directory(configsPath);
             }
             
             if (!std::filesystem::exists(resourcesPath)) {
@@ -69,13 +64,11 @@ int main(int argc, char* argv[]) {
             // Fall back to current directory
             logPath = "./logs";
             configPath = "./config";
-            configsPath = "./configs";
             resourcesPath = "./resources";
             
             try {
                 std::filesystem::create_directory("./logs");
                 std::filesystem::create_directory("./config");
-                std::filesystem::create_directory("./configs");
                 std::filesystem::create_directory("./resources");
             } catch (const std::exception& e2) {
                 std::cerr << "Error creating fallback directories: " << e2.what() << std::endl;
@@ -83,14 +76,30 @@ int main(int argc, char* argv[]) {
             }
         }
         
+        // Initialize the logger
         StayPutVR::Logger::Init(logPath, StayPutVR::Logger::LogType::APPLICATION);
         StayPutVR::Logger::Info("StayPutVR application starting up");
         StayPutVR::Logger::Info("Log path: " + logPath);
         StayPutVR::Logger::Info("Current directory: " + std::filesystem::current_path().string());
         
+        // Load configuration to get log level setting
+        StayPutVR::Config config;
+        if (config.LoadFromFile("config.ini")) {
+            StayPutVR::Logger::LoadLogLevelFromConfig(config);
+            StayPutVR::Logger::Info("Loaded log level from config: " + config.log_level);
+        }
+        
         // Initialize the audio system
         StayPutVR::Logger::Info("Initializing audio system");
         StayPutVR::AudioManager::Initialize();
+        
+        // Initialize OSC manager if enabled
+        if (config.osc_enabled) {
+            if (!StayPutVR::OSCManager::GetInstance().Initialize(config.osc_address, config.osc_port)) {
+                StayPutVR::Logger::Error("Failed to initialize OSC manager");
+                return 1;
+            }
+        }
         
         // Create an instance of the UI manager
         StayPutVR::Logger::Info("Creating UIManager instance");
@@ -136,6 +145,11 @@ int main(int argc, char* argv[]) {
         // Shutdown audio system
         StayPutVR::Logger::Info("Shutting down audio system");
         StayPutVR::AudioManager::Shutdown();
+        
+        // Shutdown OSC manager
+        if (config.osc_enabled) {
+            StayPutVR::OSCManager::GetInstance().Shutdown();
+        }
         
         StayPutVR::Logger::Info("StayPutVR exiting normally");
         StayPutVR::Logger::Shutdown();

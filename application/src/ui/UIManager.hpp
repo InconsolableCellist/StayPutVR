@@ -23,6 +23,7 @@
 #include "../../../common/Logger.hpp"
 #include "../../../common/PathUtils.hpp"
 #include "../DeviceManager/DeviceManager.hpp"
+#include "../../../common/OSCManager.hpp"
 
 namespace StayPutVR {
 
@@ -34,7 +35,8 @@ namespace StayPutVR {
         NOTIFICATIONS,
         TIMERS,
         OSC,
-        SETTINGS
+        SETTINGS,
+        PISHOCK
     };
 
     struct DevicePosition {
@@ -63,6 +65,13 @@ namespace StayPutVR {
         float position_deviation = 0.0f;
         bool exceeds_threshold = false;
         bool in_warning_zone = false;
+    };
+
+    struct SimpleDevicePosition {
+        std::string serial;
+        float x;
+        float y;
+        float z;
     };
 
     class UIManager {
@@ -103,7 +112,7 @@ namespace StayPutVR {
         std::unordered_map<std::string, size_t> device_map_; // Maps serial to index in device_positions_
         
         // Saved configurations directory
-        std::string config_dir_ = "configs";
+        std::string config_dir_ = "config";
         std::string current_config_file_ = "";
         
         // Global locking settings
@@ -137,6 +146,7 @@ namespace StayPutVR {
         void RenderTimersTab();
         void RenderOSCTab();
         void RenderSettingsTab();
+        void RenderPiShockTab();
         
         // Original UI elements (to be migrated to tabs)
         void RenderDeviceList();
@@ -155,6 +165,7 @@ namespace StayPutVR {
         void ResetAllDevices();
         void ApplyLockedPositions();
         void ActivateGlobalLock(bool activate);
+        void ActivateGlobalLockInternal(bool activate);
         void CheckDevicePositionDeviations();
         
         // Timestamp of last played sound for rate limiting
@@ -162,5 +173,31 @@ namespace StayPutVR {
         
         // DeviceManager reference
         DeviceManager* device_manager_ = nullptr;
+        
+        // Countdown timer variables
+        bool countdown_active_ = false;
+        float countdown_remaining_ = 0.0f;
+        std::chrono::steady_clock::time_point countdown_last_beep_;
+        
+        // OSC callbacks
+        void OnDeviceLocked(OSCDeviceType device, bool locked);
+        
+        // Helper functions
+        void UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status);
+        void HandleOSCConnection();
+        void DisconnectOSC();
+        
+        // Helper function to map DeviceType to OSCDeviceType
+        OSCDeviceType MapToOSCDeviceType(DeviceType type);
+        
+        // Helper function to convert OSCDeviceType to string
+        std::string GetOSCDeviceString(OSCDeviceType device) const;
+        
+        // PiShock helper functions
+        void SendPiShockWarningActions();
+        void SendPiShockDisobedienceActions();
+        
+        // Timestamp of last sent PiShock signal for rate limiting
+        std::chrono::steady_clock::time_point last_pishock_time_ = std::chrono::steady_clock::now();
     };
 } 

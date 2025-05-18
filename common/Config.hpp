@@ -3,6 +3,9 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <nlohmann/json.hpp>
+
+namespace StayPutVR {
 
 class Config {
 public:
@@ -15,14 +18,35 @@ public:
     bool SaveToFile(const std::string& filename) const;
     bool CreateDefaultConfigFile(const std::string& filename);
 
+    // Logging Settings
+    std::string log_level;
+
     // OSC Settings
-    std::string osc_address;
-    int osc_port;
+    bool osc_enabled = false;
+    std::string osc_address = "127.0.0.1";
+    int osc_port = 9000;
+    bool chaining_mode = false;
     std::string osc_address_bounds;
     std::string osc_address_warning;
     std::string osc_address_disable;
-    bool osc_enabled;
-    bool chaining_mode;
+    
+    // PiShock Settings via VRCOSC
+    bool pishock_enabled = false;
+    int pishock_group = 0;
+    
+    // Warning Zone PiShock Settings
+    bool pishock_warning_beep = false;
+    bool pishock_warning_shock = false;
+    bool pishock_warning_vibrate = false;
+    float pishock_warning_intensity = 0.25f;
+    float pishock_warning_duration = 0.25f;
+    
+    // Disobedience (Out of Bounds) PiShock Settings
+    bool pishock_disobedience_beep = false;
+    bool pishock_disobedience_shock = false;
+    bool pishock_disobedience_vibrate = false;
+    float pishock_disobedience_intensity = 0.5f;
+    float pishock_disobedience_duration = 0.5f;
 
     // Boundary Settings
     float warning_threshold;  // Warning zone distance in meters
@@ -53,4 +77,6 @@ public:
     // Device settings maps
     std::unordered_map<std::string, std::string> device_names; // serial -> name
     std::unordered_map<std::string, bool> device_settings; // serial -> include_in_locking
-}; 
+};
+
+} // namespace StayPutVR 

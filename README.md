@@ -30,6 +30,34 @@ Not only does this support me and my work (and is greatly appreciated!) this is 
 - ⏱️ Configurable timers for automatic unlocking
 - 🔄 Chaining mode to lock all devices when one device is locked, or lock/unlock each one individually
 
+## 📡 OSC Integration
+
+StayPutVR integrates with VRChat and other OSC-compatible applications through a simple message protocol:
+
+### Device Status Messages (Outgoing)
+- Path: `/avatar/parameters/SPVR_{deviceId}_Status`
+- Value: Integer (0-5)
+  - 0: Disabled/Unknown
+  - 1: Unlocked (Green LED)
+  - 2: Locked and Safe (Red LED)
+  - 3: Locked and Warning (Flashing Yellow LED)
+  - 4: Locked and Disobedience! (Flashing Red LED)
+  - 5: Locked and Out of Bounds (Blinking White)
+
+### Lock Control Messages (Incoming)
+- Path: `/avatar/parameters/SPVR_{deviceId}_OnEnter`
+- Value: Boolean (0/1)
+  - When set to 1, the device will be locked if "Include in Lock" is enabled
+  - When set to 0, the device will be unlocked
+
+Supported devices:
+- HMD
+- ControllerLeft
+- ControllerRight
+- FootLeft
+- FootRight
+- Hip
+
 ## 🖥️ Interface
 
 StayPutVR is a desktop application that registers with SteamVR

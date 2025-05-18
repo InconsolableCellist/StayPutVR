@@ -8,14 +8,29 @@
 #include <nlohmann/json.hpp>
 #include "PathUtils.hpp"
 
+namespace StayPutVR {
+
 Config::Config()
-    : osc_address("127.0.0.1")
+    : log_level("WARNING")
+    , osc_address("127.0.0.1")
     , osc_port(9000)
     , osc_address_bounds("/stayputvr/bounds")
     , osc_address_warning("/stayputvr/warning")
     , osc_address_disable("/stayputvr/disable")
     , osc_enabled(false)
     , chaining_mode(false)
+    , pishock_enabled(false)
+    , pishock_group(0)
+    , pishock_warning_beep(false)
+    , pishock_warning_shock(false)
+    , pishock_warning_vibrate(false)
+    , pishock_warning_intensity(0.25f)
+    , pishock_warning_duration(0.25f)
+    , pishock_disobedience_beep(false)
+    , pishock_disobedience_shock(false)
+    , pishock_disobedience_vibrate(false)
+    , pishock_disobedience_intensity(0.5f)
+    , pishock_disobedience_duration(0.5f)
     , warning_threshold(0.1f)
     , bounds_threshold(0.2f)
     , disable_threshold(0.5f)
@@ -43,8 +58,8 @@ bool Config::CreateDefaultConfigFile(const std::string& filename) {
         return SaveToFile(filename);
     }
     catch (const std::exception& e) {
-        if (StayPutVR::Logger::IsInitialized()) {
-            StayPutVR::Logger::Error("Exception while creating default config: " + std::string(e.what()));
+        if (Logger::IsInitialized()) {
+            Logger::Error("Exception while creating default config: " + std::string(e.what()));
         }
         return false;
     }
@@ -52,92 +67,94 @@ bool Config::CreateDefaultConfigFile(const std::string& filename) {
 
 bool Config::LoadFromFile(const std::string& filename) {
     try {
-        // This function expects just the filename, not a full path
-        std::string configPath = StayPutVR::GetAppDataPath() + "\\config\\" + filename;
-        
-        if (!std::filesystem::exists(configPath)) {
-            if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Warning("Config file does not exist, creating default: " + configPath);
-            }
-            return CreateDefaultConfigFile(filename);
-        }
-        
-        // Use INIReader to parse the config file
-        INIReader reader(configPath);
-        
-        if (reader.ParseError() < 0) {
-            if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Error("Failed to parse config file: " + configPath);
+        std::ifstream file(filename);
+        if (!file.is_open()) {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to open config file: " + filename);
             }
             return false;
         }
+
+        nlohmann::json j;
+        file >> j;
+
+        // OSC settings
+        osc_enabled = j.value("osc_enabled", false);
+        osc_address = j.value("osc_address", "127.0.0.1");
+        osc_port = j.value("osc_port", 9000);
+        chaining_mode = j.value("chaining_mode", false);
+
+        // PiShock settings
+        pishock_enabled = j.value("pishock_enabled", false);
+        pishock_group = j.value("pishock_group", 0);
         
-        // Load OSC settings
-        osc_address = reader.Get("osc", "address", osc_address);
-        osc_port = reader.GetInteger("osc", "port", osc_port);
-        osc_address_bounds = reader.Get("osc", "address_bounds", osc_address_bounds);
-        osc_address_warning = reader.Get("osc", "address_warning", osc_address_warning);
-        osc_address_disable = reader.Get("osc", "address_disable", osc_address_disable);
-        osc_enabled = reader.GetBoolean("osc", "enabled", osc_enabled);
-        chaining_mode = reader.GetBoolean("osc", "chaining_mode", chaining_mode);
+        // Warning Zone PiShock Settings
+        pishock_warning_beep = j.value("pishock_warning_beep", false);
+        pishock_warning_shock = j.value("pishock_warning_shock", false);
+        pishock_warning_vibrate = j.value("pishock_warning_vibrate", false);
+        pishock_warning_intensity = j.value("pishock_warning_intensity", 0.25f);
+        pishock_warning_duration = j.value("pishock_warning_duration", 0.25f);
+        
+        // Disobedience (Out of Bounds) PiShock Settings
+        pishock_disobedience_beep = j.value("pishock_disobedience_beep", false);
+        pishock_disobedience_shock = j.value("pishock_disobedience_shock", false);
+        pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
+        pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.5f);
+        pishock_disobedience_duration = j.value("pishock_disobedience_duration", 0.5f);
+
+        // Load logging settings
+        log_level = j.value("log_level", "WARNING");
         
         // Load boundary settings
-        warning_threshold = reader.GetFloat("boundaries", "warning_threshold", warning_threshold);
-        bounds_threshold = reader.GetFloat("boundaries", "bounds_threshold", bounds_threshold);
-        disable_threshold = reader.GetFloat("boundaries", "disable_threshold", disable_threshold);
+        warning_threshold = j.value("warning_threshold", 0.1f);
+        bounds_threshold = j.value("bounds_threshold", 0.2f);
+        disable_threshold = j.value("disable_threshold", 0.5f);
         
         // Load timer settings
-        cooldown_enabled = reader.GetBoolean("timers", "cooldown_enabled", cooldown_enabled);
-        cooldown_seconds = reader.GetFloat("timers", "cooldown_seconds", cooldown_seconds);
-        countdown_enabled = reader.GetBoolean("timers", "countdown_enabled", countdown_enabled);
-        countdown_seconds = reader.GetFloat("timers", "countdown_seconds", countdown_seconds);
+        cooldown_enabled = j.value("cooldown_enabled", false);
+        cooldown_seconds = j.value("cooldown_seconds", 5.0f);
+        countdown_enabled = j.value("countdown_enabled", false);
+        countdown_seconds = j.value("countdown_seconds", 3.0f);
         
         // Load notification settings
-        audio_enabled = reader.GetBoolean("notifications", "audio_enabled", audio_enabled);
-        audio_volume = reader.GetFloat("notifications", "audio_volume", audio_volume);
-        warning_audio = reader.GetBoolean("notifications", "warning_audio", warning_audio);
-        out_of_bounds_audio = reader.GetBoolean("notifications", "out_of_bounds_audio", out_of_bounds_audio);
-        lock_audio = reader.GetBoolean("notifications", "lock_audio", lock_audio);
-        unlock_audio = reader.GetBoolean("notifications", "unlock_audio", unlock_audio);
-        haptic_enabled = reader.GetBoolean("notifications", "haptic_enabled", haptic_enabled);
-        haptic_intensity = reader.GetFloat("notifications", "haptic_intensity", haptic_intensity);
+        audio_enabled = j.value("audio_enabled", true);
+        audio_volume = j.value("audio_volume", 0.8f);
+        warning_audio = j.value("warning_audio", true);
+        out_of_bounds_audio = j.value("out_of_bounds_audio", true);
+        lock_audio = j.value("lock_audio", true);
+        unlock_audio = j.value("unlock_audio", true);
+        haptic_enabled = j.value("haptic_enabled", true);
+        haptic_intensity = j.value("haptic_intensity", 0.5f);
         
         // Load application settings
-        start_with_steamvr = reader.GetBoolean("application", "start_with_steamvr", start_with_steamvr);
-        minimize_to_tray = reader.GetBoolean("application", "minimize_to_tray", minimize_to_tray);
-        show_notifications = reader.GetBoolean("application", "show_notifications", show_notifications);
+        start_with_steamvr = j.value("start_with_steamvr", true);
+        minimize_to_tray = j.value("minimize_to_tray", false);
+        show_notifications = j.value("show_notifications", true);
         
         // Load device names and settings from all sections that start with "device:"
-        const std::set<std::string>& sections = reader.Sections();
-        for (const auto& section : sections) {
-            if (section.find("device:") == 0) {
-                std::string serial = section.substr(7); // Skip "device:"
-                
-                // Load device name
-                std::string name = reader.Get(section, "name", "Unknown Device");
-                device_names[serial] = name;
-                
-                // Load include_in_locking setting
-                bool include_in_locking = reader.GetBoolean(section, "include_in_locking", false);
-                device_settings[serial] = include_in_locking;
-                
-                if (StayPutVR::Logger::IsInitialized()) {
-                    StayPutVR::Logger::Info("Loaded device settings for: " + serial + 
-                        " (name: " + name + ", include_in_locking: " + 
-                        (include_in_locking ? "true" : "false") + ")");
-                }
+        const nlohmann::json& devices = j.value("devices", nlohmann::json::array());
+        for (const auto& device : devices) {
+            std::string serial = device.value("serial", "Unknown Device");
+            std::string name = device.value("name", "Unknown Device");
+            bool include_in_locking = device.value("include_in_locking", false);
+            device_names[serial] = name;
+            device_settings[serial] = include_in_locking;
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Loaded device settings for: " + serial + 
+                    " (name: " + name + ", include_in_locking: " + 
+                    (include_in_locking ? "true" : "false") + ")");
             }
         }
         
-        if (StayPutVR::Logger::IsInitialized()) {
-            StayPutVR::Logger::Info("Loaded config file: " + configPath);
+        if (Logger::IsInitialized()) {
+            Logger::Info("Loaded config file: " + filename);
         }
-        
         return true;
     }
     catch (const std::exception& e) {
-        if (StayPutVR::Logger::IsInitialized()) {
-            StayPutVR::Logger::Error("Exception while loading config: " + std::string(e.what()));
+        if (Logger::IsInitialized()) {
+            Logger::Error("Error loading config: " + std::string(e.what()));
         }
         return false;
     }
@@ -145,87 +162,93 @@ bool Config::LoadFromFile(const std::string& filename) {
 
 bool Config::SaveToFile(const std::string& filename) const {
     try {
-        // This function expects just the filename, not a full path
-        std::string configPath = StayPutVR::GetAppDataPath() + "\\config\\" + filename;
+        nlohmann::json j;
+
+        // OSC settings
+        j["osc_enabled"] = osc_enabled;
+        j["osc_address"] = osc_address;
+        j["osc_port"] = osc_port;
+        j["chaining_mode"] = chaining_mode;
+
+        // PiShock settings
+        j["pishock_enabled"] = pishock_enabled;
+        j["pishock_group"] = pishock_group;
         
-        // Make sure the directory exists
-        std::filesystem::create_directories(StayPutVR::GetAppDataPath() + "\\config");
+        // Warning Zone PiShock Settings
+        j["pishock_warning_beep"] = pishock_warning_beep;
+        j["pishock_warning_shock"] = pishock_warning_shock;
+        j["pishock_warning_vibrate"] = pishock_warning_vibrate;
+        j["pishock_warning_intensity"] = pishock_warning_intensity;
+        j["pishock_warning_duration"] = pishock_warning_duration;
         
-        std::ofstream out(configPath);
-        if (!out.is_open()) {
-            if (StayPutVR::Logger::IsInitialized()) {
-                StayPutVR::Logger::Error("Failed to open config file for writing: " + configPath);
+        // Disobedience (Out of Bounds) PiShock Settings
+        j["pishock_disobedience_beep"] = pishock_disobedience_beep;
+        j["pishock_disobedience_shock"] = pishock_disobedience_shock;
+        j["pishock_disobedience_vibrate"] = pishock_disobedience_vibrate;
+        j["pishock_disobedience_intensity"] = pishock_disobedience_intensity;
+        j["pishock_disobedience_duration"] = pishock_disobedience_duration;
+
+        // Load logging settings
+        j["log_level"] = log_level;
+        
+        // Load boundary settings
+        j["warning_threshold"] = warning_threshold;
+        j["bounds_threshold"] = bounds_threshold;
+        j["disable_threshold"] = disable_threshold;
+        
+        // Load timer settings
+        j["cooldown_enabled"] = cooldown_enabled;
+        j["cooldown_seconds"] = cooldown_seconds;
+        j["countdown_enabled"] = countdown_enabled;
+        j["countdown_seconds"] = countdown_seconds;
+        
+        // Load notification settings
+        j["audio_enabled"] = audio_enabled;
+        j["audio_volume"] = audio_volume;
+        j["warning_audio"] = warning_audio;
+        j["out_of_bounds_audio"] = out_of_bounds_audio;
+        j["lock_audio"] = lock_audio;
+        j["unlock_audio"] = unlock_audio;
+        j["haptic_enabled"] = haptic_enabled;
+        j["haptic_intensity"] = haptic_intensity;
+        
+        // Load application settings
+        j["start_with_steamvr"] = start_with_steamvr;
+        j["minimize_to_tray"] = minimize_to_tray;
+        j["show_notifications"] = show_notifications;
+        
+        // Load device names and settings from all sections that start with "device:"
+        nlohmann::json devices = nlohmann::json::array();
+        for (const auto& [serial, name] : device_names) {
+            nlohmann::json device;
+            device["serial"] = serial;
+            device["name"] = name;
+            device["include_in_locking"] = device_settings.find(serial) != device_settings.end() && device_settings.at(serial);
+            devices.push_back(device);
+        }
+        j["devices"] = devices;
+        
+        std::ofstream file(filename);
+        if (!file.is_open()) {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to open config file for writing: " + filename);
             }
             return false;
         }
+
+        file << j.dump(4);
         
-        // Write OSC settings
-        out << "[osc]\n";
-        out << "address = " << osc_address << "\n";
-        out << "port = " << osc_port << "\n";
-        out << "address_bounds = " << osc_address_bounds << "\n";
-        out << "address_warning = " << osc_address_warning << "\n";
-        out << "address_disable = " << osc_address_disable << "\n";
-        out << "enabled = " << (osc_enabled ? "true" : "false") << "\n";
-        out << "chaining_mode = " << (chaining_mode ? "true" : "false") << "\n\n";
-        
-        // Write boundary settings
-        out << "[boundaries]\n";
-        out << "warning_threshold = " << warning_threshold << "\n";
-        out << "bounds_threshold = " << bounds_threshold << "\n";
-        out << "disable_threshold = " << disable_threshold << "\n\n";
-        
-        // Write timer settings
-        out << "[timers]\n";
-        out << "cooldown_enabled = " << (cooldown_enabled ? "true" : "false") << "\n";
-        out << "cooldown_seconds = " << cooldown_seconds << "\n";
-        out << "countdown_enabled = " << (countdown_enabled ? "true" : "false") << "\n";
-        out << "countdown_seconds = " << countdown_seconds << "\n\n";
-        
-        // Write notification settings
-        out << "[notifications]\n";
-        out << "audio_enabled = " << (audio_enabled ? "true" : "false") << "\n";
-        out << "audio_volume = " << audio_volume << "\n";
-        out << "warning_audio = " << (warning_audio ? "true" : "false") << "\n";
-        out << "out_of_bounds_audio = " << (out_of_bounds_audio ? "true" : "false") << "\n";
-        out << "lock_audio = " << (lock_audio ? "true" : "false") << "\n";
-        out << "unlock_audio = " << (unlock_audio ? "true" : "false") << "\n";
-        out << "haptic_enabled = " << (haptic_enabled ? "true" : "false") << "\n";
-        out << "haptic_intensity = " << haptic_intensity << "\n\n";
-        
-        // Write application settings
-        out << "[application]\n";
-        out << "start_with_steamvr = " << (start_with_steamvr ? "true" : "false") << "\n";
-        out << "minimize_to_tray = " << (minimize_to_tray ? "true" : "false") << "\n";
-        out << "show_notifications = " << (show_notifications ? "true" : "false") << "\n\n";
-        
-        // Write device settings
-        for (const auto& [serial, name] : device_names) {
-            out << "[device:" << serial << "]\n";
-            out << "name = " << name << "\n";
-            
-            // Get the include_in_locking setting for this device, default to false if not found
-            bool include_in_locking = false;
-            auto it = device_settings.find(serial);
-            if (it != device_settings.end()) {
-                include_in_locking = it->second;
-            }
-            
-            out << "include_in_locking = " << (include_in_locking ? "true" : "false") << "\n\n";
+        if (Logger::IsInitialized()) {
+            Logger::Info("Saved config file: " + filename);
         }
-        
-        out.close();
-        
-        if (StayPutVR::Logger::IsInitialized()) {
-            StayPutVR::Logger::Info("Saved config file: " + configPath);
-        }
-        
         return true;
     }
     catch (const std::exception& e) {
-        if (StayPutVR::Logger::IsInitialized()) {
-            StayPutVR::Logger::Error("Exception while saving config: " + std::string(e.what()));
+        if (Logger::IsInitialized()) {
+            Logger::Error("Error saving config: " + std::string(e.what()));
         }
         return false;
     }
-} 
+}
+
+} // namespace StayPutVR 

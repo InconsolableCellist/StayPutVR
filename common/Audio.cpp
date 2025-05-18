@@ -64,17 +64,23 @@ namespace StayPutVR {
         std::wstring wFullPath(size_needed, 0);
         MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, &wFullPath[0], size_needed);
         
-        // Set volume (0-1000)
+        // Calculate volume level (0-1000)
         int volumeLevel = static_cast<int>(volume * 1000);
         // Clamp volume to valid range
         volumeLevel = (std::max)(0, (std::min)(volumeLevel, 1000));
 
-        // Play sound asynchronously with specified volume
+        // Apply volume setting using waveOutSetVolume
+        WORD leftVolume = static_cast<WORD>(volumeLevel * 65.535f); // Convert 0-1000 to 0-65535
+        WORD rightVolume = leftVolume;
+        DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
+        waveOutSetVolume(NULL, dwVolume);
+        
+        // Play sound asynchronously
         DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT;
         if (::PlaySoundW(wFullPath.c_str(), NULL, flags)) {
             // Successfully started playing the sound
             if (Logger::IsInitialized()) {
-                Logger::Debug("AudioManager: Playing sound: " + filename);
+                Logger::Debug("AudioManager: Playing sound: " + filename + " with volume level: " + std::to_string(volumeLevel));
             }
             return true;
         } else {
@@ -108,6 +114,13 @@ namespace StayPutVR {
             if (Logger::IsInitialized()) {
                 Logger::Warning("AudioManager: lock.wav not found, using system sound");
             }
+            
+            // Apply volume to system sound
+            WORD leftVolume = static_cast<WORD>(volume * 65535.0f);
+            WORD rightVolume = leftVolume;
+            DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
+            waveOutSetVolume(NULL, dwVolume);
+            
             // Use Windows system sound (asterisk) as fallback
             DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
             return ::PlaySoundW(L"SystemAsterisk", NULL, flags);
@@ -123,6 +136,13 @@ namespace StayPutVR {
             if (Logger::IsInitialized()) {
                 Logger::Warning("AudioManager: unlock.wav not found, using system sound");
             }
+            
+            // Apply volume to system sound
+            WORD leftVolume = static_cast<WORD>(volume * 65535.0f);
+            WORD rightVolume = leftVolume;
+            DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
+            waveOutSetVolume(NULL, dwVolume);
+            
             // Use Windows system sound (exclamation) as fallback
             DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
             return ::PlaySoundW(L"SystemExclamation", NULL, flags);

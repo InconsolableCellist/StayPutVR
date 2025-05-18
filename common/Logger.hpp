@@ -8,6 +8,8 @@
 
 namespace StayPutVR {
 
+    class Config;  // Forward declaration
+
     class Logger {
     public:
         enum class LogLevel {
@@ -35,6 +37,15 @@ namespace StayPutVR {
         
         static bool IsInitialized() { return initialized; }
         static void SetLogLevel(LogLevel level);
+        
+        // Load log level from config
+        static void LoadLogLevelFromConfig(const Config& config);
+        
+        // Convert string to LogLevel
+        static LogLevel StringToLogLevel(const std::string& levelStr);
+        
+        // Convert LogLevel to string
+        static std::string LogLevelToString(LogLevel level);
 
     private:
         static std::ofstream logFile;

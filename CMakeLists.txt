@@ -5,6 +5,19 @@ project(StayPutVR VERSION 0.1.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Enforce consistent runtime library settings across all targets
+if(MSVC)
+    # Use dynamic runtime (/MD or /MDd) for both Debug and Release
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    
+    # Force use of dynamic CRT for all builds
+    # This ensures /MD for Release and /MDd for Debug
+    string(REPLACE "/MT" "/MD" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
+    string(REPLACE "/MT" "/MD" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+    string(REPLACE "/MTd" "/MDd" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+    string(REPLACE "/MTd" "/MDd" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+endif()
+
 # Set our install prefix explicitly to avoid Program Files issues
 set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/local_install" CACHE PATH "Installation directory")
 
@@ -41,6 +54,7 @@ include_directories(
     thirdparty/json/include
     thirdparty/json/single_include
     thirdparty/inih
+    thirdparty
     ${OPENVR_SDK_PATH}/headers
 )
 
@@ -71,4 +85,44 @@ add_custom_target(install_and_run
     COMMAND ${CMAKE_COMMAND} -E chdir "${STEAM_PATH}/bin" vrpathreg.exe adddriver "${STEAMVR_PATH}/drivers/stayputvr"
     DEPENDS driver_stayputvr
     COMMENT "Installing and registering driver with SteamVR"
+)
+
+# Add installer build target
+set(INSTALLER_DIR "${CMAKE_SOURCE_DIR}/installer")
+set(INSTALLER_SCRIPT "${INSTALLER_DIR}/app_installer.nsi")
+set(INSTALLER_OUTPUT "${INSTALLER_DIR}/StayPutVR_Setup.exe")
+set(NSIS_DIR "${INSTALLER_DIR}/NSIS")
+set(NSIS_EXE "${NSIS_DIR}/makensis.exe")
+
+# Add a custom target to prepare files for the installer
+add_custom_target(prepare_installer
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${INSTALLER_DIR}/build/bin"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${INSTALLER_DIR}/application/resources"
+    COMMAND ${CMAKE_COMMAND} -E copy 
+        "$<TARGET_FILE:stayputvr_app>" 
+        "${INSTALLER_DIR}/build/bin/stayputvr_app.exe"
+    COMMAND ${CMAKE_COMMAND} -E copy 
+        "$<TARGET_FILE:driver_stayputvr>" 
+        "${INSTALLER_DIR}/build/driver_stayputvr.dll"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory 
+        "${CMAKE_SOURCE_DIR}/application/resources" 
+        "${INSTALLER_DIR}/application/resources"
+    COMMAND ${CMAKE_COMMAND} -E copy 
+        "${CMAKE_SOURCE_DIR}/driver.vrdrivermanifest" 
+        "${INSTALLER_DIR}/driver.vrdrivermanifest"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/LICENSE" 
+        "${INSTALLER_DIR}/LICENSE.txt"
+    DEPENDS stayputvr_app driver_stayputvr
+    COMMENT "Copying files for installer package"
+)
+
+# Add a custom target to build the installer - using portable NSIS
+add_custom_target(build_installer
+    # Set NSISDIR environment variable to point to our portable NSIS directory
+    COMMAND ${CMAKE_COMMAND} -E env "NSISDIR=${NSIS_DIR}" 
+        "${NSIS_EXE}" "${INSTALLER_SCRIPT}"
+    DEPENDS prepare_installer
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Building installer package with portable NSIS"
 )

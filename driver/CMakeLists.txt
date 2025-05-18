@@ -34,6 +34,19 @@ target_link_libraries(driver_stayputvr PRIVATE
     stayputvr_common
 )
 
+# Set runtime library settings for release builds
+if(MSVC)
+    # For the release build, use the dynamic C Runtime (DLL)
+    set_target_properties(driver_stayputvr PROPERTIES 
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+    )
+    # Ensure consistent runtime settings with common library
+    target_compile_options(driver_stayputvr PRIVATE
+        $<$<CONFIG:Release>:/MD>
+        $<$<CONFIG:Debug>:/MDd>
+    )
+endif()
+
 # Custom install target for our driver
 install(CODE "message(STATUS \"Installing driver to SteamVR\")")
 
@@ -44,10 +57,5 @@ install(FILES "$<TARGET_FILE:driver_stayputvr>"
 
 # Install driver manifest 
 install(FILES "${CMAKE_SOURCE_DIR}/driver.vrdrivermanifest"
-    DESTINATION "${STEAMVR_PATH}/drivers/stayputvr"
-)
-
-# Create and install configs directory
-install(DIRECTORY "${CMAKE_BINARY_DIR}/configs"
     DESTINATION "${STEAMVR_PATH}/drivers/stayputvr"
 ) 

@@ -1,12 +1,14 @@
 #include "Logger.hpp"
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
+#include "Config.hpp"
 
 namespace StayPutVR {
 
     std::ofstream Logger::logFile;
     bool Logger::initialized = false;
-    Logger::LogLevel Logger::minLogLevel = Logger::LogLevel::DEBUG;
+    Logger::LogLevel Logger::minLogLevel = Logger::LogLevel::WARNING;
     Logger::LogType Logger::logType = Logger::LogType::APPLICATION;
 
     void Logger::Init(const std::string& logDirPath, LogType type) {
@@ -31,6 +33,18 @@ namespace StayPutVR {
             }
 
             std::filesystem::path logFilePath = logDir / logFileName;
+            
+            // Handle old log file
+            if (std::filesystem::exists(logFilePath)) {
+                // Check if _old exists and delete it
+                std::filesystem::path oldLogPath = logDir / (logFileName + "_old");
+                if (std::filesystem::exists(oldLogPath)) {
+                    std::filesystem::remove(oldLogPath);
+                }
+                // Rename current to _old
+                std::filesystem::rename(logFilePath, oldLogPath);
+            }
+            
             logFile.open(logFilePath, std::ios::out | std::ios::app);
             
             if (logFile.is_open()) {
@@ -128,5 +142,31 @@ namespace StayPutVR {
             default:                 return "UNKNOWN";
         }
     }
-
+    
+    void Logger::LoadLogLevelFromConfig(const Config& config) {
+        // Get log level from config
+        minLogLevel = StringToLogLevel(config.log_level);
+    }
+    
+    Logger::LogLevel Logger::StringToLogLevel(const std::string& levelStr) {
+        if (levelStr == "DEBUG") return LogLevel::DEBUG;
+        if (levelStr == "INFO") return LogLevel::INFO;
+        if (levelStr == "WARNING") return LogLevel::WARNING;
+        if (levelStr == "ERROR") return LogLevel::E_ERROR;
+        if (levelStr == "CRITICAL") return LogLevel::CRITICAL;
+        
+        // Default to WARNING if invalid string
+        return LogLevel::WARNING;
+    }
+    
+    std::string Logger::LogLevelToString(LogLevel level) {
+        switch (level) {
+            case LogLevel::DEBUG:    return "DEBUG";
+            case LogLevel::INFO:     return "INFO";
+            case LogLevel::WARNING:  return "WARNING";
+            case LogLevel::E_ERROR:  return "ERROR";
+            case LogLevel::CRITICAL: return "CRITICAL";
+            default:                 return "WARNING"; // Default
+        }
+    }
 } // namespace StayPutVR 

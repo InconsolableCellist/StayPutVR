@@ -11,6 +11,7 @@
 #include "../../common/Audio.hpp"
 #include <shellapi.h> // For ShellExecuteA
 #include <thread> // For std::this_thread::sleep_for
+#include "../../../common/OSCManager.hpp"
 
 using json = nlohmann::json;
 
@@ -20,7 +21,7 @@ namespace StayPutVR {
 
     UIManager::UIManager() : window_(nullptr), imgui_context_(nullptr), running_ptr_(&g_running) {
         // Initialize config_dir_ with AppData path
-        config_dir_ = GetAppDataPath() + "\\configs";
+        config_dir_ = GetAppDataPath() + "\\config";
         // Initialize config_file_ with just the filename, not the full path
         config_file_ = "config.ini";
         // Increase window height to prevent cutting off UI elements
@@ -126,6 +127,21 @@ namespace StayPutVR {
                 StayPutVR::Logger::Info("Window close button pressed, shutting down application");
             }
             glfwSetWindowShouldClose(window_, GLFW_FALSE); // Reset the flag
+        }
+        
+        // Update countdown timer if active
+        if (countdown_active_) {
+            auto current_time = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - countdown_last_beep_).count();
+            
+            // Check if countdown has finished (3 seconds)
+            if (elapsed >= countdown_remaining_) {
+                countdown_active_ = false;
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Info("Countdown finished, activating lock");
+                }
+                ActivateGlobalLockInternal(true);
+            }
         }
         
         // Start the Dear ImGui frame
@@ -400,6 +416,43 @@ namespace StayPutVR {
     }
     
     void UIManager::ActivateGlobalLock(bool activate) {
+        if (activate && config_.countdown_enabled) {
+            // Start countdown by playing countdown.wav once
+            // The countdown.wav is a 3-second sound
+            if (config_.audio_enabled) {
+                std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\countdown.wav";
+                if (std::filesystem::exists(filePath)) {
+                    // Set timeout for the lock activation
+                    countdown_active_ = true;
+                    countdown_remaining_ = 3.5f; // 3.5 seconds to account for audio clip ending
+                    countdown_last_beep_ = std::chrono::steady_clock::now();
+                    
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Info("Starting countdown with countdown sound");
+                    }
+                    
+                    // Play the countdown sound once
+                    AudioManager::PlaySound("countdown.wav", config_.audio_volume);
+                } else {
+                    // If countdown.wav doesn't exist, activate lock immediately
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Warning("countdown.wav not found, locking immediately");
+                    }
+                    ActivateGlobalLockInternal(true);
+                }
+            } else {
+                // Audio disabled, activate lock immediately
+                ActivateGlobalLockInternal(true);
+            }
+            return; // Don't activate global lock yet, wait for countdown
+        }
+        
+        // Direct activation/deactivation without countdown
+        ActivateGlobalLockInternal(activate);
+    }
+    
+    // Internal method to actually handle the lock activation
+    void UIManager::ActivateGlobalLockInternal(bool activate) {
         global_lock_active_ = activate;
         
         // If activating, store current positions as original for all included devices
@@ -472,6 +525,21 @@ namespace StayPutVR {
                     }
                     success_triggered = true;
                 }
+                
+                // Check for newly triggered PiShock events
+                if (!was_warning && device.in_warning_zone) {
+                    // Newly entered warning zone
+                    if (config_.pishock_enabled && osc_enabled_) {
+                        SendPiShockWarningActions();
+                    }
+                }
+                
+                if (!was_exceeding && device.exceeds_threshold) {
+                    // Newly entered out of bounds zone
+                    if (config_.pishock_enabled && osc_enabled_) {
+                        SendPiShockDisobedienceActions();
+                    }
+                }
             }
         }
         
@@ -491,7 +559,7 @@ namespace StayPutVR {
                     }
                     // Stop any currently playing sound first
                     AudioManager::StopSound();
-                    // Play the success sound
+                    // Play the success sound with the current volume setting
                     AudioManager::PlaySound("success.wav", config_.audio_volume);
                     // Reset the cooldown timer
                     last_sound_time_ = current_time;
@@ -767,6 +835,9 @@ namespace StayPutVR {
             case TabType::OSC:
                 RenderOSCTab();
                 break;
+            case TabType::PISHOCK:
+                RenderPiShockTab();
+                break;
             case TabType::SETTINGS:
                 RenderSettingsTab();
                 break;
@@ -799,6 +870,11 @@ namespace StayPutVR {
             
             if (ImGui::BeginTabItem("OSC")) {
                 current_tab_ = TabType::OSC;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("PiShock")) {
+                current_tab_ = TabType::PISHOCK;
                 ImGui::EndTabItem();
             }
             
@@ -1157,6 +1233,7 @@ namespace StayPutVR {
         ImGui::Separator();
         ImGui::Text("Test Audio:");
         
+        // First row of buttons
         if (ImGui::Button("Test Warning Sound")) {
             AudioManager::PlayWarningSound(config_.audio_volume);
         }
@@ -1176,13 +1253,6 @@ namespace StayPutVR {
             }
         }
         
-        if (ImGui::BeginPopup("Disobedience Sound Missing")) {
-            ImGui::Text("disobedience.wav not found in resources folder");
-            ImGui::Text("Please add the file to:");
-            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
-            ImGui::EndPopup();
-        }
-        
         ImGui::SameLine();
         
         if (ImGui::Button("Test Success Sound")) {
@@ -1198,15 +1268,7 @@ namespace StayPutVR {
             }
         }
         
-        if (ImGui::BeginPopup("Success Sound Missing")) {
-            ImGui::Text("success.wav not found in resources folder");
-            ImGui::Text("Please add the file to:");
-            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
-            ImGui::EndPopup();
-        }
-        
-        ImGui::SameLine();
-        
+        // Second row of buttons
         if (ImGui::Button("Test Lock Sound")) {
             AudioManager::PlayLockSound(config_.audio_volume);
         }
@@ -1217,21 +1279,41 @@ namespace StayPutVR {
             AudioManager::PlayUnlockSound(config_.audio_volume);
         }
         
-        // Haptic feedback
-        ImGui::Text("Haptic Feedback");
-        ImGui::Separator();
+        ImGui::SameLine();
         
-        bool enable_haptic = config_.haptic_enabled;
-        if (ImGui::Checkbox("Enable Haptic Feedback (if supported)", &enable_haptic)) {
-            config_.haptic_enabled = enable_haptic;
-            changed = true;
+        if (ImGui::Button("Test Countdown Sound")) {
+            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\countdown.wav";
+            if (std::filesystem::exists(filePath)) {
+                AudioManager::PlaySound("countdown.wav", config_.audio_volume);
+            } else {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Warning("countdown.wav not found, please add it to the resources folder");
+                }
+                // Show a message in the UI that the file is missing
+                ImGui::OpenPopup("Countdown Sound Missing");
+            }
         }
         
-        // Haptic intensity
-        float haptic_intensity = config_.haptic_intensity;
-        if (ImGui::SliderFloat("Haptic Intensity", &haptic_intensity, 0.0f, 1.0f, "%.1f")) {
-            config_.haptic_intensity = haptic_intensity;
-            changed = true;
+        // Add all popup blocks after the buttons
+        if (ImGui::BeginPopup("Disobedience Sound Missing")) {
+            ImGui::Text("disobedience.wav not found in resources folder");
+            ImGui::Text("Please add the file to:");
+            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopup("Success Sound Missing")) {
+            ImGui::Text("success.wav not found in resources folder");
+            ImGui::Text("Please add the file to:");
+            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
+            ImGui::EndPopup();
+        }
+        
+        if (ImGui::BeginPopup("Countdown Sound Missing")) {
+            ImGui::Text("countdown.wav not found in resources folder");
+            ImGui::Text("Please add the file to:");
+            ImGui::Text("%s\\resources\\", StayPutVR::GetAppDataPath().c_str());
+            ImGui::EndPopup();
         }
         
         // Save changes if anything was modified
@@ -1284,15 +1366,11 @@ namespace StayPutVR {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When set, will give you time to prepare to be locked");
+            ImGui::TextUnformatted("When enabled, a 3-second countdown sound will play before locking devices");
             ImGui::EndTooltip();
         }
         
-        float countdown_seconds = config_.countdown_seconds;
-        if (ImGui::SliderFloat("Countdown Duration", &countdown_seconds, 1.0f, 3.0f, "%.1f seconds")) {
-            config_.countdown_seconds = countdown_seconds;
-            changed = true;
-        }
+        ImGui::Text("Countdown plays a 3-second countdown sound before locking devices.");
         
         // Save changes if anything was modified
         if (changed) {
@@ -1308,9 +1386,7 @@ namespace StayPutVR {
         if (osc_enabled_) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
             if (ImGui::Button("Disable OSC", ImVec2(150, 40))) {
-                osc_enabled_ = false;
-                config_.osc_enabled = false;
-                SaveConfig();
+                DisconnectOSC();
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
@@ -1318,9 +1394,7 @@ namespace StayPutVR {
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
             if (ImGui::Button("Enable OSC", ImVec2(150, 40))) {
-                osc_enabled_ = true;
-                config_.osc_enabled = true;
-                SaveConfig();
+                HandleOSCConnection();
             }
             ImGui::PopStyleColor();
             ImGui::SameLine();
@@ -1337,9 +1411,6 @@ namespace StayPutVR {
         // Create buffers for editing
         static char osc_ip[128];
         static int osc_port = 9000;
-        static char osc_address_bounds[128];
-        static char osc_address_warning[128];
-        static char osc_address_disable[128];
         
         // Initialize with current values
         if (strlen(osc_ip) == 0) {
@@ -1347,15 +1418,6 @@ namespace StayPutVR {
         }
         if (osc_port != config_.osc_port) {
             osc_port = config_.osc_port;
-        }
-        if (strlen(osc_address_bounds) == 0) {
-            strcpy_s(osc_address_bounds, sizeof(osc_address_bounds), config_.osc_address_bounds.c_str());
-        }
-        if (strlen(osc_address_warning) == 0) {
-            strcpy_s(osc_address_warning, sizeof(osc_address_warning), config_.osc_address_warning.c_str());
-        }
-        if (strlen(osc_address_disable) == 0) {
-            strcpy_s(osc_address_disable, sizeof(osc_address_disable), config_.osc_address_disable.c_str());
         }
         
         // Inputs for OSC settings
@@ -1368,24 +1430,6 @@ namespace StayPutVR {
         
         if (ImGui::InputInt("OSC Port", &osc_port)) {
             config_.osc_port = osc_port;
-            changed = true;
-        }
-        
-        ImGui::Separator();
-        ImGui::Text("OSC Message Addresses");
-        
-        if (ImGui::InputText("Out of Bounds Address", osc_address_bounds, IM_ARRAYSIZE(osc_address_bounds))) {
-            config_.osc_address_bounds = osc_address_bounds;
-            changed = true;
-        }
-        
-        if (ImGui::InputText("Warning Address", osc_address_warning, IM_ARRAYSIZE(osc_address_warning))) {
-            config_.osc_address_warning = osc_address_warning;
-            changed = true;
-        }
-        
-        if (ImGui::InputText("Disable Address", osc_address_disable, IM_ARRAYSIZE(osc_address_disable))) {
-            config_.osc_address_disable = osc_address_disable;
             changed = true;
         }
         
@@ -1407,26 +1451,133 @@ namespace StayPutVR {
             ImGui::EndTooltip();
         }
         
-        // OSC test controls
-        ImGui::Text("OSC Test Controls");
-        ImGui::Separator();
-        
-        if (ImGui::Button("Test OSC Output")) {
-            // Handle OSC test output
-        }
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Test OSC Input")) {
-            // Handle OSC test input
-        }
-        
         // Save changes
         if (changed) {
             SaveConfig();
         }
     }
+
+    void UIManager::HandleOSCConnection() {
+        if (osc_enabled_) {
+            return;
+        }
+
+        // Initialize OSC manager
+        if (OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_port)) {
+            osc_enabled_ = true;
+            config_.osc_enabled = true;
+            SaveConfig();
+
+            // Set up lock callback
+            OSCManager::GetInstance().SetLockCallback(
+                [this](OSCDeviceType device, bool locked) {
+                    OnDeviceLocked(device, locked);
+                }
+            );
+
+            if (Logger::IsInitialized()) {
+                Logger::Info("OSC connection established");
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to establish OSC connection");
+            }
+        }
+    }
+
+    void UIManager::DisconnectOSC() {
+        if (!osc_enabled_) {
+            return;
+        }
+
+        OSCManager::GetInstance().Shutdown();
+        osc_enabled_ = false;
+        config_.osc_enabled = false;
+        SaveConfig();
+
+        if (Logger::IsInitialized()) {
+            Logger::Info("OSC connection closed");
+        }
+    }
+
+    void UIManager::OnDeviceLocked(OSCDeviceType device, bool locked) {
+        // Find the device in our list
+        for (auto& pos : device_positions_) {
+            // Map OSCDeviceType to our internal device type
+            bool isMatch = false;
+            
+            // Simple mapping logic
+            switch (device) {
+                case OSCDeviceType::HMD:
+                    isMatch = (pos.type == DeviceType::HMD);
+                    break;
+                case OSCDeviceType::ControllerLeft:
+                case OSCDeviceType::ControllerRight:
+                    isMatch = (pos.type == DeviceType::CONTROLLER);
+                    break;
+                // Add more cases as needed
+                default:
+                    isMatch = false;
+            }
+            
+            if (isMatch) {
+                // Found a match
+                if (pos.include_in_locking) {
+                    if (config_.chaining_mode) {
+                        // Lock all devices
+                        for (auto& other_pos : device_positions_) {
+                            if (other_pos.include_in_locking) {
+                                other_pos.locked = locked;
+                                UpdateDeviceStatus(MapToOSCDeviceType(other_pos.type), 
+                                    locked ? DeviceStatus::LockedSafe : DeviceStatus::Unlocked);
+                            }
+                        }
+                    } else {
+                        // Lock just this device
+                        pos.locked = locked;
+                        UpdateDeviceStatus(device, 
+                            locked ? DeviceStatus::LockedSafe : DeviceStatus::Unlocked);
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    void UIManager::UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status) {
+        if (!osc_enabled_) {
+            return;
+        }
+
+        OSCManager::GetInstance().SendDeviceStatus(device, status);
+    }
     
+    // Helper function to map DeviceType to OSCDeviceType
+    OSCDeviceType UIManager::MapToOSCDeviceType(DeviceType type) {
+        switch (type) {
+            case DeviceType::HMD: 
+                return OSCDeviceType::HMD;
+            case DeviceType::CONTROLLER: 
+                // This is a simplification - in reality you'd need to determine which controller
+                return OSCDeviceType::ControllerRight;
+            default:
+                return OSCDeviceType::HMD; // Default to HMD
+        }
+    }
+    
+    // Helper function to convert OSCDeviceType to string
+    std::string UIManager::GetOSCDeviceString(OSCDeviceType device) const {
+        switch (device) {
+            case OSCDeviceType::HMD: return "HMD";
+            case OSCDeviceType::ControllerLeft: return "ControllerLeft";
+            case OSCDeviceType::ControllerRight: return "ControllerRight";
+            case OSCDeviceType::FootLeft: return "FootLeft";
+            case OSCDeviceType::FootRight: return "FootRight";
+            case OSCDeviceType::Hip: return "Hip";
+            default: return "Unknown";
+        }
+    }
+
     void UIManager::RenderSettingsTab() {
         ImGui::Text("Application Settings");
         ImGui::Separator();
@@ -1438,6 +1589,45 @@ namespace StayPutVR {
         ImGui::Separator();
         
         RenderConfigControls();
+        
+        // Logging configuration
+        ImGui::Text("Logging Settings");
+        ImGui::Separator();
+        
+        // Log level selection
+        const char* log_levels[] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" };
+        static int current_log_level = 0;
+        
+        // Find the current log level in the array
+        for (int i = 0; i < IM_ARRAYSIZE(log_levels); i++) {
+            if (config_.log_level == log_levels[i]) {
+                current_log_level = i;
+                break;
+            }
+        }
+        
+        ImGui::Text("Log Level:");
+        if (ImGui::Combo("##LogLevel", &current_log_level, log_levels, IM_ARRAYSIZE(log_levels))) {
+            config_.log_level = log_levels[current_log_level];
+            // Apply the new log level immediately
+            StayPutVR::Logger::SetLogLevel(StayPutVR::Logger::StringToLogLevel(config_.log_level));
+            Logger::Info("Log level changed to: " + config_.log_level);
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
+            ImGui::TextUnformatted("DEBUG: Most verbose, shows all log messages\n"
+                                  "INFO: Shows informational messages and above\n"
+                                  "WARNING: Shows warnings and errors only (default)\n"
+                                  "ERROR: Shows only errors and critical messages\n"
+                                  "CRITICAL: Shows only the most severe issues");
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
         
         // Data folders
         ImGui::Text("Data Folders");
@@ -1495,31 +1685,13 @@ namespace StayPutVR {
         ImGui::TextWrapped("- success.wav - Played when device returns to safe zone");
         ImGui::TextWrapped("- lock.wav - Played when devices are locked");
         ImGui::TextWrapped("- unlock.wav - Played when devices are unlocked");
-        ImGui::TextWrapped("(Windows system sounds will be used as fallbacks)");
+        ImGui::TextWrapped("- countdown.wav - Played during countdown timer");
         
         ImGui::Separator();
         
         // Application settings
         ImGui::Text("Application Settings");
         ImGui::Separator();
-        
-        bool start_with_steamvr = config_.start_with_steamvr;
-        if (ImGui::Checkbox("Start With SteamVR", &start_with_steamvr)) {
-            config_.start_with_steamvr = start_with_steamvr;
-            changed = true;
-        }
-        
-        bool minimize_to_tray = config_.minimize_to_tray;
-        if (ImGui::Checkbox("Minimize To Tray", &minimize_to_tray)) {
-            config_.minimize_to_tray = minimize_to_tray;
-            changed = true;
-        }
-        
-        bool show_notifications = config_.show_notifications;
-        if (ImGui::Checkbox("Show Desktop Notifications", &show_notifications)) {
-            config_.show_notifications = show_notifications;
-            changed = true;
-        }
         
         // Force save all current configuration settings
         if (ImGui::Button("Save All Settings", ImVec2(150, 30))) {
@@ -1541,17 +1713,11 @@ namespace StayPutVR {
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
         ImGui::Text("Version: 1.0.0");
-        ImGui::Text("© 2023 Foxipso");
+        ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
         if (ImGui::Button("Visit Website")) {
             ShellExecuteA(NULL, "open", "https://foxipso.com", NULL, NULL, SW_SHOWDEFAULT);
-        }
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Check for Updates")) {
-            // Handle update check
         }
         
         // Save changes if anything was modified
@@ -1577,19 +1743,6 @@ namespace StayPutVR {
         
         ImGui::Text("Configuration");
         ImGui::Separator();
-        
-        // Save current configuration
-        static char config_name[128] = "";
-        ImGui::InputText("Config Name", config_name, IM_ARRAYSIZE(config_name));
-        
-        ImGui::SameLine();
-        if (ImGui::Button("Save") && strlen(config_name) > 0) {
-            if (SaveDevicePositions(config_name)) {
-                ImGui::OpenPopup("SaveSuccess");
-            } else {
-                ImGui::OpenPopup("SaveFailed");
-            }
-        }
         
         // Load configuration
         if (!config_files.empty()) {
@@ -1891,20 +2044,47 @@ namespace StayPutVR {
                 ImGui::TableNextColumn();
                 ImGui::PushID(device.serial.c_str());
                 
-                // Include in locking checkbox
-                bool include = device.include_in_locking;
-                if (ImGui::Checkbox("Include in Lock", &include)) {
-                    device.include_in_locking = include;
+                // Replace checkbox with a toggleable button
+                if (device.include_in_locking) {
+                    // Green "Will Lock" button
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.9f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.7f, 0.1f, 1.0f));
                     
-                    // Update the setting in config directly
-                    config_.device_settings[device.serial] = include;
-                    
-                    // Save the setting immediately
-                    if (StayPutVR::Logger::IsInitialized()) {
-                        StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to " + 
-                                                (include ? "true" : "false"));
+                    if (ImGui::Button("Will Lock", ImVec2(120, 30))) {
+                        device.include_in_locking = false;
+                        
+                        // Update the setting in config directly
+                        config_.device_settings[device.serial] = false;
+                        
+                        // Save the setting immediately
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to false");
+                        }
+                        SaveConfig();
                     }
-                    SaveConfig();
+                    
+                    ImGui::PopStyleColor(3);
+                } else {
+                    // Red "Won't Lock" button
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
+                    
+                    if (ImGui::Button("Won't Lock", ImVec2(120, 30))) {
+                        device.include_in_locking = true;
+                        
+                        // Update the setting in config directly
+                        config_.device_settings[device.serial] = true;
+                        
+                        // Save the setting immediately
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to true");
+                        }
+                        SaveConfig();
+                    }
+                    
+                    ImGui::PopStyleColor(3);
                 }
                 
                 ImGui::PopID();
@@ -2034,6 +2214,240 @@ namespace StayPutVR {
                     StayPutVR::Logger::Info("Applied include_in_locking setting for device: " + device.serial);
                 }
             }
+        }
+    }
+
+    void UIManager::RenderPiShockTab() {
+        ImGui::Text("PiShock Integration via VRCOSC");
+        ImGui::Separator();
+        
+        // Ready state toggle button
+        if (!osc_enabled_) {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
+                "OSC is not enabled. Please enable OSC in the OSC tab first.");
+            ImGui::Separator();
+        }
+        
+        // Main enable/disable checkbox for PiShock
+        bool pishock_enabled = config_.pishock_enabled;
+        if (ImGui::Checkbox("Send VRCOSC PiShock Module Messages", &pishock_enabled)) {
+            config_.pishock_enabled = pishock_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("VRCOSC Provides a PiShock module and accepts messages that control your PiShock devices. Check this to send these messages via OSC. Requires OSC to be enabled and configured.");
+            ImGui::EndTooltip();
+        }
+        
+        // PiShock Group setting
+        int pishock_group = config_.pishock_group;
+        if (ImGui::InputInt("PiShock Group", &pishock_group)) {
+            if (pishock_group < 0) pishock_group = 0;
+            config_.pishock_group = pishock_group;
+            SaveConfig();
+            
+            if (config_.pishock_enabled && osc_enabled_) {
+                OSCManager::GetInstance().SendPiShockGroup(pishock_group);
+            }
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Sets which group of PiShock devices will be controlled. Default is 0.");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::Separator();
+        
+        if (!config_.pishock_enabled) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        }
+        
+        // Warning Zone Actions
+        ImGui::Text("Warning Zone Actions:");
+        ImGui::Separator();
+        
+        ImGui::BeginDisabled(!config_.pishock_enabled);
+        
+        bool warning_beep = config_.pishock_warning_beep;
+        if (ImGui::Checkbox("Beep on Warning", &warning_beep)) {
+            config_.pishock_warning_beep = warning_beep;
+            SaveConfig();
+        }
+        
+        bool warning_vibrate = config_.pishock_warning_vibrate;
+        if (ImGui::Checkbox("Vibrate on Warning", &warning_vibrate)) {
+            config_.pishock_warning_vibrate = warning_vibrate;
+            SaveConfig();
+        }
+        
+        bool warning_shock = config_.pishock_warning_shock;
+        if (ImGui::Checkbox("Shock on Warning", &warning_shock)) {
+            config_.pishock_warning_shock = warning_shock;
+            SaveConfig();
+        }
+        
+        float warning_intensity = config_.pishock_warning_intensity;
+        if (ImGui::SliderFloat("Warning Intensity", &warning_intensity, 0.0f, 1.0f, "%.2f")) {
+            config_.pishock_warning_intensity = warning_intensity;
+            SaveConfig();
+        }
+        
+        float warning_duration = config_.pishock_warning_duration;
+        if (ImGui::SliderFloat("Warning Duration", &warning_duration, 0.0f, 1.0f, "%.2f")) {
+            config_.pishock_warning_duration = warning_duration;
+            SaveConfig();
+        }
+        
+        // Out of Bounds (Disobedience) Actions
+        ImGui::Text("Out of Bounds (Disobedience) Actions:");
+        ImGui::Separator();
+        
+        bool disobedience_beep = config_.pishock_disobedience_beep;
+        if (ImGui::Checkbox("Beep on Out of Bounds", &disobedience_beep)) {
+            config_.pishock_disobedience_beep = disobedience_beep;
+            SaveConfig();
+        }
+        
+        bool disobedience_vibrate = config_.pishock_disobedience_vibrate;
+        if (ImGui::Checkbox("Vibrate on Out of Bounds", &disobedience_vibrate)) {
+            config_.pishock_disobedience_vibrate = disobedience_vibrate;
+            SaveConfig();
+        }
+        
+        bool disobedience_shock = config_.pishock_disobedience_shock;
+        if (ImGui::Checkbox("Shock on Out of Bounds", &disobedience_shock)) {
+            config_.pishock_disobedience_shock = disobedience_shock;
+            SaveConfig();
+        }
+        
+        float disobedience_intensity = config_.pishock_disobedience_intensity;
+        if (ImGui::SliderFloat("Out of Bounds Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+            config_.pishock_disobedience_intensity = disobedience_intensity;
+            SaveConfig();
+        }
+        
+        float disobedience_duration = config_.pishock_disobedience_duration;
+        if (ImGui::SliderFloat("Out of Bounds Duration", &disobedience_duration, 0.0f, 1.0f, "%.2f")) {
+            config_.pishock_disobedience_duration = disobedience_duration;
+            SaveConfig();
+        }
+        
+        ImGui::EndDisabled();
+        
+        if (!config_.pishock_enabled) {
+            ImGui::PopStyleColor();
+        }
+        
+        ImGui::Separator();
+        
+        // Test buttons (only enabled if OSC is enabled)
+        ImGui::Text("Test Buttons:");
+        ImGui::BeginDisabled(!config_.pishock_enabled || !osc_enabled_);
+        
+        if (ImGui::Button("Test Warning Actions")) {
+            SendPiShockWarningActions();
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test Out of Bounds Actions")) {
+            SendPiShockDisobedienceActions();
+        }
+        
+        ImGui::EndDisabled();
+        
+        // Safety warning
+        ImGui::Separator();
+        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
+        ImGui::Text("PiShocks should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of PiShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The creators are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly, though every effort has been taken in testing to ensure this works as expected.");
+        ImGui::PopTextWrapPos();
+    }
+    
+    void UIManager::SendPiShockWarningActions() {
+        if (!config_.pishock_enabled || !osc_enabled_) {
+            return;
+        }
+        
+        // Rate limiting - only send every 2 seconds to avoid spamming
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
+        if (elapsed < 2) {
+            return;
+        }
+        
+        // Set group
+        OSCManager::GetInstance().SendPiShockGroup(config_.pishock_group);
+        
+        // Set intensity and duration
+        OSCManager::GetInstance().SendPiShockIntensity(config_.pishock_warning_intensity);
+        OSCManager::GetInstance().SendPiShockDuration(config_.pishock_warning_duration);
+        
+        // Send action signals
+        if (config_.pishock_warning_beep) {
+            OSCManager::GetInstance().SendPiShockBeep(true);
+        }
+        
+        if (config_.pishock_warning_vibrate) {
+            OSCManager::GetInstance().SendPiShockVibrate(true);
+        }
+        
+        if (config_.pishock_warning_shock) {
+            OSCManager::GetInstance().SendPiShockShock(true);
+        }
+        
+        // Update timestamp
+        last_pishock_time_ = current_time;
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("Sent PiShock warning actions");
+        }
+    }
+    
+    void UIManager::SendPiShockDisobedienceActions() {
+        if (!config_.pishock_enabled || !osc_enabled_) {
+            return;
+        }
+        
+        // Rate limiting - only send every 2 seconds to avoid spamming
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
+        if (elapsed < 2) {
+            return;
+        }
+        
+        // Set group
+        OSCManager::GetInstance().SendPiShockGroup(config_.pishock_group);
+        
+        // Set intensity and duration
+        OSCManager::GetInstance().SendPiShockIntensity(config_.pishock_disobedience_intensity);
+        OSCManager::GetInstance().SendPiShockDuration(config_.pishock_disobedience_duration);
+        
+        // Send action signals
+        if (config_.pishock_disobedience_beep) {
+            OSCManager::GetInstance().SendPiShockBeep(true);
+        }
+        
+        if (config_.pishock_disobedience_vibrate) {
+            OSCManager::GetInstance().SendPiShockVibrate(true);
+        }
+        
+        if (config_.pishock_disobedience_shock) {
+            OSCManager::GetInstance().SendPiShockShock(true);
+        }
+        
+        // Update timestamp
+        last_pishock_time_ = current_time;
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("Sent PiShock disobedience actions");
         }
     }
 

@@ -34,6 +34,19 @@ target_link_libraries(stayputvr_app PRIVATE
     stayputvr_common
 )
 
+# Set runtime library settings for release builds
+if(MSVC)
+    # For the release build, use the dynamic C Runtime (DLL)
+    set_target_properties(stayputvr_app PROPERTIES 
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
+    )
+    # Ensure consistent runtime settings with common library
+    target_compile_options(stayputvr_app PRIVATE
+        $<$<CONFIG:Release>:/MD>
+        $<$<CONFIG:Debug>:/MDd>
+    )
+endif()
+
 # Install application
 install(TARGETS stayputvr_app
     RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}/bin"
