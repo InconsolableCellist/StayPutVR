@@ -36,6 +36,11 @@ public:
     int pishock_group = 0;
     bool pishock_user_agreement = false;
     
+    // PiShock Direct API Settings
+    std::string pishock_api_key;
+    std::string pishock_username;
+    std::string pishock_share_code;
+    
     // Warning Zone PiShock Settings
     bool pishock_warning_beep = false;
     bool pishock_warning_shock = false;

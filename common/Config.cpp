@@ -23,6 +23,9 @@ Config::Config()
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
+    , pishock_api_key("")
+    , pishock_username("")
+    , pishock_share_code("")
     , pishock_warning_beep(false)
     , pishock_warning_shock(false)
     , pishock_warning_vibrate(false)
@@ -100,6 +103,11 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_enabled = j.value("pishock_enabled", false);
         pishock_group = j.value("pishock_group", 0);
         pishock_user_agreement = j.value("pishock_user_agreement", false);
+        
+        // PiShock API settings
+        pishock_api_key = j.value("pishock_api_key", "");
+        pishock_username = j.value("pishock_username", "");
+        pishock_share_code = j.value("pishock_share_code", "");
         
         // Warning Zone PiShock Settings
         pishock_warning_beep = j.value("pishock_warning_beep", false);
@@ -188,6 +196,11 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_enabled"] = pishock_enabled;
         j["pishock_group"] = pishock_group;
         j["pishock_user_agreement"] = pishock_user_agreement;
+        
+        // PiShock API settings
+        j["pishock_api_key"] = pishock_api_key;
+        j["pishock_username"] = pishock_username;
+        j["pishock_share_code"] = pishock_share_code;
         
         // Warning Zone PiShock Settings
         j["pishock_warning_beep"] = pishock_warning_beep;

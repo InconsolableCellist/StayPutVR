@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
         
         // Initialize OSC manager if enabled
         if (config.osc_enabled) {
-            if (!StayPutVR::OSCManager::GetInstance().Initialize(config.osc_address, config.osc_port)) {
+            if (!StayPutVR::OSCManager::GetInstance().Initialize(config.osc_address, config.osc_send_port, config.osc_receive_port)) {
                 StayPutVR::Logger::Error("Failed to initialize OSC manager");
                 return 1;
             }

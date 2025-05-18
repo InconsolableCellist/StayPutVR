@@ -12,6 +12,7 @@
 #include <shellapi.h> // For ShellExecuteA
 #include <thread> // For std::this_thread::sleep_for
 #include "../../../common/OSCManager.hpp"
+#include "../../common/HttpClient.hpp"
 
 using json = nlohmann::json;
 
@@ -2259,15 +2260,8 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderPiShockTab() {
-        ImGui::Text("PiShock Integration via VRCOSC");
+        ImGui::Text("PiShock Integration");
         ImGui::Separator();
-        
-        // Ready state toggle button
-        if (!osc_enabled_) {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
-                "OSC is not enabled. Please enable OSC in the OSC tab first.");
-            ImGui::Separator();
-        }
         
         // Safety warning (moved to the top)
         ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
@@ -2287,7 +2281,7 @@ namespace StayPutVR {
         // Main enable/disable checkbox for PiShock (disabled until agreement is checked)
         ImGui::BeginDisabled(!user_agreement);
         bool pishock_enabled = config_.pishock_enabled;
-        if (ImGui::Checkbox("Send VRCOSC PiShock Module Messages", &pishock_enabled)) {
+        if (ImGui::Checkbox("Enable PiShock Integration", &pishock_enabled)) {
             config_.pishock_enabled = pishock_enabled;
             SaveConfig();
         }
@@ -2296,27 +2290,65 @@ namespace StayPutVR {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("VRCOSC Provides a PiShock module and accepts messages that control your PiShock devices. Check this to send these messages via OSC. Requires OSC to be enabled and configured.");
+            ImGui::TextUnformatted("Enable direct integration with PiShock API for boundary enforcement");
             ImGui::EndTooltip();
         }
         
-        // PiShock Group setting
-        int pishock_group = config_.pishock_group;
-        if (ImGui::InputInt("PiShock Group", &pishock_group)) {
-            if (pishock_group < 0) pishock_group = 0;
-            config_.pishock_group = pishock_group;
+        // PiShock API Credentials (NEW)
+        ImGui::Separator();
+        ImGui::Text("PiShock API Credentials:");
+        
+        static char username_buffer[128] = "";
+        if (strlen(username_buffer) == 0 && !config_.pishock_username.empty()) {
+            strcpy_s(username_buffer, sizeof(username_buffer), config_.pishock_username.c_str());
+        }
+        
+        if (ImGui::InputText("Username", username_buffer, sizeof(username_buffer))) {
+            config_.pishock_username = username_buffer;
             SaveConfig();
-            
-            if (config_.pishock_enabled && osc_enabled_) {
-                OSCManager::GetInstance().SendPiShockGroup(pishock_group);
-            }
         }
         
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Sets which group of PiShock devices will be controlled. Default is 0.");
+            ImGui::TextUnformatted("Username you use to log into PiShock.com");
+            ImGui::EndTooltip();
+        }
+        
+        static char apikey_buffer[128] = "";
+        if (strlen(apikey_buffer) == 0 && !config_.pishock_api_key.empty()) {
+            strcpy_s(apikey_buffer, sizeof(apikey_buffer), config_.pishock_api_key.c_str());
+        }
+        
+        if (ImGui::InputText("API Key", apikey_buffer, sizeof(apikey_buffer), ImGuiInputTextFlags_Password)) {
+            config_.pishock_api_key = apikey_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("API Key generated on PiShock.com (found in Account section)");
+            ImGui::EndTooltip();
+        }
+        
+        static char sharecode_buffer[128] = "";
+        if (strlen(sharecode_buffer) == 0 && !config_.pishock_share_code.empty()) {
+            strcpy_s(sharecode_buffer, sizeof(sharecode_buffer), config_.pishock_share_code.c_str());
+        }
+        
+        if (ImGui::InputText("Share Code", sharecode_buffer, sizeof(sharecode_buffer), ImGuiInputTextFlags_Password)) {
+            config_.pishock_share_code = sharecode_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Share Code generated on PiShock.com for the device you want to control");
             ImGui::EndTooltip();
         }
         
@@ -2404,9 +2436,10 @@ namespace StayPutVR {
         
         ImGui::Separator();
         
-        // Test buttons (only enabled if OSC is enabled)
+        // Test buttons
         ImGui::Text("Test Buttons:");
-        ImGui::BeginDisabled(!config_.pishock_enabled || !osc_enabled_);
+        ImGui::BeginDisabled(!config_.pishock_enabled || config_.pishock_username.empty() || 
+                             config_.pishock_api_key.empty() || config_.pishock_share_code.empty());
         
         if (ImGui::Button("Test Warning Actions")) {
             SendPiShockWarningActions();
@@ -2421,9 +2454,14 @@ namespace StayPutVR {
         ImGui::EndDisabled();
         ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
-    
+
     void UIManager::SendPiShockWarningActions() {
-        if (!config_.pishock_enabled || !osc_enabled_) {
+        if (!config_.pishock_enabled || !config_.pishock_user_agreement ||
+            config_.pishock_username.empty() || config_.pishock_api_key.empty() || 
+            config_.pishock_share_code.empty()) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("PiShock warning actions skipped: not fully configured");
+            }
             return;
         }
         
@@ -2434,36 +2472,76 @@ namespace StayPutVR {
             return;
         }
         
-        // Set group
-        OSCManager::GetInstance().SendPiShockGroup(config_.pishock_group);
+        bool action_sent = false;
+        std::string response;
         
-        // Set intensity and duration
-        OSCManager::GetInstance().SendPiShockIntensity(config_.pishock_warning_intensity);
-        OSCManager::GetInstance().SendPiShockDuration(config_.pishock_warning_duration);
+        // Calculate actual intensity and duration values
+        // PiShock API requires values 1-100 for intensity and 1-15 for duration
+        int intensity = static_cast<int>(config_.pishock_warning_intensity * 100.0f);
+        if (intensity < 1) intensity = 1;
+        if (intensity > 100) intensity = 100;
         
-        // Send action signals
+        int duration = static_cast<int>(config_.pishock_warning_duration * 15.0f);
+        if (duration < 1) duration = 1;
+        if (duration > 15) duration = 15;
+        
+        // Send actions based on configuration
         if (config_.pishock_warning_beep) {
-            OSCManager::GetInstance().SendPiShockBeep(true);
+            if (SendPiShockCommand(
+                config_.pishock_username, 
+                config_.pishock_api_key, 
+                config_.pishock_share_code, 
+                2, // beep operation
+                0, // intensity not used for beep
+                duration,
+                response)) {
+                action_sent = true;
+            }
         }
         
         if (config_.pishock_warning_vibrate) {
-            OSCManager::GetInstance().SendPiShockVibrate(true);
+            if (SendPiShockCommand(
+                config_.pishock_username, 
+                config_.pishock_api_key, 
+                config_.pishock_share_code, 
+                1, // vibrate operation
+                intensity,
+                duration,
+                response)) {
+                action_sent = true;
+            }
         }
         
         if (config_.pishock_warning_shock) {
-            OSCManager::GetInstance().SendPiShockShock(true);
+            if (SendPiShockCommand(
+                config_.pishock_username, 
+                config_.pishock_api_key, 
+                config_.pishock_share_code, 
+                0, // shock operation
+                intensity,
+                duration,
+                response)) {
+                action_sent = true;
+            }
         }
         
-        // Update timestamp
-        last_pishock_time_ = current_time;
-        
-        if (Logger::IsInitialized()) {
-            Logger::Info("Sent PiShock warning actions");
+        // Update timestamp if any action was sent
+        if (action_sent) {
+            last_pishock_time_ = current_time;
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Sent PiShock warning actions");
+            }
         }
     }
-    
+
     void UIManager::SendPiShockDisobedienceActions() {
-        if (!config_.pishock_enabled || !osc_enabled_) {
+        if (!config_.pishock_enabled || !config_.pishock_user_agreement ||
+            config_.pishock_username.empty() || config_.pishock_api_key.empty() || 
+            config_.pishock_share_code.empty()) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("PiShock disobedience actions skipped: not fully configured");
+            }
             return;
         }
         
@@ -2474,31 +2552,66 @@ namespace StayPutVR {
             return;
         }
         
-        // Set group
-        OSCManager::GetInstance().SendPiShockGroup(config_.pishock_group);
+        bool action_sent = false;
+        std::string response;
         
-        // Set intensity and duration
-        OSCManager::GetInstance().SendPiShockIntensity(config_.pishock_disobedience_intensity);
-        OSCManager::GetInstance().SendPiShockDuration(config_.pishock_disobedience_duration);
+        // Calculate actual intensity and duration values
+        // PiShock API requires values 1-100 for intensity and 1-15 for duration
+        int intensity = static_cast<int>(config_.pishock_disobedience_intensity * 100.0f);
+        if (intensity < 1) intensity = 1;
+        if (intensity > 100) intensity = 100;
         
-        // Send action signals
+        int duration = static_cast<int>(config_.pishock_disobedience_duration * 15.0f);
+        if (duration < 1) duration = 1;
+        if (duration > 15) duration = 15;
+        
+        // Send actions based on configuration
         if (config_.pishock_disobedience_beep) {
-            OSCManager::GetInstance().SendPiShockBeep(true);
+            if (SendPiShockCommand(
+                config_.pishock_username, 
+                config_.pishock_api_key, 
+                config_.pishock_share_code, 
+                2, // beep operation
+                0, // intensity not used for beep
+                duration,
+                response)) {
+                action_sent = true;
+            }
         }
         
         if (config_.pishock_disobedience_vibrate) {
-            OSCManager::GetInstance().SendPiShockVibrate(true);
+            if (SendPiShockCommand(
+                config_.pishock_username, 
+                config_.pishock_api_key, 
+                config_.pishock_share_code, 
+                1, // vibrate operation
+                intensity,
+                duration,
+                response)) {
+                action_sent = true;
+            }
         }
         
         if (config_.pishock_disobedience_shock) {
-            OSCManager::GetInstance().SendPiShockShock(true);
+            if (SendPiShockCommand(
+                config_.pishock_username, 
+                config_.pishock_api_key, 
+                config_.pishock_share_code, 
+                0, // shock operation
+                intensity,
+                duration,
+                response)) {
+                action_sent = true;
+            }
         }
         
-        // Update timestamp
-        last_pishock_time_ = current_time;
-        
-        if (Logger::IsInitialized()) {
-            Logger::Info("Sent PiShock disobedience actions");
+        // Update timestamp if any action was sent
+        if (action_sent) {
+            last_pishock_time_ = current_time;
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Sent PiShock disobedience actions");
+            }
         }
     }
 

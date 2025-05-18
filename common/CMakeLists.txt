@@ -11,6 +11,7 @@ set(HEADER_FILES
     IVRDevice.hpp
     IPCProtocol.hpp
     IVRDriver.hpp
+    HttpClient.hpp
 )
 
 # Common library for shared code between driver and application
@@ -19,6 +20,7 @@ add_library(stayputvr_common STATIC
     Audio.cpp
     Logger.cpp
     OSCManager.cpp
+    HttpClient.cpp
     ${HEADER_FILES}
 )
 
