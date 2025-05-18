@@ -5,12 +5,20 @@
 #include <sstream>
 #include <string>
 #include <algorithm>
+#include <thread>
+#include <atomic>
+#include <queue>
+#include <mutex>
 
 #pragma comment(lib, "winhttp.lib")
 
 namespace StayPutVR {
 
 bool HttpClient::initialized_ = false;
+std::thread HttpClient::worker_thread_;
+std::atomic<bool> HttpClient::worker_running_(false);
+std::queue<std::function<void()>> HttpClient::request_queue_;
+std::mutex HttpClient::queue_mutex_;
 
 bool HttpClient::Initialize() {
     if (initialized_) {
@@ -18,6 +26,10 @@ bool HttpClient::Initialize() {
     }
     
     initialized_ = true;
+    
+    // Start the worker thread for async requests
+    StartWorkerThread();
+    
     return true;
 }
 
@@ -26,7 +38,117 @@ void HttpClient::Shutdown() {
         return;
     }
     
+    // Stop the worker thread
+    StopWorkerThread();
+    
     initialized_ = false;
+}
+
+void HttpClient::StartWorkerThread() {
+    if (worker_running_) {
+        return; // Thread already running
+    }
+    
+    // Set the flag
+    worker_running_ = true;
+    
+    // Start the worker thread
+    try {
+        worker_thread_ = std::thread(WorkerThreadFunction);
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("HttpClient: Worker thread started for async requests");
+        }
+    }
+    catch (const std::exception& e) {
+        worker_running_ = false;
+        if (Logger::IsInitialized()) {
+            Logger::Error("HttpClient: Failed to start worker thread: " + std::string(e.what()));
+        }
+    }
+}
+
+void HttpClient::StopWorkerThread() {
+    if (!worker_running_) {
+        return; // Thread not running
+    }
+    
+    // Set the flag to stop
+    worker_running_ = false;
+    
+    // Wait for the thread to finish
+    if (worker_thread_.joinable()) {
+        worker_thread_.join();
+    }
+    
+    // Clear the queue
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        while (!request_queue_.empty()) {
+            request_queue_.pop();
+        }
+    }
+    
+    if (Logger::IsInitialized()) {
+        Logger::Info("HttpClient: Worker thread stopped");
+    }
+}
+
+void HttpClient::WorkerThreadFunction() {
+    if (Logger::IsInitialized()) {
+        Logger::Debug("HttpClient: Worker thread started");
+    }
+    
+    while (worker_running_) {
+        std::function<void()> request = nullptr;
+        
+        // Get a request from the queue
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            if (!request_queue_.empty()) {
+                request = request_queue_.front();
+                request_queue_.pop();
+            }
+        }
+        
+        // Process the request
+        if (request) {
+            try {
+                request();
+            }
+            catch (const std::exception& e) {
+                if (Logger::IsInitialized()) {
+                    Logger::Error("HttpClient: Error in async request: " + std::string(e.what()));
+                }
+            }
+            catch (...) {
+                if (Logger::IsInitialized()) {
+                    Logger::Error("HttpClient: Unknown error in async request");
+                }
+            }
+        }
+        else {
+            // No requests, sleep for a bit
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    
+    if (Logger::IsInitialized()) {
+        Logger::Debug("HttpClient: Worker thread stopped");
+    }
+}
+
+void HttpClient::QueueAsyncRequest(std::function<void()> request) {
+    if (!worker_running_) {
+        // Worker not running, start it
+        StartWorkerThread();
+    }
+    
+    // Add the request to the queue
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        request_queue_.push(request);
+    }
 }
 
 bool HttpClient::PostJson(
@@ -318,6 +440,72 @@ bool SendPiShockCommand(
     }
     
     return success;
+}
+
+void SendPiShockCommandAsync(
+    const std::string& username,
+    const std::string& apiKey,
+    const std::string& shareCode,
+    int operation,
+    int intensity,
+    int duration,
+    std::function<void(bool success, const std::string& response)> callback) {
+    
+    if (!HttpClient::Initialize()) {
+        Logger::Error("Failed to initialize HTTP client for PiShock");
+        if (callback) {
+            callback(false, "Failed to initialize HTTP client");
+        }
+        return;
+    }
+    
+    // Create a lambda that will make the request on a background thread
+    auto request = [username, apiKey, shareCode, operation, intensity, duration, callback]() {
+        std::string response;
+        nlohmann::json requestBody;
+        requestBody["Username"] = username;
+        requestBody["Apikey"] = apiKey;
+        requestBody["Code"] = shareCode;
+        requestBody["Name"] = "StayPutVR";
+        requestBody["Op"] = operation;
+        
+        // For shock and vibrate, also include intensity
+        int clampedIntensity = intensity;
+        if (operation == 0 || operation == 1) {
+            // Clamp intensity between 1 and 100
+            clampedIntensity = (std::max)(1, (std::min)(100, clampedIntensity));
+            requestBody["Intensity"] = std::to_string(clampedIntensity);
+        }
+        
+        // Duration is required for all operations
+        // Clamp duration between 1 and 15 seconds
+        int clampedDuration = (std::max)(1, (std::min)(15, duration));
+        requestBody["Duration"] = std::to_string(clampedDuration);
+        
+        Logger::Info("Sending async PiShock command. Operation: " + std::to_string(operation) + 
+                    ", Intensity: " + std::to_string(clampedIntensity) + 
+                    ", Duration: " + std::to_string(clampedDuration));
+        
+        bool success = HttpClient::PostJson(
+            "https://do.pishock.com/api/apioperate",
+            requestBody,
+            response
+        );
+        
+        if (success) {
+            Logger::Info("Async PiShock command succeeded: " + response);
+        } else {
+            Logger::Error("Async PiShock command failed: " + response);
+        }
+        
+        // Call the callback if provided
+        if (callback) {
+            callback(success, response);
+        }
+    };
+    
+    // Add the request to the async queue
+    HttpClient::QueueAsyncRequest(request);
 }
 
 } // namespace StayPutVR 

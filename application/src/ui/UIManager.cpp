@@ -528,6 +528,14 @@ namespace StayPutVR {
                 device.exceeds_threshold = device.position_deviation > position_threshold_;
                 device.in_warning_zone = device.position_deviation > warning_threshold_ && !device.exceeds_threshold;
                 
+                if (Logger::IsInitialized() && (device.exceeds_threshold || device.in_warning_zone)) {
+                    Logger::Debug("Device " + device.serial + " position: deviation=" + std::to_string(device.position_deviation) + 
+                                ", warning_threshold=" + std::to_string(warning_threshold_) + 
+                                ", position_threshold=" + std::to_string(position_threshold_) + 
+                                ", in_warning=" + std::to_string(device.in_warning_zone) + 
+                                ", exceeds_threshold=" + std::to_string(device.exceeds_threshold));
+                }
+                
                 // Current zone status - safe zone is when not in warning or exceeding
                 bool is_in_safe_zone = !device.exceeds_threshold && !device.in_warning_zone;
                 
@@ -550,14 +558,28 @@ namespace StayPutVR {
                 // Check for newly triggered PiShock events
                 if (!was_warning && device.in_warning_zone) {
                     // Newly entered warning zone
-                    if (config_.pishock_enabled && osc_enabled_) {
-                        SendPiShockWarningActions();
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Debug("Device " + device.serial + " entered warning zone, position deviation: " + 
+                                                std::to_string(device.position_deviation));
                     }
+                    
+                    // Remove PiShock warning call - only use audio warnings for this zone
+                    // Audio warning will still be handled by the existing code below
                 }
                 
                 if (!was_exceeding && device.exceeds_threshold) {
                     // Newly entered out of bounds zone
-                    if (config_.pishock_enabled && osc_enabled_) {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Debug("Device " + device.serial + " entered out of bounds zone, position deviation: " + 
+                                                std::to_string(device.position_deviation) + 
+                                                ", was_exceeding=" + std::to_string(was_exceeding) + 
+                                                ", pishock_enabled=" + std::to_string(config_.pishock_enabled));
+                    }
+                    
+                    if (config_.pishock_enabled) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Triggering PiShock disobedience actions for device " + device.serial);
+                        }
                         SendPiShockDisobedienceActions();
                     }
                 }
@@ -2290,7 +2312,7 @@ namespace StayPutVR {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable direct integration with PiShock API for boundary enforcement");
+            ImGui::TextUnformatted("Enable direct integration with PiShock API for out-of-bounds enforcement");
             ImGui::EndTooltip();
         }
         
@@ -2358,45 +2380,16 @@ namespace StayPutVR {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
         }
         
-        // Warning Zone Actions
-        ImGui::Text("Warning Zone Actions:");
+        // Removed Warning Zone Actions section
+
+        // Out of Bounds (Disobedience) Actions
+        ImGui::Text("Out of Bounds Actions:");
         ImGui::Separator();
         
         ImGui::BeginDisabled(!config_.pishock_enabled);
         
-        bool warning_beep = config_.pishock_warning_beep;
-        if (ImGui::Checkbox("Beep on Warning", &warning_beep)) {
-            config_.pishock_warning_beep = warning_beep;
-            SaveConfig();
-        }
-        
-        bool warning_vibrate = config_.pishock_warning_vibrate;
-        if (ImGui::Checkbox("Vibrate on Warning", &warning_vibrate)) {
-            config_.pishock_warning_vibrate = warning_vibrate;
-            SaveConfig();
-        }
-        
-        bool warning_shock = config_.pishock_warning_shock;
-        if (ImGui::Checkbox("Shock on Warning", &warning_shock)) {
-            config_.pishock_warning_shock = warning_shock;
-            SaveConfig();
-        }
-        
-        float warning_intensity = config_.pishock_warning_intensity;
-        if (ImGui::SliderFloat("Warning Intensity", &warning_intensity, 0.0f, 1.0f, "%.2f")) {
-            config_.pishock_warning_intensity = warning_intensity;
-            SaveConfig();
-        }
-        
-        float warning_duration = config_.pishock_warning_duration;
-        if (ImGui::SliderFloat("Warning Duration", &warning_duration, 0.0f, 1.0f, "%.2f")) {
-            config_.pishock_warning_duration = warning_duration;
-            SaveConfig();
-        }
-        
-        // Out of Bounds (Disobedience) Actions
-        ImGui::Text("Out of Bounds (Disobedience) Actions:");
-        ImGui::Separator();
+        ImGui::TextWrapped("PiShock will only be triggered when a device exceeds the out-of-bounds threshold. Warnings will only use audio cues.");
+        ImGui::Spacing();
         
         bool disobedience_beep = config_.pishock_disobedience_beep;
         if (ImGui::Checkbox("Beep on Out of Bounds", &disobedience_beep)) {
@@ -2436,16 +2429,10 @@ namespace StayPutVR {
         
         ImGui::Separator();
         
-        // Test buttons
+        // Test buttons - Only keeping test for out of bounds
         ImGui::Text("Test Buttons:");
         ImGui::BeginDisabled(!config_.pishock_enabled || config_.pishock_username.empty() || 
                              config_.pishock_api_key.empty() || config_.pishock_share_code.empty());
-        
-        if (ImGui::Button("Test Warning Actions")) {
-            SendPiShockWarningActions();
-        }
-        
-        ImGui::SameLine();
         
         if (ImGui::Button("Test Out of Bounds Actions")) {
             SendPiShockDisobedienceActions();
@@ -2455,87 +2442,11 @@ namespace StayPutVR {
         ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
 
-    void UIManager::SendPiShockWarningActions() {
-        if (!config_.pishock_enabled || !config_.pishock_user_agreement ||
-            config_.pishock_username.empty() || config_.pishock_api_key.empty() || 
-            config_.pishock_share_code.empty()) {
-            if (Logger::IsInitialized()) {
-                Logger::Warning("PiShock warning actions skipped: not fully configured");
-            }
-            return;
-        }
-        
-        // Rate limiting - only send every 2 seconds to avoid spamming
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
-        if (elapsed < 2) {
-            return;
-        }
-        
-        bool action_sent = false;
-        std::string response;
-        
-        // Calculate actual intensity and duration values
-        // PiShock API requires values 1-100 for intensity and 1-15 for duration
-        int intensity = static_cast<int>(config_.pishock_warning_intensity * 100.0f);
-        if (intensity < 1) intensity = 1;
-        if (intensity > 100) intensity = 100;
-        
-        int duration = static_cast<int>(config_.pishock_warning_duration * 15.0f);
-        if (duration < 1) duration = 1;
-        if (duration > 15) duration = 15;
-        
-        // Send actions based on configuration
-        if (config_.pishock_warning_beep) {
-            if (SendPiShockCommand(
-                config_.pishock_username, 
-                config_.pishock_api_key, 
-                config_.pishock_share_code, 
-                2, // beep operation
-                0, // intensity not used for beep
-                duration,
-                response)) {
-                action_sent = true;
-            }
-        }
-        
-        if (config_.pishock_warning_vibrate) {
-            if (SendPiShockCommand(
-                config_.pishock_username, 
-                config_.pishock_api_key, 
-                config_.pishock_share_code, 
-                1, // vibrate operation
-                intensity,
-                duration,
-                response)) {
-                action_sent = true;
-            }
-        }
-        
-        if (config_.pishock_warning_shock) {
-            if (SendPiShockCommand(
-                config_.pishock_username, 
-                config_.pishock_api_key, 
-                config_.pishock_share_code, 
-                0, // shock operation
-                intensity,
-                duration,
-                response)) {
-                action_sent = true;
-            }
-        }
-        
-        // Update timestamp if any action was sent
-        if (action_sent) {
-            last_pishock_time_ = current_time;
-            
-            if (Logger::IsInitialized()) {
-                Logger::Info("Sent PiShock warning actions");
-            }
-        }
-    }
-
     void UIManager::SendPiShockDisobedienceActions() {
+        if (Logger::IsInitialized()) {
+            Logger::Debug("SendPiShockDisobedienceActions called - begin log tracking");
+        }
+        
         if (!config_.pishock_enabled || !config_.pishock_user_agreement ||
             config_.pishock_username.empty() || config_.pishock_api_key.empty() || 
             config_.pishock_share_code.empty()) {
@@ -2549,69 +2460,84 @@ namespace StayPutVR {
         auto current_time = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
         if (elapsed < 2) {
+            if (Logger::IsInitialized()) {
+                Logger::Debug("PiShock disobedience actions skipped: rate limited, elapsed=" + 
+                              std::to_string(elapsed) + " seconds since last action");
+            }
             return;
         }
         
-        bool action_sent = false;
-        std::string response;
+        // Update timestamp 
+        last_pishock_time_ = current_time;
         
         // Calculate actual intensity and duration values
         // PiShock API requires values 1-100 for intensity and 1-15 for duration
         int intensity = static_cast<int>(config_.pishock_disobedience_intensity * 100.0f);
-        if (intensity < 1) intensity = 1;
-        if (intensity > 100) intensity = 100;
-        
         int duration = static_cast<int>(config_.pishock_disobedience_duration * 15.0f);
-        if (duration < 1) duration = 1;
-        if (duration > 15) duration = 15;
         
-        // Send actions based on configuration
+        if (Logger::IsInitialized()) {
+            Logger::Debug("PiShock disobedience settings: beep=" + 
+                         std::to_string(config_.pishock_disobedience_beep) + 
+                         ", vibrate=" + std::to_string(config_.pishock_disobedience_vibrate) + 
+                         ", shock=" + std::to_string(config_.pishock_disobedience_shock) + 
+                         ", intensity=" + std::to_string(intensity) + 
+                         ", duration=" + std::to_string(duration));
+        }
+        
+        // Send actions based on configuration asynchronously
         if (config_.pishock_disobedience_beep) {
-            if (SendPiShockCommand(
+            SendPiShockCommandAsync(
                 config_.pishock_username, 
                 config_.pishock_api_key, 
                 config_.pishock_share_code, 
                 2, // beep operation
                 0, // intensity not used for beep
                 duration,
-                response)) {
-                action_sent = true;
-            }
+                [](bool success, const std::string& response) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("PiShock disobedience beep result: " + 
+                                     std::string(success ? "success" : "failed") + " - " + response);
+                    }
+                }
+            );
         }
         
         if (config_.pishock_disobedience_vibrate) {
-            if (SendPiShockCommand(
+            SendPiShockCommandAsync(
                 config_.pishock_username, 
                 config_.pishock_api_key, 
                 config_.pishock_share_code, 
                 1, // vibrate operation
                 intensity,
                 duration,
-                response)) {
-                action_sent = true;
-            }
+                [](bool success, const std::string& response) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("PiShock disobedience vibrate result: " + 
+                                     std::string(success ? "success" : "failed") + " - " + response);
+                    }
+                }
+            );
         }
         
         if (config_.pishock_disobedience_shock) {
-            if (SendPiShockCommand(
+            SendPiShockCommandAsync(
                 config_.pishock_username, 
                 config_.pishock_api_key, 
                 config_.pishock_share_code, 
                 0, // shock operation
                 intensity,
                 duration,
-                response)) {
-                action_sent = true;
-            }
+                [](bool success, const std::string& response) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("PiShock disobedience shock result: " + 
+                                     std::string(success ? "success" : "failed") + " - " + response);
+                    }
+                }
+            );
         }
         
-        // Update timestamp if any action was sent
-        if (action_sent) {
-            last_pishock_time_ = current_time;
-            
-            if (Logger::IsInitialized()) {
-                Logger::Info("Sent PiShock disobedience actions");
-            }
+        if (Logger::IsInitialized()) {
+            Logger::Info("Sent PiShock disobedience actions asynchronously");
         }
     }
 

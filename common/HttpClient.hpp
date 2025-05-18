@@ -4,6 +4,10 @@
 #include <vector>
 #include <map>
 #include <functional>
+#include <mutex>
+#include <thread>
+#include <queue>
+#include <atomic>
 #include <nlohmann/json.hpp>
 
 namespace StayPutVR {
@@ -31,11 +35,27 @@ public:
         std::function<void(int progress)> progressCallback = nullptr
     );
     
+    // Start the worker thread for async requests
+    static void StartWorkerThread();
+    
+    // Stop the worker thread
+    static void StopWorkerThread();
+    
+    // Add an async request to the queue
+    static void QueueAsyncRequest(std::function<void()> request);
+    
 private:
     static bool initialized_;
+    static std::thread worker_thread_;
+    static std::atomic<bool> worker_running_;
+    static std::queue<std::function<void()>> request_queue_;
+    static std::mutex queue_mutex_;
+    
+    // Worker thread function
+    static void WorkerThreadFunction();
 };
 
-// Utility function for PiShock API
+// Synchronous utility function for PiShock API
 bool SendPiShockCommand(
     const std::string& username,
     const std::string& apiKey,
@@ -44,6 +64,17 @@ bool SendPiShockCommand(
     int intensity,           // 1-100 for shock/vibrate
     int duration,            // 1-15 seconds
     std::string& response
+);
+
+// Asynchronous utility function for PiShock API
+void SendPiShockCommandAsync(
+    const std::string& username,
+    const std::string& apiKey,
+    const std::string& shareCode,
+    int operation,           // 0 = shock, 1 = vibrate, 2 = beep
+    int intensity,           // 1-100 for shock/vibrate
+    int duration,            // 1-15 seconds
+    std::function<void(bool success, const std::string& response)> callback = nullptr
 );
 
 } // namespace StayPutVR 

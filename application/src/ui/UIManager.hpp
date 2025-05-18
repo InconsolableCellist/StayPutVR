@@ -197,7 +197,6 @@ namespace StayPutVR {
         std::string GetOSCDeviceString(OSCDeviceType device) const;
         
         // PiShock helper functions
-        void SendPiShockWarningActions();
         void SendPiShockDisobedienceActions();
         
         // Timestamp of last sent PiShock signal for rate limiting
