@@ -30,6 +30,11 @@ namespace StayPutVR {
         
         // Create device manager instance
         device_manager_ = new DeviceManager();
+        
+        // Initialize timestamps
+        last_sound_time_ = std::chrono::steady_clock::now();
+        last_pishock_time_ = std::chrono::steady_clock::now();
+        last_osc_toggle_time_ = std::chrono::steady_clock::now();
     }
 
     UIManager::~UIManager() {
@@ -123,6 +128,53 @@ namespace StayPutVR {
         
         // Load configuration
         LoadConfig();
+        
+        // Automatically connect to OSC if it was previously enabled
+        if (config_.osc_enabled) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("UIManager: OSC was previously enabled, connecting automatically");
+            }
+            
+            // Add a small delay to ensure all components are properly initialized
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            
+            // Try to initialize OSC
+            bool osc_init_result = OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_send_port, config_.osc_receive_port);
+            
+            if (osc_init_result) {
+                osc_enabled_ = true;
+                
+                // Configure OSC paths
+                OSCManager::GetInstance().SetConfig(config_);
+                
+                // Explicitly set up callbacks
+                OSCManager::GetInstance().SetLockCallback(
+                    [this](OSCDeviceType device, bool locked) {
+                        OnDeviceLocked(device, locked);
+                    }
+                );
+                
+                OSCManager::GetInstance().SetGlobalLockCallback(
+                    [this](bool lock) {
+                        if (Logger::IsInitialized()) {
+                            Logger::Info("Global " + std::string(lock ? "lock" : "unlock") + " triggered via OSC");
+                        }
+                        ActivateGlobalLock(lock);
+                    }
+                );
+                
+                if (Logger::IsInitialized()) {
+                    Logger::Info("UIManager: OSC auto-connection successful, callbacks registered");
+                }
+            } else {
+                if (Logger::IsInitialized()) {
+                    Logger::Error("UIManager: OSC auto-connection failed, will need manual activation");
+                }
+                osc_enabled_ = false;
+                config_.osc_enabled = false;
+                SaveConfig();
+            }
+        }
         
         // Initialize device manager - but continue even if it fails
         if (device_manager_) {
@@ -503,6 +555,7 @@ namespace StayPutVR {
         bool warning_triggered = false;
         bool out_of_bounds_triggered = false;
         bool success_triggered = false;
+        bool disable_threshold_exceeded = false;
         
         // Get current time to check if we should play sound again
         auto current_time = std::chrono::steady_clock::now();
@@ -523,6 +576,22 @@ namespace StayPutVR {
                 
                 // Previous zone status - safe zone is when not in warning or exceeding
                 bool was_in_safe_zone = !was_exceeding && !was_warning;
+                
+                // Check if device is beyond the disable threshold
+                bool beyond_disable_threshold = device.position_deviation > disable_threshold_;
+                
+                // If any device exceeds the disable threshold, we'll skip all alerts
+                if (beyond_disable_threshold) {
+                    disable_threshold_exceeded = true;
+                    
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("Device " + device.serial + " exceeded disable threshold: " + 
+                                    std::to_string(device.position_deviation) + " > " + std::to_string(disable_threshold_));
+                    }
+                    
+                    // Don't update zone status for devices beyond disable threshold
+                    continue;
+                }
                 
                 // Check if deviation exceeds threshold
                 device.exceeds_threshold = device.position_deviation > position_threshold_;
@@ -578,12 +647,34 @@ namespace StayPutVR {
                     
                     if (config_.pishock_enabled) {
                         if (StayPutVR::Logger::IsInitialized()) {
-                            StayPutVR::Logger::Info("Triggering PiShock disobedience actions for device " + device.serial);
+                            Logger::Info("Triggering initial PiShock disobedience actions for device " + device.serial);
+                        }
+                        SendPiShockDisobedienceActions();
+                    }
+                } 
+                // Continue triggering PiShock for devices that remain in out-of-bounds zone
+                else if (device.exceeds_threshold && config_.pishock_enabled) {
+                    // Check if enough time has passed since the last PiShock action
+                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
+                    
+                    // Only send repeating PiShock actions every 2 seconds
+                    if (elapsed >= 2) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering continuous PiShock disobedience actions for device " + device.serial + 
+                                        " (" + std::to_string(elapsed) + " seconds since last action)");
                         }
                         SendPiShockDisobedienceActions();
                     }
                 }
             }
+        }
+        
+        // If any device exceeded the disable threshold, skip all alerts
+        if (disable_threshold_exceeded) {
+            if (Logger::IsInitialized()) {
+                Logger::Debug("Disable threshold exceeded, skipping all audio and PiShock alerts");
+            }
+            return;
         }
         
         // Sound rate limiting - use longer cooldown to prevent audio from being cut off
@@ -1425,7 +1516,6 @@ namespace StayPutVR {
         ImGui::Text("OSC Configuration");
         ImGui::Separator();
         
-        // Ready state toggle button (moved from Main tab)
         if (osc_enabled_) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
             if (ImGui::Button("Disable OSC", ImVec2(150, 40))) {
@@ -1499,6 +1589,100 @@ namespace StayPutVR {
             ImGui::EndTooltip();
         }
         
+        // OSC Device Lock Paths
+        ImGui::Separator();
+        ImGui::Text("Device Lock Paths");
+        ImGui::TextWrapped("These are the OSC addresses that the application will listen to for locking/unlocking signals. Sending a value of true/1 to these addresses will lock the corresponding device, false/0 will unlock it.");
+        ImGui::Separator();
+        
+        // Device-specific paths
+        
+        // HMD
+        static char hmd_path[128];
+        if (strlen(hmd_path) == 0) {
+            strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
+        }
+        if (ImGui::InputText("HMD Lock Path", hmd_path, IM_ARRAYSIZE(hmd_path))) {
+            config_.osc_lock_path_hmd = hmd_path;
+            changed = true;
+        }
+        
+        // Left Hand
+        static char left_hand_path[128];
+        if (strlen(left_hand_path) == 0) {
+            strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
+        }
+        if (ImGui::InputText("Left Hand Lock Path", left_hand_path, IM_ARRAYSIZE(left_hand_path))) {
+            config_.osc_lock_path_left_hand = left_hand_path;
+            changed = true;
+        }
+        
+        // Right Hand
+        static char right_hand_path[128];
+        if (strlen(right_hand_path) == 0) {
+            strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
+        }
+        if (ImGui::InputText("Right Hand Lock Path", right_hand_path, IM_ARRAYSIZE(right_hand_path))) {
+            config_.osc_lock_path_right_hand = right_hand_path;
+            changed = true;
+        }
+        
+        // Left Foot
+        static char left_foot_path[128];
+        if (strlen(left_foot_path) == 0) {
+            strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
+        }
+        if (ImGui::InputText("Left Foot Lock Path", left_foot_path, IM_ARRAYSIZE(left_foot_path))) {
+            config_.osc_lock_path_left_foot = left_foot_path;
+            changed = true;
+        }
+        
+        // Right Foot
+        static char right_foot_path[128];
+        if (strlen(right_foot_path) == 0) {
+            strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
+        }
+        if (ImGui::InputText("Right Foot Lock Path", right_foot_path, IM_ARRAYSIZE(right_foot_path))) {
+            config_.osc_lock_path_right_foot = right_foot_path;
+            changed = true;
+        }
+        
+        // Hip
+        static char hip_path[128];
+        if (strlen(hip_path) == 0) {
+            strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
+        }
+        if (ImGui::InputText("Hip Lock Path", hip_path, IM_ARRAYSIZE(hip_path))) {
+            config_.osc_lock_path_hip = hip_path;
+            changed = true;
+        }
+        
+        // Global Lock/Unlock Paths
+        ImGui::Separator();
+        ImGui::Text("Global Lock/Unlock Paths");
+        ImGui::TextWrapped("These are the OSC addresses that will trigger global lock or unlock of all enabled devices.");
+        ImGui::Separator();
+        
+        // Global Lock
+        static char global_lock_path[128];
+        if (strlen(global_lock_path) == 0) {
+            strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
+        }
+        if (ImGui::InputText("Global Lock Path", global_lock_path, IM_ARRAYSIZE(global_lock_path))) {
+            config_.osc_global_lock_path = global_lock_path;
+            changed = true;
+        }
+        
+        // Global Unlock
+        static char global_unlock_path[128];
+        if (strlen(global_unlock_path) == 0) {
+            strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
+        }
+        if (ImGui::InputText("Global Unlock Path", global_unlock_path, IM_ARRAYSIZE(global_unlock_path))) {
+            config_.osc_global_unlock_path = global_unlock_path;
+            changed = true;
+        }
+        
         // Chaining mode
         ImGui::Text("Chaining Mode");
         ImGui::Separator();
@@ -1517,14 +1701,60 @@ namespace StayPutVR {
             ImGui::EndTooltip();
         }
         
+        // Reset to defaults button
+        ImGui::Separator();
+        if (ImGui::Button("Reset Paths to Defaults")) {
+            // Reset device lock paths
+            config_.osc_lock_path_hmd = "/avatar/parameters/SPVR_neck_enter";
+            strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
+            
+            config_.osc_lock_path_left_hand = "/avatar/parameters/SPVR_handLeft_enter";
+            strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
+            
+            config_.osc_lock_path_right_hand = "/avatar/parameters/SPVR_handRight_enter";
+            strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
+            
+            config_.osc_lock_path_left_foot = "/avatar/parameters/SPVR_footLeft_enter";
+            strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
+            
+            config_.osc_lock_path_right_foot = "/avatar/parameters/SPVR_footRight_enter";
+            strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
+            
+            config_.osc_lock_path_hip = "/avatar/parameters/SPVR_hip_enter";
+            strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
+            
+            // Reset global lock/unlock paths
+            config_.osc_global_lock_path = "/avatar/parameters/SPVR_global_lock";
+            strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
+            
+            config_.osc_global_unlock_path = "/avatar/parameters/SPVR_global_unlock";
+            strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
+            
+            // Update OSCManager with new paths
+            if (osc_enabled_) {
+                OSCManager::GetInstance().SetConfig(config_);
+            }
+            
+            changed = true;
+        }
+        
         // Save changes
         if (changed) {
             SaveConfig();
+            
+            // If OSC is enabled, update the paths in the OSCManager
+            if (osc_enabled_) {
+                OSCManager::GetInstance().SetConfig(config_);
+            }
         }
     }
 
     void UIManager::HandleOSCConnection() {
         if (osc_enabled_) {
+            if (Logger::IsInitialized()) {
+                Logger::Debug("HandleOSCConnection: OSC already enabled, verifying callbacks");
+            }
+            VerifyOSCCallbacks();
             return;
         }
 
@@ -1534,12 +1764,11 @@ namespace StayPutVR {
             config_.osc_enabled = true;
             SaveConfig();
 
-            // Set up lock callback
-            OSCManager::GetInstance().SetLockCallback(
-                [this](OSCDeviceType device, bool locked) {
-                    OnDeviceLocked(device, locked);
-                }
-            );
+            // Set the config for OSC paths
+            OSCManager::GetInstance().SetConfig(config_);
+
+            // Set up callbacks
+            VerifyOSCCallbacks();
 
             if (Logger::IsInitialized()) {
                 Logger::Info("OSC connection established");
@@ -1567,47 +1796,47 @@ namespace StayPutVR {
     }
 
     void UIManager::OnDeviceLocked(OSCDeviceType device, bool locked) {
-        // Find the device in our list
-        for (auto& pos : device_positions_) {
-            // Map OSCDeviceType to our internal device type
-            bool isMatch = false;
-            
-            // Simple mapping logic
-            switch (device) {
-                case OSCDeviceType::HMD:
-                    isMatch = (pos.type == DeviceType::HMD);
-                    break;
-                case OSCDeviceType::ControllerLeft:
-                case OSCDeviceType::ControllerRight:
-                    isMatch = (pos.type == DeviceType::CONTROLLER);
-                    break;
-                // Add more cases as needed
-                default:
-                    isMatch = false;
-            }
-            
-            if (isMatch) {
-                // Found a match
-                if (pos.include_in_locking) {
-                    if (config_.chaining_mode) {
-                        // Lock all devices
-                        for (auto& other_pos : device_positions_) {
-                            if (other_pos.include_in_locking) {
-                                other_pos.locked = locked;
-                                UpdateDeviceStatus(MapToOSCDeviceType(other_pos.type), 
-                                    locked ? DeviceStatus::LockedSafe : DeviceStatus::Unlocked);
-                            }
-                        }
-                    } else {
-                        // Lock just this device
-                        pos.locked = locked;
-                        UpdateDeviceStatus(device, 
-                            locked ? DeviceStatus::LockedSafe : DeviceStatus::Unlocked);
-                    }
-                }
-                break;
-            }
+        // Add more detailed logging
+        if (Logger::IsInitialized()) {
+            Logger::Debug("OnDeviceLocked called: device=" + GetOSCDeviceString(device) + 
+                         ", locked=" + std::string(locked ? "true" : "false") + 
+                         ", current_state=" + std::string(global_lock_active_ ? "locked" : "unlocked"));
         }
+        
+        // Only process "true" messages, ignore "false" messages
+        if (!locked) {
+            if (Logger::IsInitialized()) {
+                Logger::Debug("OSC device unlock message received for " + GetOSCDeviceString(device) + " - ignoring");
+            }
+            return;
+        }
+        
+        // Implement debouncing - check if enough time has passed since last action
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_osc_toggle_time_).count();
+        
+        // Require at least 1000ms (1 second) between toggles
+        if (elapsed < 1000) {
+            if (Logger::IsInitialized()) {
+                Logger::Debug("OSC device lock message debounced for " + GetOSCDeviceString(device) + 
+                             " - only " + std::to_string(elapsed) + "ms elapsed");
+            }
+            return;
+        }
+        
+        // Update last toggle time
+        last_osc_toggle_time_ = current_time;
+        
+        // Toggle the current global lock state
+        bool new_state = !global_lock_active_;
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("OSC device lock message received for " + GetOSCDeviceString(device) + 
+                        ". Toggling global lock to " + std::string(new_state ? "ON" : "OFF"));
+        }
+        
+        // Activate or deactivate global lock based on the new toggled state
+        ActivateGlobalLock(new_state);
     }
 
     void UIManager::UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status) {
@@ -2538,6 +2767,35 @@ namespace StayPutVR {
         
         if (Logger::IsInitialized()) {
             Logger::Info("Sent PiShock disobedience actions asynchronously");
+        }
+    }
+
+    void UIManager::VerifyOSCCallbacks() {
+        if (!osc_enabled_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("VerifyOSCCallbacks: OSC is not enabled");
+            }
+            return;
+        }
+        
+        // Re-register callbacks to ensure they're properly set
+        OSCManager::GetInstance().SetLockCallback(
+            [this](OSCDeviceType device, bool locked) {
+                OnDeviceLocked(device, locked);
+            }
+        );
+        
+        OSCManager::GetInstance().SetGlobalLockCallback(
+            [this](bool lock) {
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Global " + std::string(lock ? "lock" : "unlock") + " triggered via OSC");
+                }
+                ActivateGlobalLock(lock);
+            }
+        );
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("VerifyOSCCallbacks: OSC callbacks verified and re-registered");
         }
     }
 

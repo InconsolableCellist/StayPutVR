@@ -8,6 +8,7 @@
 #include "../../common/PathUtils.hpp"
 #include "../../common/Audio.hpp"
 #include "../../common/Config.hpp"
+#include "../../common/HttpClient.hpp"
 
 // Global variables
 std::atomic<bool> g_running = true;
@@ -110,6 +111,7 @@ int main(int argc, char* argv[]) {
         if (!ui_manager.Initialize()) {
             // Handle initialization error
             StayPutVR::Logger::Critical("Failed to initialize UI");
+            StayPutVR::HttpClient::Shutdown();
             StayPutVR::AudioManager::Shutdown();
             StayPutVR::Logger::Shutdown();
             return 1;
@@ -141,6 +143,10 @@ int main(int argc, char* argv[]) {
         // Cleanup
         StayPutVR::Logger::Info("Shutting down UI");
         ui_manager.Shutdown();
+        
+        // Shutdown HttpClient to properly terminate any active worker threads
+        StayPutVR::Logger::Info("Shutting down HttpClient");
+        StayPutVR::HttpClient::Shutdown();
         
         // Shutdown audio system
         StayPutVR::Logger::Info("Shutting down audio system");

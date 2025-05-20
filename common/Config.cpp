@@ -20,6 +20,14 @@ Config::Config()
     , osc_address_disable("/stayputvr/disable")
     , osc_enabled(false)
     , chaining_mode(false)
+    , osc_lock_path_hmd("/avatar/parameters/SPVR_neck_enter")
+    , osc_lock_path_left_hand("/avatar/parameters/SPVR_handLeft_enter")
+    , osc_lock_path_right_hand("/avatar/parameters/SPVR_handRight_enter")
+    , osc_lock_path_left_foot("/avatar/parameters/SPVR_footLeft_enter")
+    , osc_lock_path_right_foot("/avatar/parameters/SPVR_footRight_enter")
+    , osc_lock_path_hip("/avatar/parameters/SPVR_hip_enter")
+    , osc_global_lock_path("/avatar/parameters/SPVR_global_lock")
+    , osc_global_unlock_path("/avatar/parameters/SPVR_global_unlock")
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
@@ -98,6 +106,18 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
         
         chaining_mode = j.value("chaining_mode", false);
+        
+        // Load OSC lock paths
+        osc_lock_path_hmd = j.value("osc_lock_path_hmd", "/avatar/parameters/SPVR_neck_enter");
+        osc_lock_path_left_hand = j.value("osc_lock_path_left_hand", "/avatar/parameters/SPVR_handLeft_enter");
+        osc_lock_path_right_hand = j.value("osc_lock_path_right_hand", "/avatar/parameters/SPVR_handRight_enter");
+        osc_lock_path_left_foot = j.value("osc_lock_path_left_foot", "/avatar/parameters/SPVR_footLeft_enter");
+        osc_lock_path_right_foot = j.value("osc_lock_path_right_foot", "/avatar/parameters/SPVR_footRight_enter");
+        osc_lock_path_hip = j.value("osc_lock_path_hip", "/avatar/parameters/SPVR_hip_enter");
+        
+        // Load global lock/unlock paths
+        osc_global_lock_path = j.value("osc_global_lock_path", "/avatar/parameters/SPVR_global_lock");
+        osc_global_unlock_path = j.value("osc_global_unlock_path", "/avatar/parameters/SPVR_global_unlock");
 
         // PiShock settings
         pishock_enabled = j.value("pishock_enabled", false);
@@ -191,6 +211,18 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_send_port"] = osc_send_port;
         j["osc_receive_port"] = osc_receive_port;
         j["chaining_mode"] = chaining_mode;
+        
+        // OSC device lock paths
+        j["osc_lock_path_hmd"] = osc_lock_path_hmd;
+        j["osc_lock_path_left_hand"] = osc_lock_path_left_hand;
+        j["osc_lock_path_right_hand"] = osc_lock_path_right_hand;
+        j["osc_lock_path_left_foot"] = osc_lock_path_left_foot;
+        j["osc_lock_path_right_foot"] = osc_lock_path_right_foot;
+        j["osc_lock_path_hip"] = osc_lock_path_hip;
+        
+        // Global lock/unlock paths
+        j["osc_global_lock_path"] = osc_global_lock_path;
+        j["osc_global_unlock_path"] = osc_global_unlock_path;
 
         // PiShock settings
         j["pishock_enabled"] = pishock_enabled;

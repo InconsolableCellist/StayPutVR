@@ -31,6 +31,18 @@ public:
     std::string osc_address_warning;
     std::string osc_address_disable;
     
+    // OSC Device Lock Paths
+    std::string osc_lock_path_hmd = "/avatar/parameters/SPVR_neck_enter";
+    std::string osc_lock_path_left_hand = "/avatar/parameters/SPVR_handLeft_enter";
+    std::string osc_lock_path_right_hand = "/avatar/parameters/SPVR_handRight_enter";
+    std::string osc_lock_path_left_foot = "/avatar/parameters/SPVR_footLeft_enter";
+    std::string osc_lock_path_right_foot = "/avatar/parameters/SPVR_footRight_enter";
+    std::string osc_lock_path_hip = "/avatar/parameters/SPVR_hip_enter";
+    
+    // Global lock/unlock paths
+    std::string osc_global_lock_path = "/avatar/parameters/SPVR_global_lock";
+    std::string osc_global_unlock_path = "/avatar/parameters/SPVR_global_unlock";
+    
     // PiShock Settings via VRCOSC
     bool pishock_enabled = false;
     int pishock_group = 0;

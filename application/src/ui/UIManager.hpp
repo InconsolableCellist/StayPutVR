@@ -189,6 +189,7 @@ namespace StayPutVR {
         void UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status);
         void HandleOSCConnection();
         void DisconnectOSC();
+        void VerifyOSCCallbacks();
         
         // Helper function to map DeviceType to OSCDeviceType
         OSCDeviceType MapToOSCDeviceType(DeviceType type);
@@ -201,5 +202,8 @@ namespace StayPutVR {
         
         // Timestamp of last sent PiShock signal for rate limiting
         std::chrono::steady_clock::time_point last_pishock_time_ = std::chrono::steady_clock::now();
+        
+        // Last time OSC lock was toggled (for debouncing)
+        std::chrono::steady_clock::time_point last_osc_toggle_time_;
     };
 } 
