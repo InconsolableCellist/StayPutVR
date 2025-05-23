@@ -14,6 +14,17 @@
 #include "../../../common/OSCManager.hpp"
 #include "../../common/HttpClient.hpp"
 
+// Windows-specific includes for icon handling
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <Windows.h>
+#include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include "../resource.h"
+#endif
+
 using json = nlohmann::json;
 
 extern std::atomic<bool> g_running;
@@ -68,6 +79,18 @@ namespace StayPutVR {
             std::cerr << "Failed to create GLFW window" << std::endl;
             return false;
         }
+        
+#ifdef _WIN32
+        // Set window icon
+        HWND hwnd = glfwGetWin32Window(window_);
+        if (hwnd) {
+            HICON hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_ICON1));
+            if (hIcon) {
+                SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+                SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+            }
+        }
+#endif
         
         glfwMakeContextCurrent(window_);
         glfwSwapInterval(1); // Enable vsync
@@ -154,11 +177,19 @@ namespace StayPutVR {
                     }
                 );
                 
+                OSCManager::GetInstance().SetIncludeCallback(
+                    [this](OSCDeviceType device, bool include) {
+                        OnDeviceIncluded(device, include);
+                    }
+                );
+                
+                // Set up OSC callbacks in Initialize() method
                 OSCManager::GetInstance().SetGlobalLockCallback(
                     [this](bool lock) {
                         if (Logger::IsInitialized()) {
                             Logger::Info("Global " + std::string(lock ? "lock" : "unlock") + " triggered via OSC");
                         }
+                        // Use the same method the UI uses, which handles countdown and sound effects
                         ActivateGlobalLock(lock);
                     }
                 );
@@ -349,6 +380,29 @@ namespace StayPutVR {
                     }
                 }
                 
+                // Apply device role if available in config
+                auto roleIt = config_.device_roles.find(serial);
+                if (roleIt != config_.device_roles.end()) {
+                    int roleValue = roleIt->second;
+                    pos.role = static_cast<DeviceRole>(roleValue);
+                    
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        std::string roleName = "Unknown";
+                        switch (pos.role) {
+                            case DeviceRole::None: roleName = "None"; break;
+                            case DeviceRole::HMD: roleName = "HMD"; break;
+                            case DeviceRole::LeftController: roleName = "LeftController"; break;
+                            case DeviceRole::RightController: roleName = "RightController"; break;
+                            case DeviceRole::Hip: roleName = "Hip"; break;
+                            case DeviceRole::LeftFoot: roleName = "LeftFoot"; break;
+                            case DeviceRole::RightFoot: roleName = "RightFoot"; break;
+                            default: roleName = "Unknown"; break;
+                        }
+                        StayPutVR::Logger::Info("Applied stored role for device: " + serial + " -> " + roleName + 
+                                              " (value: " + std::to_string(roleValue) + ")");
+                    }
+                }
+                
                 // Log new device
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Info("New device connected: " + serial);
@@ -456,6 +510,20 @@ namespace StayPutVR {
         if (global_lock_active_) {
             CheckDevicePositionDeviations();
         }
+        // Also check if there are any individually locked devices
+        else {
+            bool has_locked_devices = false;
+            for (const auto& device : device_positions_) {
+                if (device.locked) {
+                    has_locked_devices = true;
+                    break;
+                }
+            }
+            
+            if (has_locked_devices) {
+                CheckDevicePositionDeviations();
+            }
+        }
 
         // Save device names to configuration if they exist
         bool names_changed = false;
@@ -484,6 +552,10 @@ namespace StayPutVR {
             if (lock) {
                 for (int i = 0; i < 3; i++) device_positions_[index].original_position[i] = device_positions_[index].position[i];
                 for (int i = 0; i < 4; i++) device_positions_[index].original_rotation[i] = device_positions_[index].rotation[i];
+                // Initialize deviation tracking
+                device_positions_[index].position_deviation = 0.0f;
+                device_positions_[index].exceeds_threshold = false;
+                device_positions_[index].in_warning_zone = false;
             }
         }
     }
@@ -561,7 +633,8 @@ namespace StayPutVR {
         auto current_time = std::chrono::steady_clock::now();
         
         for (auto& device : device_positions_) {
-            if (device.include_in_locking && global_lock_active_) {
+            // Check both globally locked devices AND individually locked devices
+            if ((device.include_in_locking && global_lock_active_) || device.locked) {
                 // Calculate Euclidean distance between current position and original position
                 float deviation = 0.0f;
                 for (int i = 0; i < 3; i++) {
@@ -780,6 +853,7 @@ namespace StayPutVR {
                 device_obj["serial"] = device.serial;
                 device_obj["locked"] = device.locked;
                 device_obj["include_in_locking"] = device.include_in_locking;
+                device_obj["role"] = static_cast<int>(device.role);
                 
                 // Save device name if it's set
                 if (!device.device_name.empty()) {
@@ -894,6 +968,14 @@ namespace StayPutVR {
                         // Load include_in_locking state
                         if (device_obj.contains("include_in_locking") && device_obj["include_in_locking"].is_boolean()) {
                             device_positions_[index].include_in_locking = device_obj["include_in_locking"];
+                        }
+                        
+                        // Load role if available
+                        if (device_obj.contains("role") && device_obj["role"].is_number_integer()) {
+                            int role_int = device_obj["role"];
+                            device_positions_[index].role = static_cast<DeviceRole>(role_int);
+                            // Also store in config
+                            config_.device_roles[serial] = role_int;
                         }
                         
                         // Load position
@@ -1100,6 +1182,19 @@ namespace StayPutVR {
             ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Global Lock Active");
         }
         
+        // Count individually locked devices
+        int individually_locked = 0;
+        for (const auto& device : device_positions_) {
+            if (device.locked) {
+                individually_locked++;
+            }
+        }
+        
+        if (individually_locked > 0) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), 
+                "%d device(s) individually locked", individually_locked);
+        }
+        
         // Show any warnings
         if (warning_devices > 0) {
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 
@@ -1271,11 +1366,12 @@ namespace StayPutVR {
         
         // Add the lock button at the bottom of the Main tab
         ImGui::Separator();
-        ImGui::Text("Lock Controls:");
-        
+        ImGui::Text("Global Lock Controls:");
+        ImGui::TextWrapped("This affects all devices marked as 'Will Lock' in the Devices tab. Individual devices can be locked/unlocked in the Devices tab.");
+
         if (!global_lock_active_) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f)); // Green
-            if (ImGui::Button("Lock Selected Devices", ImVec2(200, 40))) {
+            if (ImGui::Button("Lock All Included Devices", ImVec2(250, 40))) {
                 ActivateGlobalLock(true);
             }
             ImGui::PopStyleColor();
@@ -1297,10 +1393,21 @@ namespace StayPutVR {
             }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f)); // Red
-            if (ImGui::Button("Unlock All Devices", ImVec2(200, 40))) {
+            if (ImGui::Button("Unlock All Included Devices", ImVec2(250, 40))) {
                 ActivateGlobalLock(false);
             }
             ImGui::PopStyleColor();
+            
+            // Count locked devices
+            int locked_devices = 0;
+            for (const auto& device : device_positions_) {
+                if (device.include_in_locking) {
+                    locked_devices++;
+                }
+            }
+            
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "%d device(s) will be unlocked", locked_devices);
         }
     }
     
@@ -1657,6 +1764,72 @@ namespace StayPutVR {
             changed = true;
         }
         
+        // Device Include Paths
+        ImGui::Separator();
+        ImGui::Text("Device Include Paths");
+        ImGui::TextWrapped("These are the OSC addresses that toggle whether a device is included in locking. When a true/1 value is received, the include state for that device will be toggled.");
+        ImGui::Separator();
+        
+        // HMD Include
+        static char hmd_include_path[128];
+        if (strlen(hmd_include_path) == 0) {
+            strcpy_s(hmd_include_path, sizeof(hmd_include_path), config_.osc_include_path_hmd.c_str());
+        }
+        if (ImGui::InputText("HMD Include Path", hmd_include_path, IM_ARRAYSIZE(hmd_include_path))) {
+            config_.osc_include_path_hmd = hmd_include_path;
+            changed = true;
+        }
+        
+        // Left Hand Include
+        static char left_hand_include_path[128];
+        if (strlen(left_hand_include_path) == 0) {
+            strcpy_s(left_hand_include_path, sizeof(left_hand_include_path), config_.osc_include_path_left_hand.c_str());
+        }
+        if (ImGui::InputText("Left Hand Include Path", left_hand_include_path, IM_ARRAYSIZE(left_hand_include_path))) {
+            config_.osc_include_path_left_hand = left_hand_include_path;
+            changed = true;
+        }
+        
+        // Right Hand Include
+        static char right_hand_include_path[128];
+        if (strlen(right_hand_include_path) == 0) {
+            strcpy_s(right_hand_include_path, sizeof(right_hand_include_path), config_.osc_include_path_right_hand.c_str());
+        }
+        if (ImGui::InputText("Right Hand Include Path", right_hand_include_path, IM_ARRAYSIZE(right_hand_include_path))) {
+            config_.osc_include_path_right_hand = right_hand_include_path;
+            changed = true;
+        }
+        
+        // Left Foot Include
+        static char left_foot_include_path[128];
+        if (strlen(left_foot_include_path) == 0) {
+            strcpy_s(left_foot_include_path, sizeof(left_foot_include_path), config_.osc_include_path_left_foot.c_str());
+        }
+        if (ImGui::InputText("Left Foot Include Path", left_foot_include_path, IM_ARRAYSIZE(left_foot_include_path))) {
+            config_.osc_include_path_left_foot = left_foot_include_path;
+            changed = true;
+        }
+        
+        // Right Foot Include
+        static char right_foot_include_path[128];
+        if (strlen(right_foot_include_path) == 0) {
+            strcpy_s(right_foot_include_path, sizeof(right_foot_include_path), config_.osc_include_path_right_foot.c_str());
+        }
+        if (ImGui::InputText("Right Foot Include Path", right_foot_include_path, IM_ARRAYSIZE(right_foot_include_path))) {
+            config_.osc_include_path_right_foot = right_foot_include_path;
+            changed = true;
+        }
+        
+        // Hip Include
+        static char hip_include_path[128];
+        if (strlen(hip_include_path) == 0) {
+            strcpy_s(hip_include_path, sizeof(hip_include_path), config_.osc_include_path_hip.c_str());
+        }
+        if (ImGui::InputText("Hip Include Path", hip_include_path, IM_ARRAYSIZE(hip_include_path))) {
+            config_.osc_include_path_hip = hip_include_path;
+            changed = true;
+        }
+        
         // Global Lock/Unlock Paths
         ImGui::Separator();
         ImGui::Text("Global Lock/Unlock Paths");
@@ -1705,29 +1878,48 @@ namespace StayPutVR {
         ImGui::Separator();
         if (ImGui::Button("Reset Paths to Defaults")) {
             // Reset device lock paths
-            config_.osc_lock_path_hmd = "/avatar/parameters/SPVR_neck_enter";
+            config_.osc_lock_path_hmd = "/avatar/parameters/SPVR_HMD_Latch_IsPosed";
             strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
             
-            config_.osc_lock_path_left_hand = "/avatar/parameters/SPVR_handLeft_enter";
+            config_.osc_lock_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed";
             strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
             
-            config_.osc_lock_path_right_hand = "/avatar/parameters/SPVR_handRight_enter";
+            config_.osc_lock_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed";
             strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
             
-            config_.osc_lock_path_left_foot = "/avatar/parameters/SPVR_footLeft_enter";
+            config_.osc_lock_path_left_foot = "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed";
             strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
             
-            config_.osc_lock_path_right_foot = "/avatar/parameters/SPVR_footRight_enter";
+            config_.osc_lock_path_right_foot = "/avatar/parameters/SPVR_FootRight_Latch_IsPosed";
             strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
             
-            config_.osc_lock_path_hip = "/avatar/parameters/SPVR_hip_enter";
+            config_.osc_lock_path_hip = "/avatar/parameters/SPVR_Hip_Latch_IsPosed";
             strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
             
+            // Reset device include paths
+            config_.osc_include_path_hmd = "/avatar/parameters/SPVR_HMD_include";
+            strcpy_s(hmd_include_path, sizeof(hmd_include_path), config_.osc_include_path_hmd.c_str());
+            
+            config_.osc_include_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_include";
+            strcpy_s(left_hand_include_path, sizeof(left_hand_include_path), config_.osc_include_path_left_hand.c_str());
+            
+            config_.osc_include_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_include";
+            strcpy_s(right_hand_include_path, sizeof(right_hand_include_path), config_.osc_include_path_right_hand.c_str());
+            
+            config_.osc_include_path_left_foot = "/avatar/parameters/SPVR_FootLeft_include";
+            strcpy_s(left_foot_include_path, sizeof(left_foot_include_path), config_.osc_include_path_left_foot.c_str());
+            
+            config_.osc_include_path_right_foot = "/avatar/parameters/SPVR_FootRight_include";
+            strcpy_s(right_foot_include_path, sizeof(right_foot_include_path), config_.osc_include_path_right_foot.c_str());
+            
+            config_.osc_include_path_hip = "/avatar/parameters/SPVR_Hip_include";
+            strcpy_s(hip_include_path, sizeof(hip_include_path), config_.osc_include_path_hip.c_str());
+            
             // Reset global lock/unlock paths
-            config_.osc_global_lock_path = "/avatar/parameters/SPVR_global_lock";
+            config_.osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
             strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
             
-            config_.osc_global_unlock_path = "/avatar/parameters/SPVR_global_unlock";
+            config_.osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
             strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
             
             // Update OSCManager with new paths
@@ -1796,47 +1988,107 @@ namespace StayPutVR {
     }
 
     void UIManager::OnDeviceLocked(OSCDeviceType device, bool locked) {
-        // Add more detailed logging
-        if (Logger::IsInitialized()) {
-            Logger::Debug("OnDeviceLocked called: device=" + GetOSCDeviceString(device) + 
-                         ", locked=" + std::string(locked ? "true" : "false") + 
-                         ", current_state=" + std::string(global_lock_active_ ? "locked" : "unlocked"));
-        }
-        
-        // Only process "true" messages, ignore "false" messages
-        if (!locked) {
-            if (Logger::IsInitialized()) {
-                Logger::Debug("OSC device unlock message received for " + GetOSCDeviceString(device) + " - ignoring");
+        // Find devices with the appropriate role
+        for (auto& dev : device_positions_) {
+            // Check if this device has the role that matches the OSC device type
+            DeviceRole targetRole = DeviceRole::None;
+            
+            switch (device) {
+                case OSCDeviceType::HMD:
+                    targetRole = DeviceRole::HMD;
+                    break;
+                case OSCDeviceType::ControllerLeft:
+                    targetRole = DeviceRole::LeftController;
+                    break;
+                case OSCDeviceType::ControllerRight:
+                    targetRole = DeviceRole::RightController;
+                    break;
+                case OSCDeviceType::FootLeft:
+                    targetRole = DeviceRole::LeftFoot;
+                    break;
+                case OSCDeviceType::FootRight:
+                    targetRole = DeviceRole::RightFoot;
+                    break;
+                case OSCDeviceType::Hip:
+                    targetRole = DeviceRole::Hip;
+                    break;
             }
-            return;
-        }
-        
-        // Implement debouncing - check if enough time has passed since last action
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - last_osc_toggle_time_).count();
-        
-        // Require at least 1000ms (1 second) between toggles
-        if (elapsed < 1000) {
-            if (Logger::IsInitialized()) {
-                Logger::Debug("OSC device lock message debounced for " + GetOSCDeviceString(device) + 
-                             " - only " + std::to_string(elapsed) + "ms elapsed");
+            
+            // Skip if no matching role
+            if (dev.role != targetRole) {
+                continue;
             }
-            return;
+            
+            // Lock or unlock the device
+            LockDevicePosition(dev.serial, locked);
+            
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("Device " + dev.serial + " " + 
+                    (locked ? "locked" : "unlocked") + " via OSC (role matching)");
+            }
+            
+            // Play appropriate sound effect
+            if (config_.audio_enabled) {
+                if (locked && config_.lock_audio) {
+                    AudioManager::PlayLockSound(config_.audio_volume);
+                } else if (!locked && config_.unlock_audio) {
+                    AudioManager::PlayUnlockSound(config_.audio_volume);
+                }
+            }
+            
+            // If chaining mode is enabled and we're locking, activate global lock
+            if (locked && config_.chaining_mode) {
+                ActivateGlobalLock(true);
+            }
+            
+            // Update the device status via OSC
+            UpdateDeviceStatus(device, locked ? DeviceStatus::LockedSafe : DeviceStatus::Unlocked);
         }
         
-        // Update last toggle time
-        last_osc_toggle_time_ = current_time;
-        
-        // Toggle the current global lock state
-        bool new_state = !global_lock_active_;
-        
-        if (Logger::IsInitialized()) {
-            Logger::Info("OSC device lock message received for " + GetOSCDeviceString(device) + 
-                        ". Toggling global lock to " + std::string(new_state ? "ON" : "OFF"));
+        // Diagnostic logging if no device was found with the matching role
+        bool found_matching_device = false;
+        for (auto& dev : device_positions_) {
+            DeviceRole targetRole = DeviceRole::None;
+            switch (device) {
+                case OSCDeviceType::HMD: targetRole = DeviceRole::HMD; break;
+                case OSCDeviceType::ControllerLeft: targetRole = DeviceRole::LeftController; break;
+                case OSCDeviceType::ControllerRight: targetRole = DeviceRole::RightController; break;
+                case OSCDeviceType::FootLeft: targetRole = DeviceRole::LeftFoot; break;
+                case OSCDeviceType::FootRight: targetRole = DeviceRole::RightFoot; break;
+                case OSCDeviceType::Hip: targetRole = DeviceRole::Hip; break;
+            }
+            if (dev.role == targetRole) {
+                found_matching_device = true;
+                break;
+            }
         }
         
-        // Activate or deactivate global lock based on the new toggled state
-        ActivateGlobalLock(new_state);
+        if (!found_matching_device && StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Warning("OSC received lock command for " + GetOSCDeviceString(device) + 
+                                      " but no device with matching role was found. Command ignored.");
+            
+            // Print all current device roles for debugging
+            std::string device_roles = "Current device roles: ";
+            for (const auto& dev : device_positions_) {
+                device_roles += dev.serial + "=";
+                switch (dev.role) {
+                    case DeviceRole::None: device_roles += "None"; break;
+                    case DeviceRole::HMD: device_roles += "HMD"; break;
+                    case DeviceRole::LeftController: device_roles += "LeftController"; break;
+                    case DeviceRole::RightController: device_roles += "RightController"; break;
+                    case DeviceRole::Hip: device_roles += "Hip"; break;
+                    case DeviceRole::LeftFoot: device_roles += "LeftFoot"; break;
+                    case DeviceRole::RightFoot: device_roles += "RightFoot"; break;
+                    default: device_roles += "Unknown"; break;
+                }
+                device_roles += ", ";
+            }
+            if (!device_positions_.empty()) {
+                device_roles.pop_back(); // Remove last comma
+                device_roles.pop_back(); // Remove last space
+            }
+            StayPutVR::Logger::Debug(device_roles);
+        }
     }
 
     void UIManager::UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status) {
@@ -2189,13 +2441,15 @@ namespace StayPutVR {
         ImGui::Text("Connected Devices: %zu", device_positions_.size());
         ImGui::Separator();
         
-        if (ImGui::BeginTable("DevicesTable", 6, ImGuiTableFlags_Borders)) {
+        if (ImGui::BeginTable("DevicesTable", 8, ImGuiTableFlags_Borders)) {
             ImGui::TableSetupColumn("Device Type");
             ImGui::TableSetupColumn("Serial");
             ImGui::TableSetupColumn("Custom Name");
+            ImGui::TableSetupColumn("Role");
             ImGui::TableSetupColumn("Position & Rotation");
             ImGui::TableSetupColumn("Status");
-            ImGui::TableSetupColumn("Actions");
+            ImGui::TableSetupColumn("Will/Won't Lock");
+            ImGui::TableSetupColumn("Lock/Unlock");
             ImGui::TableHeadersRow();
             
             for (auto& device : device_positions_) {
@@ -2238,6 +2492,118 @@ namespace StayPutVR {
                         StayPutVR::Logger::Info("Device name changed: " + device.serial + " -> " + name_buffer);
                     }
                     SaveConfig();
+                }
+                
+                ImGui::PopID();
+                
+                // Device Role Dropdown
+                ImGui::TableNextColumn();
+                ImGui::PushID(("deviceRole" + device.serial).c_str());
+                
+                // Current role as string for display
+                std::string current_role_str = OSCManager::GetInstance().GetRoleString(device.role);
+                
+                if (ImGui::BeginCombo("##DeviceRole", current_role_str.c_str())) {
+                    // None option
+                    bool is_selected = (device.role == DeviceRole::None);
+                    if (ImGui::Selectable("None", is_selected)) {
+                        device.role = DeviceRole::None;
+                        // Save the role in config
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> None");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    // HMD option
+                    is_selected = (device.role == DeviceRole::HMD);
+                    if (ImGui::Selectable("HMD", is_selected)) {
+                        device.role = DeviceRole::HMD;
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> HMD");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    // Left Controller option
+                    is_selected = (device.role == DeviceRole::LeftController);
+                    if (ImGui::Selectable("Left Controller", is_selected)) {
+                        device.role = DeviceRole::LeftController;
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> Left Controller");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    // Right Controller option
+                    is_selected = (device.role == DeviceRole::RightController);
+                    if (ImGui::Selectable("Right Controller", is_selected)) {
+                        device.role = DeviceRole::RightController;
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> Right Controller");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    // Hip option
+                    is_selected = (device.role == DeviceRole::Hip);
+                    if (ImGui::Selectable("Hip", is_selected)) {
+                        device.role = DeviceRole::Hip;
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> Hip");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    // Left Foot option
+                    is_selected = (device.role == DeviceRole::LeftFoot);
+                    if (ImGui::Selectable("Left Foot", is_selected)) {
+                        device.role = DeviceRole::LeftFoot;
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> Left Foot");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    // Right Foot option
+                    is_selected = (device.role == DeviceRole::RightFoot);
+                    if (ImGui::Selectable("Right Foot", is_selected)) {
+                        device.role = DeviceRole::RightFoot;
+                        config_.device_roles[device.serial] = static_cast<int>(device.role);
+                        SaveConfig();
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device role changed: " + device.serial + " -> Right Foot");
+                        }
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    
+                    ImGui::EndCombo();
                 }
                 
                 ImGui::PopID();
@@ -2318,11 +2684,23 @@ namespace StayPutVR {
                         ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), 
                             "[LOCKED: %.2f m]", device.position_deviation);
                     }
+                } else if (device.locked) {
+                    // Show deviation status for individually locked devices
+                    if (device.exceeds_threshold) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), 
+                            "[OUT OF BOUNDS: %.2f m]", device.position_deviation);
+                    } else if (device.in_warning_zone) {
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), 
+                            "[WARNING: %.2f m]", device.position_deviation);
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), 
+                            "[INDIVIDUALLY LOCKED: %.2f m]", device.position_deviation);
+                    }
                 }
                 
-                // Actions column
+                // Will/Won't Lock column
                 ImGui::TableNextColumn();
-                ImGui::PushID(device.serial.c_str());
+                ImGui::PushID(("includeInLocking" + device.serial).c_str());
                 
                 // Replace checkbox with a toggleable button
                 if (device.include_in_locking) {
@@ -2362,6 +2740,56 @@ namespace StayPutVR {
                             StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to true");
                         }
                         SaveConfig();
+                    }
+                    
+                    ImGui::PopStyleColor(3);
+                }
+                
+                ImGui::PopID();
+                
+                // Lock/Unlock column - NEW ADDITION
+                ImGui::TableNextColumn();
+                ImGui::PushID(("individualLock" + device.serial).c_str());
+                
+                if (device.locked) {
+                    // Orange "Unlock" button
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.6f, 0.1f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.4f, 0.0f, 1.0f));
+                    
+                    if (ImGui::Button("Unlock", ImVec2(120, 30))) {
+                        // Individual device unlocking
+                        LockDevicePosition(device.serial, false);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device " + device.serial + " individually unlocked");
+                        }
+                        
+                        // Play unlock sound if enabled
+                        if (config_.audio_enabled && config_.unlock_audio) {
+                            AudioManager::PlayUnlockSound(config_.audio_volume);
+                        }
+                    }
+                    
+                    ImGui::PopStyleColor(3);
+                } else {
+                    // Blue "Lock" button
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.5f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.6f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.0f, 0.4f, 0.9f, 1.0f));
+                    
+                    if (ImGui::Button("Lock", ImVec2(120, 30))) {
+                        // Individual device locking
+                        LockDevicePosition(device.serial, true);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Info("Device " + device.serial + " individually locked");
+                        }
+                        
+                        // Play lock sound if enabled
+                        if (config_.audio_enabled && config_.lock_audio) {
+                            AudioManager::PlayLockSound(config_.audio_volume);
+                        }
                     }
                     
                     ImGui::PopStyleColor(3);
@@ -2461,9 +2889,8 @@ namespace StayPutVR {
         config_.bounds_threshold = position_threshold_;
         config_.disable_threshold = disable_threshold_;
         
-        // Store device names and settings
-        config_.device_names.clear();
-        config_.device_settings.clear();
+        // Store device data from currently connected devices
+        // DO NOT clear the maps - this would erase settings for disconnected devices
         
         for (const auto& device : device_positions_) {
             // Store device name if not empty
@@ -2473,6 +2900,15 @@ namespace StayPutVR {
             
             // Store include_in_locking setting
             config_.device_settings[device.serial] = device.include_in_locking;
+            
+            // Store device role
+            config_.device_roles[device.serial] = static_cast<int>(device.role);
+            
+            if (StayPutVR::Logger::IsInitialized() && device.role != DeviceRole::None) {
+                StayPutVR::Logger::Debug("Saved role for device: " + device.serial + 
+                    " -> role value: " + std::to_string(static_cast<int>(device.role)) + 
+                    " (" + OSCManager::GetInstance().GetRoleString(device.role) + ")");
+            }
         }
         
         if (StayPutVR::Logger::IsInitialized()) {
@@ -2482,6 +2918,10 @@ namespace StayPutVR {
     }
 
     void UIManager::UpdateUIFromConfig() {
+        if (StayPutVR::Logger::IsInitialized()) {
+            Logger::Info("UpdateUIFromConfig: Beginning to update UI from loaded config");
+        }
+        
         // Boundary settings
         warning_threshold_ = config_.warning_threshold;
         position_threshold_ = config_.bounds_threshold;
@@ -2490,23 +2930,66 @@ namespace StayPutVR {
         // Update OSC status
         osc_enabled_ = config_.osc_enabled;
         
+        if (StayPutVR::Logger::IsInitialized()) {
+            if (!config_.device_roles.empty()) {
+                Logger::Info("Found " + std::to_string(config_.device_roles.size()) + " device roles in config");
+            } else {
+                Logger::Warning("No device roles found in config");
+            }
+        }
+        
         // Apply device names and settings
         for (auto& device : device_positions_) {
             // Apply device name if available
             auto nameIt = config_.device_names.find(device.serial);
             if (nameIt != config_.device_names.end()) {
                 device.device_name = nameIt->second;
+                if (StayPutVR::Logger::IsInitialized()) {
+                    Logger::Info("Applied name for device: " + device.serial + " -> " + nameIt->second);
+                }
             }
             
             // Apply include_in_locking setting if available
             auto settingIt = config_.device_settings.find(device.serial);
             if (settingIt != config_.device_settings.end()) {
                 device.include_in_locking = settingIt->second;
-                
                 if (StayPutVR::Logger::IsInitialized()) {
-                    StayPutVR::Logger::Info("Applied include_in_locking setting for device: " + device.serial);
+                    Logger::Info("Applied include_in_locking setting for device: " + device.serial + 
+                                " -> " + (settingIt->second ? "true" : "false"));
                 }
             }
+            
+            // Apply device role if available
+            auto roleIt = config_.device_roles.find(device.serial);
+            if (roleIt != config_.device_roles.end()) {
+                int roleValue = roleIt->second;
+                device.role = static_cast<DeviceRole>(roleValue);
+                
+                if (StayPutVR::Logger::IsInitialized()) {
+                    std::string roleName = "Unknown";
+                    switch (device.role) {
+                        case DeviceRole::None: roleName = "None"; break;
+                        case DeviceRole::HMD: roleName = "HMD"; break;
+                        case DeviceRole::LeftController: roleName = "LeftController"; break;
+                        case DeviceRole::RightController: roleName = "RightController"; break;
+                        case DeviceRole::Hip: roleName = "Hip"; break;
+                        case DeviceRole::LeftFoot: roleName = "LeftFoot"; break;
+                        case DeviceRole::RightFoot: roleName = "RightFoot"; break;
+                        default: roleName = "Unknown"; break;
+                    }
+                    Logger::Info("Applied role for device: " + device.serial + 
+                                " -> role value: " + std::to_string(roleValue) + 
+                                " (Role: " + roleName + ")");
+                }
+            } else {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    Logger::Warning("No role found in config for device: " + device.serial);
+                }
+            }
+        }
+        
+        if (StayPutVR::Logger::IsInitialized()) {
+            Logger::Info("UpdateUIFromConfig: Finished updating UI from config");
         }
     }
 
@@ -2785,17 +3268,115 @@ namespace StayPutVR {
             }
         );
         
+        OSCManager::GetInstance().SetIncludeCallback(
+            [this](OSCDeviceType device, bool include) {
+                OnDeviceIncluded(device, include);
+            }
+        );
+        
         OSCManager::GetInstance().SetGlobalLockCallback(
             [this](bool lock) {
                 if (Logger::IsInitialized()) {
                     Logger::Info("Global " + std::string(lock ? "lock" : "unlock") + " triggered via OSC");
                 }
+                // Use the same method the UI uses, which handles countdown and sound effects
                 ActivateGlobalLock(lock);
             }
         );
         
         if (Logger::IsInitialized()) {
             Logger::Info("VerifyOSCCallbacks: OSC callbacks verified and re-registered");
+        }
+    }
+
+    void UIManager::OnDeviceIncluded(OSCDeviceType device, bool include) {
+        // Find devices with the appropriate role
+        for (auto& dev : device_positions_) {
+            // Check if this device has the role that matches the OSC device type
+            DeviceRole targetRole = DeviceRole::None;
+            
+            switch (device) {
+                case OSCDeviceType::HMD:
+                    targetRole = DeviceRole::HMD;
+                    break;
+                case OSCDeviceType::ControllerLeft:
+                    targetRole = DeviceRole::LeftController;
+                    break;
+                case OSCDeviceType::ControllerRight:
+                    targetRole = DeviceRole::RightController;
+                    break;
+                case OSCDeviceType::FootLeft:
+                    targetRole = DeviceRole::LeftFoot;
+                    break;
+                case OSCDeviceType::FootRight:
+                    targetRole = DeviceRole::RightFoot;
+                    break;
+                case OSCDeviceType::Hip:
+                    targetRole = DeviceRole::Hip;
+                    break;
+            }
+            
+            // Skip if no matching role
+            if (dev.role != targetRole) {
+                continue;
+            }
+            
+            // Toggle the include_in_locking flag rather than setting it directly
+            dev.include_in_locking = !dev.include_in_locking;
+            
+            // Save to config
+            config_.device_settings[dev.serial] = dev.include_in_locking;
+            SaveConfig();
+            
+            if (StayPutVR::Logger::IsInitialized()) {
+                StayPutVR::Logger::Info("Device " + dev.serial + " include_in_locking toggled to " + 
+                                       (dev.include_in_locking ? "true" : "false") + " via OSC");
+            }
+        }
+        
+        // NEW CODE: Add diagnostic logging if no device was found with the matching role
+        bool found_matching_device = false;
+        for (auto& dev : device_positions_) {
+            DeviceRole targetRole = DeviceRole::None;
+            switch (device) {
+                case OSCDeviceType::HMD: targetRole = DeviceRole::HMD; break;
+                case OSCDeviceType::ControllerLeft: targetRole = DeviceRole::LeftController; break;
+                case OSCDeviceType::ControllerRight: targetRole = DeviceRole::RightController; break;
+                case OSCDeviceType::FootLeft: targetRole = DeviceRole::LeftFoot; break;
+                case OSCDeviceType::FootRight: targetRole = DeviceRole::RightFoot; break;
+                case OSCDeviceType::Hip: targetRole = DeviceRole::Hip; break;
+            }
+            if (dev.role == targetRole) {
+                found_matching_device = true;
+                break;
+            }
+        }
+        
+        if (!found_matching_device && StayPutVR::Logger::IsInitialized()) {
+            StayPutVR::Logger::Warning("OSC received include command for " + GetOSCDeviceString(device) + 
+                                      " but no device with matching role was found. Command ignored.");
+            
+            // Print all current device roles for debugging
+            std::string device_roles = "Current device roles: ";
+            for (const auto& dev : device_positions_) {
+                device_roles += dev.serial + "=";
+                switch (dev.role) {
+                    case DeviceRole::None: device_roles += "None"; break;
+                    case DeviceRole::HMD: device_roles += "HMD"; break;
+                    case DeviceRole::LeftController: device_roles += "LeftController"; break;
+                    case DeviceRole::RightController: device_roles += "RightController"; break;
+                    case DeviceRole::Hip: device_roles += "Hip"; break;
+                    case DeviceRole::LeftFoot: device_roles += "LeftFoot"; break;
+                    case DeviceRole::RightFoot: device_roles += "RightFoot"; break;
+                    default: device_roles += "Unknown"; break;
+                }
+                device_roles += ", ";
+            }
+            if (!device_positions_.empty()) {
+                device_roles.pop_back(); // Remove last comma
+                device_roles.pop_back(); // Remove last space
+            }
+            StayPutVR::Logger::Debug(device_roles);
         }
     }
 

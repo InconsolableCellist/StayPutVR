@@ -32,16 +32,24 @@ public:
     std::string osc_address_disable;
     
     // OSC Device Lock Paths
-    std::string osc_lock_path_hmd = "/avatar/parameters/SPVR_neck_enter";
-    std::string osc_lock_path_left_hand = "/avatar/parameters/SPVR_handLeft_enter";
-    std::string osc_lock_path_right_hand = "/avatar/parameters/SPVR_handRight_enter";
-    std::string osc_lock_path_left_foot = "/avatar/parameters/SPVR_footLeft_enter";
-    std::string osc_lock_path_right_foot = "/avatar/parameters/SPVR_footRight_enter";
-    std::string osc_lock_path_hip = "/avatar/parameters/SPVR_hip_enter";
+    std::string osc_lock_path_hmd = "/avatar/parameters/SPVR_HMD_Latch_IsPosed";
+    std::string osc_lock_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed";
+    std::string osc_lock_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed";
+    std::string osc_lock_path_left_foot = "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed";
+    std::string osc_lock_path_right_foot = "/avatar/parameters/SPVR_FootRight_Latch_IsPosed";
+    std::string osc_lock_path_hip = "/avatar/parameters/SPVR_Hip_Latch_IsPosed";
+    
+    // OSC Device Include Paths
+    std::string osc_include_path_hmd = "/avatar/parameters/SPVR_HMD_include";
+    std::string osc_include_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_include";
+    std::string osc_include_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_include";
+    std::string osc_include_path_left_foot = "/avatar/parameters/SPVR_FootLeft_include";
+    std::string osc_include_path_right_foot = "/avatar/parameters/SPVR_FootRight_include";
+    std::string osc_include_path_hip = "/avatar/parameters/SPVR_Hip_include";
     
     // Global lock/unlock paths
-    std::string osc_global_lock_path = "/avatar/parameters/SPVR_global_lock";
-    std::string osc_global_unlock_path = "/avatar/parameters/SPVR_global_unlock";
+    std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
+    std::string osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
     
     // PiShock Settings via VRCOSC
     bool pishock_enabled = false;
@@ -96,6 +104,7 @@ public:
     // Device settings maps
     std::unordered_map<std::string, std::string> device_names; // serial -> name
     std::unordered_map<std::string, bool> device_settings; // serial -> include_in_locking
+    std::unordered_map<std::string, int> device_roles; // serial -> role (stored as int)
 };
 
 } // namespace StayPutVR 

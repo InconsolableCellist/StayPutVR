@@ -51,6 +51,7 @@ namespace StayPutVR {
         
         bool locked = false;        // Whether the position is locked
         bool include_in_locking = false; // Whether to include this device in global locking
+        DeviceRole role = DeviceRole::None; // Assigned role for the device (HMD, LeftController, etc.)
         float original_position[3]; // Original position when locked
         float original_rotation[4]; // Original rotation when locked
         
@@ -184,6 +185,7 @@ namespace StayPutVR {
         
         // OSC callbacks
         void OnDeviceLocked(OSCDeviceType device, bool locked);
+        void OnDeviceIncluded(OSCDeviceType device, bool include);
         
         // Helper functions
         void UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status);

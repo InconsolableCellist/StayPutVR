@@ -1,5 +1,6 @@
 #include "Config.hpp"
 #include <fstream>
+#include <unordered_set>
 #include "../thirdparty/inih/INIReader.h"
 #include <filesystem>
 #include <sstream>
@@ -20,14 +21,20 @@ Config::Config()
     , osc_address_disable("/stayputvr/disable")
     , osc_enabled(false)
     , chaining_mode(false)
-    , osc_lock_path_hmd("/avatar/parameters/SPVR_neck_enter")
-    , osc_lock_path_left_hand("/avatar/parameters/SPVR_handLeft_enter")
-    , osc_lock_path_right_hand("/avatar/parameters/SPVR_handRight_enter")
-    , osc_lock_path_left_foot("/avatar/parameters/SPVR_footLeft_enter")
-    , osc_lock_path_right_foot("/avatar/parameters/SPVR_footRight_enter")
-    , osc_lock_path_hip("/avatar/parameters/SPVR_hip_enter")
-    , osc_global_lock_path("/avatar/parameters/SPVR_global_lock")
-    , osc_global_unlock_path("/avatar/parameters/SPVR_global_unlock")
+    , osc_lock_path_hmd("/avatar/parameters/SPVR_HMD_Latch_IsPosed")
+    , osc_lock_path_left_hand("/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed")
+    , osc_lock_path_right_hand("/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed")
+    , osc_lock_path_left_foot("/avatar/parameters/SPVR_FootLeft_Latch_IsPosed")
+    , osc_lock_path_right_foot("/avatar/parameters/SPVR_FootRight_Latch_IsPosed")
+    , osc_lock_path_hip("/avatar/parameters/SPVR_Hip_Latch_IsPosed")
+    , osc_include_path_hmd("/avatar/parameters/SPVR_HMD_include")
+    , osc_include_path_left_hand("/avatar/parameters/SPVR_ControllerLeft_include")
+    , osc_include_path_right_hand("/avatar/parameters/SPVR_ControllerRight_include")
+    , osc_include_path_left_foot("/avatar/parameters/SPVR_FootLeft_include")
+    , osc_include_path_right_foot("/avatar/parameters/SPVR_FootRight_include")
+    , osc_include_path_hip("/avatar/parameters/SPVR_Hip_include")
+    , osc_global_lock_path("/avatar/parameters/SPVR_Global_Lock")
+    , osc_global_unlock_path("/avatar/parameters/SPVR_Global_Unlock")
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
@@ -108,16 +115,24 @@ bool Config::LoadFromFile(const std::string& filename) {
         chaining_mode = j.value("chaining_mode", false);
         
         // Load OSC lock paths
-        osc_lock_path_hmd = j.value("osc_lock_path_hmd", "/avatar/parameters/SPVR_neck_enter");
-        osc_lock_path_left_hand = j.value("osc_lock_path_left_hand", "/avatar/parameters/SPVR_handLeft_enter");
-        osc_lock_path_right_hand = j.value("osc_lock_path_right_hand", "/avatar/parameters/SPVR_handRight_enter");
-        osc_lock_path_left_foot = j.value("osc_lock_path_left_foot", "/avatar/parameters/SPVR_footLeft_enter");
-        osc_lock_path_right_foot = j.value("osc_lock_path_right_foot", "/avatar/parameters/SPVR_footRight_enter");
-        osc_lock_path_hip = j.value("osc_lock_path_hip", "/avatar/parameters/SPVR_hip_enter");
+        osc_lock_path_hmd = j.value("osc_lock_path_hmd", "/avatar/parameters/SPVR_HMD_Latch_IsPosed");
+        osc_lock_path_left_hand = j.value("osc_lock_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed");
+        osc_lock_path_right_hand = j.value("osc_lock_path_right_hand", "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed");
+        osc_lock_path_left_foot = j.value("osc_lock_path_left_foot", "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed");
+        osc_lock_path_right_foot = j.value("osc_lock_path_right_foot", "/avatar/parameters/SPVR_FootRight_Latch_IsPosed");
+        osc_lock_path_hip = j.value("osc_lock_path_hip", "/avatar/parameters/SPVR_Hip_Latch_IsPosed");
+        
+        // Load OSC include paths
+        osc_include_path_hmd = j.value("osc_include_path_hmd", "/avatar/parameters/SPVR_HMD_include");
+        osc_include_path_left_hand = j.value("osc_include_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_include");
+        osc_include_path_right_hand = j.value("osc_include_path_right_hand", "/avatar/parameters/SPVR_ControllerRight_include");
+        osc_include_path_left_foot = j.value("osc_include_path_left_foot", "/avatar/parameters/SPVR_FootLeft_include");
+        osc_include_path_right_foot = j.value("osc_include_path_right_foot", "/avatar/parameters/SPVR_FootRight_include");
+        osc_include_path_hip = j.value("osc_include_path_hip", "/avatar/parameters/SPVR_Hip_include");
         
         // Load global lock/unlock paths
-        osc_global_lock_path = j.value("osc_global_lock_path", "/avatar/parameters/SPVR_global_lock");
-        osc_global_unlock_path = j.value("osc_global_unlock_path", "/avatar/parameters/SPVR_global_unlock");
+        osc_global_lock_path = j.value("osc_global_lock_path", "/avatar/parameters/SPVR_Global_Lock");
+        osc_global_unlock_path = j.value("osc_global_unlock_path", "/avatar/parameters/SPVR_Global_Unlock");
 
         // PiShock settings
         pishock_enabled = j.value("pishock_enabled", false);
@@ -172,24 +187,84 @@ bool Config::LoadFromFile(const std::string& filename) {
         minimize_to_tray = j.value("minimize_to_tray", false);
         show_notifications = j.value("show_notifications", true);
         
-        // Load device names and settings from all sections that start with "device:"
+        // Clear existing device data
+        device_names.clear();
+        device_settings.clear();
+        device_roles.clear();
+        
+        // Load device names, settings, and roles from new format (direct properties)
+        if (j.contains("device_names") && j["device_names"].is_object()) {
+            for (auto& [serial, name] : j["device_names"].items()) {
+                device_names[serial] = name.get<std::string>();
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Loaded device name from direct property: " + serial + " -> " + name.get<std::string>());
+                }
+            }
+        }
+        
+        if (j.contains("device_settings") && j["device_settings"].is_object()) {
+            for (auto& [serial, include] : j["device_settings"].items()) {
+                device_settings[serial] = include.get<bool>();
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Loaded device setting from direct property: " + serial + " -> " + 
+                                 (include.get<bool>() ? "true" : "false"));
+                }
+            }
+        }
+        
+        if (j.contains("device_roles") && j["device_roles"].is_object()) {
+            for (auto& [serial, role] : j["device_roles"].items()) {
+                device_roles[serial] = role.get<int>();
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Loaded device role from direct property: " + serial + " -> role value: " + 
+                                std::to_string(role.get<int>()));
+                }
+            }
+        }
+        
+        // Also check the old format (devices array) for backward compatibility
+        // This will add any devices that weren't already loaded from the direct properties
         const nlohmann::json& devices = j.value("devices", nlohmann::json::array());
         for (const auto& device : devices) {
-            std::string serial = device.value("serial", "Unknown Device");
-            std::string name = device.value("name", "Unknown Device");
-            bool include_in_locking = device.value("include_in_locking", false);
-            device_names[serial] = name;
-            device_settings[serial] = include_in_locking;
+            if (!device.contains("serial")) continue;
             
-            if (Logger::IsInitialized()) {
-                Logger::Info("Loaded device settings for: " + serial + 
-                    " (name: " + name + ", include_in_locking: " + 
-                    (include_in_locking ? "true" : "false") + ")");
+            std::string serial = device.value("serial", "Unknown Device");
+            
+            // Load device name if present and not already loaded
+            if (device.contains("name") && device_names.find(serial) == device_names.end()) {
+                std::string name = device.value("name", "Unknown Device");
+                device_names[serial] = name;
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Loaded device name from devices array: " + serial + " -> " + name);
+                }
+            }
+            
+            // Load include_in_locking if present and not already loaded
+            if (device.contains("include_in_locking") && device_settings.find(serial) == device_settings.end()) {
+                bool include_in_locking = device.value("include_in_locking", false);
+                device_settings[serial] = include_in_locking;
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Loaded device setting from devices array: " + serial + " -> " + 
+                                 (include_in_locking ? "true" : "false"));
+                }
+            }
+            
+            // Load device role if present and not already loaded
+            if (device.contains("role") && device_roles.find(serial) == device_roles.end()) {
+                int role_value = device.value("role", 0);
+                device_roles[serial] = role_value;
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Loaded device role from devices array: " + serial + " -> role value: " + 
+                                std::to_string(role_value));
+                }
             }
         }
         
         if (Logger::IsInitialized()) {
             Logger::Info("Loaded config file: " + filename);
+            Logger::Debug("Loaded " + std::to_string(device_roles.size()) + " device roles, " + 
+                         std::to_string(device_settings.size()) + " device settings, and " + 
+                         std::to_string(device_names.size()) + " device names");
         }
         return true;
     }
@@ -220,6 +295,14 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_lock_path_right_foot"] = osc_lock_path_right_foot;
         j["osc_lock_path_hip"] = osc_lock_path_hip;
         
+        // OSC device include paths
+        j["osc_include_path_hmd"] = osc_include_path_hmd;
+        j["osc_include_path_left_hand"] = osc_include_path_left_hand;
+        j["osc_include_path_right_hand"] = osc_include_path_right_hand;
+        j["osc_include_path_left_foot"] = osc_include_path_left_foot;
+        j["osc_include_path_right_foot"] = osc_include_path_right_foot;
+        j["osc_include_path_hip"] = osc_include_path_hip;
+        
         // Global lock/unlock paths
         j["osc_global_lock_path"] = osc_global_lock_path;
         j["osc_global_unlock_path"] = osc_global_unlock_path;
@@ -248,21 +331,21 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_disobedience_intensity"] = pishock_disobedience_intensity;
         j["pishock_disobedience_duration"] = pishock_disobedience_duration;
 
-        // Load logging settings
+        // Logging settings
         j["log_level"] = log_level;
         
-        // Load boundary settings
+        // Boundary settings
         j["warning_threshold"] = warning_threshold;
         j["bounds_threshold"] = bounds_threshold;
         j["disable_threshold"] = disable_threshold;
         
-        // Load timer settings
+        // Timer settings
         j["cooldown_enabled"] = cooldown_enabled;
         j["cooldown_seconds"] = cooldown_seconds;
         j["countdown_enabled"] = countdown_enabled;
         j["countdown_seconds"] = countdown_seconds;
         
-        // Load notification settings
+        // Notification settings
         j["audio_enabled"] = audio_enabled;
         j["audio_volume"] = audio_volume;
         j["warning_audio"] = warning_audio;
@@ -272,22 +355,75 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["haptic_enabled"] = haptic_enabled;
         j["haptic_intensity"] = haptic_intensity;
         
-        // Load application settings
+        // Application settings
         j["start_with_steamvr"] = start_with_steamvr;
         j["minimize_to_tray"] = minimize_to_tray;
         j["show_notifications"] = show_notifications;
         
-        // Load device names and settings from all sections that start with "device:"
-        nlohmann::json devices = nlohmann::json::array();
+        // Save device names and settings directly at the root level
+        // Create JSON objects for device_roles and device_settings
+        nlohmann::json device_roles_json = nlohmann::json::object();
+        nlohmann::json device_settings_json = nlohmann::json::object();
+        nlohmann::json device_names_json = nlohmann::json::object();
+        
+        // Populate device roles
+        for (const auto& [serial, role] : device_roles) {
+            device_roles_json[serial] = role;
+        }
+        j["device_roles"] = device_roles_json;
+        
+        // Populate device settings (include_in_locking)
+        for (const auto& [serial, include] : device_settings) {
+            device_settings_json[serial] = include;
+        }
+        j["device_settings"] = device_settings_json;
+        
+        // Populate device names
         for (const auto& [serial, name] : device_names) {
+            device_names_json[serial] = name;
+        }
+        j["device_names"] = device_names_json;
+        
+        // Populate the devices array for backward compatibility
+        nlohmann::json devices = nlohmann::json::array();
+        // Create a set of all serials across all three maps
+        std::unordered_set<std::string> all_serials;
+        for (const auto& [serial, _] : device_names) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_settings) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_roles) all_serials.insert(serial);
+        
+        // Create device objects
+        for (const auto& serial : all_serials) {
             nlohmann::json device;
             device["serial"] = serial;
-            device["name"] = name;
-            device["include_in_locking"] = device_settings.find(serial) != device_settings.end() && device_settings.at(serial);
+            
+            // Add name if available
+            auto name_it = device_names.find(serial);
+            if (name_it != device_names.end()) {
+                device["name"] = name_it->second;
+            } else {
+                device["name"] = "Unknown Device";
+            }
+            
+            // Add include_in_locking if available
+            auto setting_it = device_settings.find(serial);
+            if (setting_it != device_settings.end()) {
+                device["include_in_locking"] = setting_it->second;
+            } else {
+                device["include_in_locking"] = false;
+            }
+            
+            // Add role if available
+            auto role_it = device_roles.find(serial);
+            if (role_it != device_roles.end()) {
+                device["role"] = role_it->second;
+            }
+            
             devices.push_back(device);
         }
         j["devices"] = devices;
         
+        // Write the JSON to file
         std::ofstream file(filename);
         if (!file.is_open()) {
             if (Logger::IsInitialized()) {
@@ -300,6 +436,9 @@ bool Config::SaveToFile(const std::string& filename) const {
         
         if (Logger::IsInitialized()) {
             Logger::Info("Saved config file: " + filename);
+            Logger::Debug("Saved " + std::to_string(device_roles.size()) + " device roles, " + 
+                         std::to_string(device_settings.size()) + " device settings, and " + 
+                         std::to_string(device_names.size()) + " device names");
         }
         return true;
     }

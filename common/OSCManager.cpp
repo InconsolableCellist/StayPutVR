@@ -184,6 +184,15 @@ void OSCManager::SetConfig(const Config& config) {
     osc_lock_path_left_foot_ = config.osc_lock_path_left_foot;
     osc_lock_path_right_foot_ = config.osc_lock_path_right_foot;
     osc_lock_path_hip_ = config.osc_lock_path_hip;
+    
+    // Update include paths
+    osc_include_path_hmd_ = config.osc_include_path_hmd;
+    osc_include_path_left_hand_ = config.osc_include_path_left_hand;
+    osc_include_path_right_hand_ = config.osc_include_path_right_hand;
+    osc_include_path_left_foot_ = config.osc_include_path_left_foot;
+    osc_include_path_right_foot_ = config.osc_include_path_right_foot;
+    osc_include_path_hip_ = config.osc_include_path_hip;
+    
     osc_global_lock_path_ = config.osc_global_lock_path;
     osc_global_unlock_path_ = config.osc_global_unlock_path;
     
@@ -245,170 +254,147 @@ void OSCManager::ReceiveThreadFunction() {
 }
 
 void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
-    if (!lock_callback_ && !global_lock_callback_) {
-        // No callbacks registered
-        if (Logger::IsInitialized()) {
-            Logger::Debug("OSCManager: No callbacks registered, skipping message");
-        }
-        return;
-    }
-    
     try {
-        // Parse OSC packet
+        // Parse the OSC packet
         OSCPP::Server::Packet packet(data, size);
         
-        // Check if it's a message
+        // Check if this is a message (not a bundle)
         if (packet.isMessage()) {
             OSCPP::Server::Message message(packet);
             std::string address = message.address();
             
-            // Only log messages that match the SPVR pattern
-            bool shouldLog = address.find("/avatar/parameters/SPVR_") == 0;
-            
-            if (Logger::IsInitialized() && shouldLog) {
-                Logger::Debug("OSCManager: Received OSC message: " + address);
-            }
+            // Only log messages that contain "SPVR_" in their path
+            bool should_log = address.find("SPVR_") != std::string::npos;
             
             // Get the argument stream from the message
             OSCPP::Server::ArgStream args = message.args();
             
             // Check if we have at least one argument
             if (!args.atEnd()) {
+                // Get the argument type and value
                 bool value_bool = false;
-                char tag = args.tag(); // Get the type of the next argument
+                char tag = args.tag();
                 
                 if (tag == 'f') {
                     float value = args.float32();
-                    value_bool = value > 0.5f; // Consider values > 0.5 as true
-                    if (Logger::IsInitialized() && shouldLog) {
-                        Logger::Debug("OSCManager: OSC value (float): " + std::to_string(value) + ", bool: " + (value_bool ? "true" : "false"));
+                    value_bool = value > 0.5f;
+                    if (Logger::IsInitialized() && should_log) {
+                        Logger::Debug("OSCManager: Received float value: " + std::to_string(value) + 
+                                    " for address: " + address);
                     }
                 }
                 else if (tag == 'i') {
                     int32_t value = args.int32();
-                    value_bool = value != 0; // Any non-zero value is true
-                    if (Logger::IsInitialized() && shouldLog) {
-                        Logger::Debug("OSCManager: OSC value (int): " + std::to_string(value) + ", bool: " + (value_bool ? "true" : "false"));
+                    value_bool = value != 0;
+                    if (Logger::IsInitialized() && should_log) {
+                        Logger::Debug("OSCManager: Received int value: " + std::to_string(value) + 
+                                    " for address: " + address);
                     }
                 }
                 else if (tag == 'T' || tag == 'F') {
-                    // Handle OSC boolean values (T = true, F = false)
+                    // Handle OSC boolean values
                     value_bool = (tag == 'T');
-                    if (Logger::IsInitialized() && shouldLog) {
-                        Logger::Debug("OSCManager: OSC value (bool): " + std::string(value_bool ? "true" : "false"));
+                    if (Logger::IsInitialized() && should_log) {
+                        Logger::Debug("OSCManager: Received boolean value: " + std::string(value_bool ? "true" : "false") + 
+                                    " for address: " + address);
                     }
                 }
                 else {
-                    // Unsupported type
-                    if (Logger::IsInitialized() && shouldLog) {
-                        Logger::Debug("OSCManager: OSC message has unsupported argument type: " + std::string(1, tag));
+                    // Unsupported argument type
+                    if (Logger::IsInitialized() && should_log) {
+                        Logger::Warning("OSCManager: Unsupported argument type: " + std::string(1, tag) + 
+                                      " for address: " + address);
                     }
                     return;
                 }
                 
-                // Check if the address matches any of our device lock paths
-                // Only trigger callbacks on true values
-                if (value_bool) {
-                    // Check for global lock/unlock
-                    if (address == osc_global_lock_path_) {
-                        if (global_lock_callback_) {
-                            Logger::Info("OSCManager: Triggering global lock from OSC message");
-                            global_lock_callback_(true);
-                        }
-                    }
-                    else if (address == osc_global_unlock_path_) {
-                        if (global_lock_callback_) {
-                            Logger::Info("OSCManager: Triggering global unlock from OSC message");
-                            global_lock_callback_(false);
-                        }
-                    }
-                    // Check for individual device locks
-                    else if (address == osc_lock_path_hmd_) {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering HMD lock from OSC message");
-                            lock_callback_(OSCDeviceType::HMD, true);
-                        }
-                    }
-                    else if (address == osc_lock_path_left_hand_ || address == "/avatar/parameters/SPVR_handLeft_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering left hand lock from OSC message");
-                            lock_callback_(OSCDeviceType::ControllerLeft, true);
-                        }
-                    }
-                    else if (address == osc_lock_path_right_hand_ || address == "/avatar/parameters/SPVR_handRight_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering right hand lock from OSC message");
-                            lock_callback_(OSCDeviceType::ControllerRight, true);
-                        }
-                    }
-                    else if (address == osc_lock_path_left_foot_ || address == "/avatar/parameters/SPVR_footLeft_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering left foot lock from OSC message");
-                            lock_callback_(OSCDeviceType::FootLeft, true);
-                        }
-                    }
-                    else if (address == osc_lock_path_right_foot_ || address == "/avatar/parameters/SPVR_footRight_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering right foot lock from OSC message");
-                            lock_callback_(OSCDeviceType::FootRight, true);
-                        }
-                    }
-                    else if (address == osc_lock_path_hip_ || address == "/avatar/parameters/SPVR_hip_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering hip lock from OSC message");
-                            lock_callback_(OSCDeviceType::Hip, true);
-                        }
-                    }
-                    else if (address == "/avatar/parameters/SPVR_head_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering HMD lock from OSC message (alternate path)");
-                            lock_callback_(OSCDeviceType::HMD, true);
-                        }
-                    }
+                // Now handle the address and call the appropriate callbacks
+                
+                // Standard device lock paths
+                if (address == osc_lock_path_hmd_ && lock_callback_) {
+                    lock_callback_(OSCDeviceType::HMD, value_bool);
                 }
-                else {
-                    // For false values, handle unlocking (we only care about the individual device paths)
-                    if (address == osc_lock_path_hmd_) {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering HMD unlock from OSC message");
-                            lock_callback_(OSCDeviceType::HMD, false);
-                        }
+                else if (address == osc_lock_path_left_hand_ && lock_callback_) {
+                    lock_callback_(OSCDeviceType::ControllerLeft, value_bool);
+                }
+                else if (address == osc_lock_path_right_hand_ && lock_callback_) {
+                    lock_callback_(OSCDeviceType::ControllerRight, value_bool);
+                }
+                else if (address == osc_lock_path_left_foot_ && lock_callback_) {
+                    lock_callback_(OSCDeviceType::FootLeft, value_bool);
+                }
+                else if (address == osc_lock_path_right_foot_ && lock_callback_) {
+                    lock_callback_(OSCDeviceType::FootRight, value_bool);
+                }
+                else if (address == osc_lock_path_hip_ && lock_callback_) {
+                    lock_callback_(OSCDeviceType::Hip, value_bool);
+                }
+                
+                // Global lock/unlock paths
+                else if (address == osc_global_lock_path_ && global_lock_callback_ && value_bool) {
+                    global_lock_callback_(true);
+                }
+                else if (address == osc_global_unlock_path_ && global_lock_callback_ && value_bool) {
+                    global_lock_callback_(false);
+                }
+                
+                // Latch_IsPosed paths: direct state change (not toggle)
+                else if (address.find("/avatar/parameters/SPVR_") == 0 && address.find("_Latch_IsPosed") != std::string::npos && lock_callback_) {
+                    // Extract device type from the path
+                    std::string deviceStr = address.substr(25); // Remove "/avatar/parameters/SPVR_" prefix
+                    deviceStr = deviceStr.substr(0, deviceStr.find("_Latch_IsPosed")); // Get just the device part
+                    
+                    // Determine which device type it is
+                    OSCDeviceType deviceType;
+                    if (deviceStr == "HMD") {
+                        deviceType = OSCDeviceType::HMD;
+                    } else if (deviceStr == "ControllerLeft") {
+                        deviceType = OSCDeviceType::ControllerLeft;
+                    } else if (deviceStr == "ControllerRight") {
+                        deviceType = OSCDeviceType::ControllerRight;
+                    } else if (deviceStr == "FootLeft") {
+                        deviceType = OSCDeviceType::FootLeft;
+                    } else if (deviceStr == "FootRight") {
+                        deviceType = OSCDeviceType::FootRight;
+                    } else if (deviceStr == "Hip") {
+                        deviceType = OSCDeviceType::Hip;
+                    } else {
+                        // Unknown device, ignore
+                        return;
                     }
-                    else if (address == osc_lock_path_left_hand_ || address == "/avatar/parameters/SPVR_handLeft_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering left hand unlock from OSC message");
-                            lock_callback_(OSCDeviceType::ControllerLeft, false);
-                        }
+                    
+                    // Pass the exact boolean state to lock/unlock 
+                    lock_callback_(deviceType, value_bool);
+                }
+                
+                // Include paths: toggle behavior
+                else if (address.find("/avatar/parameters/SPVR_") == 0 && address.find("_include") != std::string::npos && include_callback_) {
+                    // Extract device type from the path
+                    std::string deviceStr = address.substr(25); // Remove "/avatar/parameters/SPVR_" prefix
+                    deviceStr = deviceStr.substr(0, deviceStr.find("_include")); // Get just the device part
+                    
+                    // Determine which device type it is
+                    OSCDeviceType deviceType;
+                    if (deviceStr == "HMD") {
+                        deviceType = OSCDeviceType::HMD;
+                    } else if (deviceStr == "ControllerLeft") {
+                        deviceType = OSCDeviceType::ControllerLeft;
+                    } else if (deviceStr == "ControllerRight") {
+                        deviceType = OSCDeviceType::ControllerRight;
+                    } else if (deviceStr == "FootLeft") {
+                        deviceType = OSCDeviceType::FootLeft;
+                    } else if (deviceStr == "FootRight") {
+                        deviceType = OSCDeviceType::FootRight;
+                    } else if (deviceStr == "Hip") {
+                        deviceType = OSCDeviceType::Hip;
+                    } else {
+                        // Unknown device, ignore
+                        return;
                     }
-                    else if (address == osc_lock_path_right_hand_ || address == "/avatar/parameters/SPVR_handRight_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering right hand unlock from OSC message");
-                            lock_callback_(OSCDeviceType::ControllerRight, false);
-                        }
-                    }
-                    else if (address == osc_lock_path_left_foot_ || address == "/avatar/parameters/SPVR_footLeft_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering left foot unlock from OSC message");
-                            lock_callback_(OSCDeviceType::FootLeft, false);
-                        }
-                    }
-                    else if (address == osc_lock_path_right_foot_ || address == "/avatar/parameters/SPVR_footRight_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering right foot unlock from OSC message");
-                            lock_callback_(OSCDeviceType::FootRight, false);
-                        }
-                    }
-                    else if (address == osc_lock_path_hip_ || address == "/avatar/parameters/SPVR_hip_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering hip unlock from OSC message");
-                            lock_callback_(OSCDeviceType::Hip, false);
-                        }
-                    }
-                    else if (address == "/avatar/parameters/SPVR_head_enter") {
-                        if (lock_callback_) {
-                            Logger::Info("OSCManager: Triggering HMD unlock from OSC message (alternate path)");
-                            lock_callback_(OSCDeviceType::HMD, false);
-                        }
+                    
+                    // If value_bool is true, this should toggle the include state
+                    if (value_bool) {
+                        include_callback_(deviceType, true); // The callback will handle toggling
                     }
                 }
             }
@@ -628,7 +614,23 @@ std::string OSCManager::GetStatusPath(OSCDeviceType device) const {
 }
 
 std::string OSCManager::GetLockPath(OSCDeviceType device) const {
-    return "/avatar/parameters/SPVR_" + GetDeviceString(device) + "_OnEnter";
+    return "/avatar/parameters/SPVR_" + GetDeviceString(device) + "_Latch_IsPosed";
+}
+
+std::string OSCManager::GetIncludePath(OSCDeviceType device) const {
+    return "/avatar/parameters/SPVR_" + GetDeviceString(device) + "_include";
+}
+
+std::string OSCManager::GetRoleString(DeviceRole role) const {
+    switch (role) {
+        case DeviceRole::HMD: return "HMD";
+        case DeviceRole::LeftController: return "LeftController";
+        case DeviceRole::RightController: return "RightController";
+        case DeviceRole::Hip: return "Hip";
+        case DeviceRole::LeftFoot: return "LeftFoot";
+        case DeviceRole::RightFoot: return "RightFoot";
+        default: return "None";
+    }
 }
 
 } // namespace StayPutVR 

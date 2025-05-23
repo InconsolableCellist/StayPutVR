@@ -31,6 +31,16 @@ enum class OSCDeviceType {
     Hip
 };
 
+enum class DeviceRole {
+    None,
+    HMD,
+    LeftController,
+    RightController, 
+    Hip,
+    LeftFoot,
+    RightFoot
+};
+
 enum class DeviceStatus {
     Disabled = 0,
     Unlocked = 1,
@@ -57,6 +67,9 @@ public:
     // Set callback for when a device should be locked/unlocked
     void SetLockCallback(std::function<void(OSCDeviceType, bool)> callback) { lock_callback_ = callback; }
     
+    // Set callback for device include/exclude in locking
+    void SetIncludeCallback(std::function<void(OSCDeviceType, bool)> callback) { include_callback_ = callback; }
+    
     // Set callback for global lock/unlock
     void SetGlobalLockCallback(std::function<void(bool)> callback) { global_lock_callback_ = callback; }
     
@@ -67,6 +80,13 @@ public:
     void SendPiShockShock(bool enabled);
     void SendPiShockVibrate(bool enabled);
     void SendPiShockBeep(bool enabled);
+    
+    // Helper string conversion functions
+    std::string GetDeviceString(OSCDeviceType device) const;
+    std::string GetStatusPath(OSCDeviceType device) const;
+    std::string GetLockPath(OSCDeviceType device) const;
+    std::string GetIncludePath(OSCDeviceType device) const;
+    std::string GetRoleString(DeviceRole role) const;
 
 private:
     OSCManager() = default;
@@ -96,12 +116,21 @@ private:
     void ProcessOSCMessage(const char* data, size_t size);
     
     // OSC paths from config
-    std::string osc_lock_path_hmd_ = "/avatar/parameters/SPVR_neck_enter";
-    std::string osc_lock_path_left_hand_ = "/avatar/parameters/SPVR_handLeft_enter";
-    std::string osc_lock_path_right_hand_ = "/avatar/parameters/SPVR_handRight_enter";
-    std::string osc_lock_path_left_foot_ = "/avatar/parameters/SPVR_footLeft_enter";
-    std::string osc_lock_path_right_foot_ = "/avatar/parameters/SPVR_footRight_enter";
+    std::string osc_lock_path_hmd_ = "/avatar/parameters/SPVR_HMD_Latch_IsPosed";
+    std::string osc_lock_path_left_hand_ = "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed";
+    std::string osc_lock_path_right_hand_ = "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed";
+    std::string osc_lock_path_left_foot_ = "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed";
+    std::string osc_lock_path_right_foot_ = "/avatar/parameters/SPVR_FootRight_Latch_IsPosed";
     std::string osc_lock_path_hip_ = "/avatar/parameters/SPVR_hip_enter";
+    
+    // OSC include paths from config
+    std::string osc_include_path_hmd_ = "/avatar/parameters/SPVR_HMD_include";
+    std::string osc_include_path_left_hand_ = "/avatar/parameters/SPVR_ControllerLeft_include";
+    std::string osc_include_path_right_hand_ = "/avatar/parameters/SPVR_ControllerRight_include";
+    std::string osc_include_path_left_foot_ = "/avatar/parameters/SPVR_FootLeft_include";
+    std::string osc_include_path_right_foot_ = "/avatar/parameters/SPVR_FootRight_include";
+    std::string osc_include_path_hip_ = "/avatar/parameters/SPVR_Hip_include";
+    
     std::string osc_global_lock_path_ = "/avatar/parameters/SPVR_global_lock";
     std::string osc_global_unlock_path_ = "/avatar/parameters/SPVR_global_unlock";
     
@@ -113,13 +142,11 @@ private:
     // Callback for lock/unlock events
     std::function<void(OSCDeviceType, bool)> lock_callback_;
     
+    // Callback for include/exclude events
+    std::function<void(OSCDeviceType, bool)> include_callback_;
+    
     // Callback for global lock/unlock events
     std::function<void(bool)> global_lock_callback_;
-
-    // Helper functions
-    std::string GetDeviceString(OSCDeviceType device) const;
-    std::string GetStatusPath(OSCDeviceType device) const;
-    std::string GetLockPath(OSCDeviceType device) const;
 };
 
 } // namespace StayPutVR 

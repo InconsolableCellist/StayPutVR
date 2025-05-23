@@ -12,13 +12,14 @@ file(GLOB_RECURSE APP_SOURCES
     "*.hpp"
 )
 
-# Create application executable
-add_executable(stayputvr_app 
+# Create application executable with WIN32 flag to disable console
+add_executable(stayputvr_app WIN32
     ${APP_SOURCES}
     ${GLAD_SOURCES}
     ${INIH_SOURCES}
     "${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends/imgui_impl_glfw.cpp"
     "${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends/imgui_impl_opengl3.cpp"
+    resources.rc
 )
 
 target_include_directories(stayputvr_app PRIVATE 
