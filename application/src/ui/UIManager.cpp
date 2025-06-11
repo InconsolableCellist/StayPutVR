@@ -37,7 +37,7 @@ namespace StayPutVR {
         // Initialize config_file_ with just the filename, not the full path
         config_file_ = "config.ini";
         // Increase window height to prevent cutting off UI elements
-        window_height_ = 700;
+        window_height_ = 750;
         
         // Create device manager instance
         device_manager_ = new DeviceManager();
@@ -557,6 +557,20 @@ namespace StayPutVR {
                 device_positions_[index].exceeds_threshold = false;
                 device_positions_[index].in_warning_zone = false;
             }
+            
+            // Send OSC status update for individual device lock/unlock
+            if (device_positions_[index].role != DeviceRole::None) {
+                OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device_positions_[index].role);
+                DeviceStatus status = lock ? DeviceStatus::LockedSafe : DeviceStatus::Unlocked;
+                UpdateDeviceStatus(oscDevice, status);
+                
+                if (StayPutVR::Logger::IsInitialized()) {
+                    StayPutVR::Logger::Debug("Sent OSC status " + std::string(lock ? "LockedSafe" : "Unlocked") + 
+                                           " for manually " + std::string(lock ? "locked" : "unlocked") + 
+                                           " device " + serial + " (role: " + 
+                                           OSCManager::GetInstance().GetRoleString(device_positions_[index].role) + ")");
+                }
+            }
         }
     }
     
@@ -608,6 +622,18 @@ namespace StayPutVR {
                     for (int i = 0; i < 4; i++) device.original_rotation[i] = device.rotation[i];
                     device.position_deviation = 0.0f;
                     device.exceeds_threshold = false;
+                    
+                    // Send OSC status update for global lock
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::LockedSafe);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Sent OSC status LockedSafe for globally locked device " + 
+                                                   device.serial + " (role: " + 
+                                                   OSCManager::GetInstance().GetRoleString(device.role) + ")");
+                        }
+                    }
                 }
             }
             
@@ -616,6 +642,23 @@ namespace StayPutVR {
                 AudioManager::PlayLockSound(config_.audio_volume);
             }
         } else {
+            // Send OSC status updates for global unlock
+            for (auto& device : device_positions_) {
+                if (device.include_in_locking) {
+                    // Send OSC status update for global unlock
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::Unlocked);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Sent OSC status Unlocked for globally unlocked device " + 
+                                                   device.serial + " (role: " + 
+                                                   OSCManager::GetInstance().GetRoleString(device.role) + ")");
+                        }
+                    }
+                }
+            }
+            
             // Play unlock sound if enabled
             if (config_.audio_enabled && config_.unlock_audio) {
                 AudioManager::PlayUnlockSound(config_.audio_volume);
@@ -692,8 +735,20 @@ namespace StayPutVR {
                 // Check for transition from warning/exceeding to safe zone
                 if (!was_in_safe_zone && is_in_safe_zone) {
                     if (StayPutVR::Logger::IsInitialized()) {
-                        StayPutVR::Logger::Debug("Device returned to safe zone, triggering success sound");
+                        StayPutVR::Logger::Debug("Device " + device.serial + " returned to safe zone, triggering success sound");
                     }
+                    
+                    // Send OSC status update for return to safe zone
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::LockedSafe);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Sent OSC status LockedSafe for device " + device.serial + 
+                                                   " (role: " + OSCManager::GetInstance().GetRoleString(device.role) + ")");
+                        }
+                    }
+                    
                     success_triggered = true;
                 }
                 
@@ -707,6 +762,9 @@ namespace StayPutVR {
                     
                     // Remove PiShock warning call - only use audio warnings for this zone
                     // Audio warning will still be handled by the existing code below
+                    
+                    // Send OSC status update for warning zone entry - but skip for now per user request
+                    // UpdateDeviceStatus will be called for safe/disobedience only
                 }
                 
                 if (!was_exceeding && device.exceeds_threshold) {
@@ -716,6 +774,17 @@ namespace StayPutVR {
                                                 std::to_string(device.position_deviation) + 
                                                 ", was_exceeding=" + std::to_string(was_exceeding) + 
                                                 ", pishock_enabled=" + std::to_string(config_.pishock_enabled));
+                    }
+                    
+                    // Send OSC status update for disobedience (out of bounds) state
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::LockedDisobedience);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Sent OSC status LockedDisobedience for device " + device.serial + 
+                                                   " (role: " + OSCManager::GetInstance().GetRoleString(device.role) + ")");
+                        }
                     }
                     
                     if (config_.pishock_enabled) {
@@ -3377,6 +3446,19 @@ namespace StayPutVR {
                 device_roles.pop_back(); // Remove last space
             }
             StayPutVR::Logger::Debug(device_roles);
+        }
+    }
+
+    // Helper function to convert DeviceRole to OSCDeviceType
+    OSCDeviceType UIManager::DeviceRoleToOSCDeviceType(DeviceRole role) const {
+        switch (role) {
+            case DeviceRole::HMD: return OSCDeviceType::HMD;
+            case DeviceRole::LeftController: return OSCDeviceType::ControllerLeft;
+            case DeviceRole::RightController: return OSCDeviceType::ControllerRight;
+            case DeviceRole::LeftFoot: return OSCDeviceType::FootLeft;
+            case DeviceRole::RightFoot: return OSCDeviceType::FootRight;
+            case DeviceRole::Hip: return OSCDeviceType::Hip;
+            default: return OSCDeviceType::HMD; // Default fallback, though this shouldn't be used for None role
         }
     }
 

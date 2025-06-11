@@ -2,19 +2,21 @@
 
 Lock yourself or your friends into positions in VR! Want your friend to keep his or her paws behind his back? No problem. Chat wants to make you stand on one foot for 60 seconds? Easy. Have to bend over and touch your toes or you lose some kind of game? It's possible, with ~~punishments~~ consequences for failing.
 
-You can be locked via clicking a button locally, or locked remotely via OSC integration (a friend grabbing your StayPutVR-compatible cuffs, for example), at which point your movement will be locked. Once locked, if your devices move too far away from their current position there'll be conseqeuences of your chosing: an audio warning, an OSC message that drives animation on your avatar, or even external messages to OSC-compatible applications, like [ButtplugIO](https://github.com/buttplugio) or [PiShock](https://pishock.com/).
+You can be locked via clicking a button locally, or locked remotely via OSC integration (a friend grabbing your StayPutVR-compatible cuffs, for example), at which point your movement will be locked. Once locked, if your devices move too far away from their current position there'll be conseqeuences of your chosing: an audio warning, an OSC message that drives animation on your avatar, or even external messages to OSC-compatible applications, like [PiShock](https://pishock.com/).
 
-Cooldown timers, audio warnings, and a safeword override are all configurable, and the control remains completely and totally on your own computer--no servers or external calls, other than the OSC integration you setup.
+Cooldown timers, audio warnings, and a safeword override are all configurable, and the control remains completely and totally on your own computer, with you choosing who can control your avatar via VRChat's avatar interaction system.
 
-## 📥 Downloading/Installation
+## 📥 Quickstart
 
-StayPutVR is FOSS and created by Foxipso. You can download the code in this Github repo and use the project for free!
+The following is what most users will care about:
 
-However, for: precompiled binaries; VRChat-compatible prefabs; a detailed usage guide and video; and to support the creator, you can visit my Gumroad:
+StayPutVR is FOSS and created by Foxipso. You can download the code in this Github repo and use the application for free!
+
+However, to integrate StayPutVR with your avatar in VRChat, you'll need to find a public avatar or purchase the prefab from my Gumroad, or make one yourself:
 
 [foxipso.gumroad.com](https://foxipso.gumroad.com/l/stayputvr)
 
-Not only does this support me and my work (and is greatly appreciated!) this is also the easiest way to integrate StayPutVR with your avatar in VRChat. The prefab also comes with compatible cuffs and a collar, which can be grabbed by your friends to control StayPutVR.
+Not only does this support me and my work (and is greatly appreciated!) this is also the easiest way to integrate StayPutVR with your avatar in VRChat. The prefab comes with compatible cuffs and a collar, which have status lights and effects to indicate when you're in position, being shocked, etc.
 
 ## ✨ Features
 
@@ -24,39 +26,97 @@ Not only does this support me and my work (and is greatly appreciated!) this is 
   - ⚠️ **Warning zone**: You're straying too far--watch out!
   - ❌ **Non-Compliance zone**: Now you've done it.
   - 🛑 **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
-- 📡 OSC integration with VRChat and apps like ButtplugIO and PiShock
+- 📡 Integration with VRChat and PiShock
 - 🔊 Audio cues for warnings and boundary violations
-- 📳 Haptic feedback for supported devices
 - ⏱️ Configurable timers for automatic unlocking
-- 🔄 Chaining mode to lock all devices when one device is locked, or lock/unlock each one individually
 
 ## 📡 OSC Integration
 
-StayPutVR integrates with VRChat and other OSC-compatible applications through a simple message protocol:
+StayPutVR integrates with VRChat and other OSC-compatible applications. The system supports both incoming commands (to control locking) and outgoing status messages (to reflect device states).
+
+The following documentation is crucial for any avatar creator who wishes to make their own integration.
+
+For most users, I strongly recommend using my collar & cuffs prefab, which is available for purchase on Gumroad (and which supports my work!): [foxipso.gumroad.com/l/stayputvr](https://foxipso.gumroad.com/l/stayputvr)
 
 ### Device Status Messages (Outgoing)
-- Path: `/avatar/parameters/SPVR_{deviceId}_Status`
-- Value: Integer (0-5)
-  - 0: Disabled/Unknown
-  - 1: Unlocked (Green LED)
-  - 2: Locked and Safe (Red LED)
-  - 3: Locked and Warning (Flashing Yellow LED)
-  - 4: Locked and Disobedience! (Flashing Red LED)
-  - 5: Locked and Out of Bounds (Blinking White)
 
-### Lock Control Messages (Incoming)
-- Path: `/avatar/parameters/SPVR_{deviceId}_OnEnter`
-- Value: Boolean (0/1)
-  - When set to 1, the device will be locked if "Include in Lock" is enabled
-  - When set to 0, the device will be unlocked
+StayPutVR sends device status updates to indicate the current state of each tracked device:
 
-Supported devices:
-- HMD
-- ControllerLeft
-- ControllerRight
-- FootLeft
-- FootRight
-- Hip
+**Path Format**: `/avatar/parameters/SPVR_{DeviceName}_Status`  
+**Value Type**: Integer (0-5)
+
+**Status Values:**
+- `0`: **Disabled** - Device is disabled or unknown state
+- `1`: **Unlocked** - Device is free to move (Green LED)
+- `2`: **Locked Safe** - Device is locked and within safe boundaries (Red LED)
+- `3`: **Locked Warning** - Device is locked and in warning zone (Flashing Yellow LED)
+- `4`: **Locked Disobedience** - Device is locked and user is disobeying (Flashing Red LED)
+- `5`: **Locked Out of Bounds** - Device is locked and completely out of bounds (Blinking White)
+
+### Device Lock Control (Incoming)
+
+Control individual device locking states via OSC:
+
+**Default Paths:**
+- `/avatar/parameters/SPVR_HMD_Latch_IsPosed`
+- `/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed`
+- `/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed`
+- `/avatar/parameters/SPVR_FootLeft_Latch_IsPosed`
+- `/avatar/parameters/SPVR_FootRight_Latch_IsPosed`
+- `/avatar/parameters/SPVR_Hip_Latch_IsPosed`
+
+**Value Type**: Boolean (true/1 = lock, false/0 = unlock)
+
+### Device Include Control (Incoming)
+
+Toggle whether devices are included in global locking operations:
+
+**Default Paths:**
+- `/avatar/parameters/SPVR_HMD_include`
+- `/avatar/parameters/SPVR_ControllerLeft_include`
+- `/avatar/parameters/SPVR_ControllerRight_include`
+- `/avatar/parameters/SPVR_FootLeft_include`
+- `/avatar/parameters/SPVR_FootRight_include`
+- `/avatar/parameters/SPVR_Hip_include`
+
+**Value Type**: Boolean (true/1 = toggle include state)  
+**Behavior**: Sending `true` toggles the device's "Include in Locking" setting
+
+### Global Lock Controls (Incoming)
+
+Control all devices simultaneously:
+
+**Default Paths:**
+- `/avatar/parameters/SPVR_Global_Lock` - Lock all included devices
+- `/avatar/parameters/SPVR_Global_Unlock` - Unlock all devices
+
+**Value Type**: Boolean (true/1 = activate)
+
+### Supported Device Types
+
+StayPutVR recognizes and can control the following device types:
+- **HMD** - Head-mounted display
+- **ControllerLeft** - Left hand controller
+- **ControllerRight** - Right hand controller  
+- **FootLeft** - Left foot tracker
+- **FootRight** - Right foot tracker
+- **Hip** - Hip/waist tracker
+
+### OSC Configuration
+
+Default OSC settings:
+- **Send Port**: 9000 (to VRChat/applications)
+- **Receive Port**: 9001 (from VRChat/applications)  
+- **Address**: 127.0.0.1 (localhost)
+
+All OSC paths are configurable through the OSC tab in the application interface.
+
+
+## 📡 PiShock Integration
+
+StayPutVR can send commands to PiShock through its web interface. You just need to provide your username, API key, and share code, available via PiShock's website.
+
+You can configure whether your device beeps, vibrates, or shocks, how long it does so for, how intense it is, and whether it repeats or is one-time only.
 
 ## 🖥️ Interface
 
@@ -70,14 +130,6 @@ StayPutVR is a desktop application that registers with SteamVR
 - **OSC Tab**: OSC connection settings and message configuration
 - **Settings Tab**: Application settings and configuration management
 
-## 📡 OSC Configuration
-
-StayPutVR can receive and send OSC messages to communicate with external applications like VRChat. This allows for:
-
-- Locking device positions via OSC commands
-- Sending notifications when positions exceed thresholds
-- Triggering external events based on position status
-
 ## 🔧 System Requirements
 
 - Windows 10 or higher
@@ -85,16 +137,6 @@ StayPutVR can receive and send OSC messages to communicate with external applica
 - OpenVR SDK 2.5.1 or compatible
 - Visual Studio 2019 or higher (for building)
 - CMake 3.15 or higher (for building)
-
-## 🚀 Quick Start
-
-1. Build the project using CMake
-2. Install the driver using `cmake --build . --target install`
-3. Register the driver using vrpathreg
-4. Launch SteamVR
-5. Use the main interface to lock positions and configure boundaries
-
-For detailed instructions, see [INSTALLATION.md](INSTALLATION.md).
 
 ## 📂 Project Structure
 

@@ -199,6 +199,9 @@ namespace StayPutVR {
         // Helper function to convert OSCDeviceType to string
         std::string GetOSCDeviceString(OSCDeviceType device) const;
         
+        // Helper function to convert DeviceRole to OSCDeviceType
+        OSCDeviceType DeviceRoleToOSCDeviceType(DeviceRole role) const;
+        
         // PiShock helper functions
         void SendPiShockDisobedienceActions();
         
