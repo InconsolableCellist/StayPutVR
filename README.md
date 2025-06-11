@@ -4,19 +4,32 @@ Lock yourself or your friends into positions in VR! Want your friend to keep his
 
 You can be locked via clicking a button locally, or locked remotely via OSC integration (a friend grabbing your StayPutVR-compatible cuffs, for example), at which point your movement will be locked. Once locked, if your devices move too far away from their current position there'll be conseqeuences of your chosing: an audio warning, an OSC message that drives animation on your avatar, or even external messages to OSC-compatible applications, like [PiShock](https://pishock.com/).
 
-Cooldown timers, audio warnings, and a safeword override are all configurable, and the control remains completely and totally on your own computer, with you choosing who can control your avatar via VRChat's avatar interaction system.
+Cooldown timers, audio warnings, and PiShock intensity are all configurable, and the control remains completely and totally on your own computer, with you choosing who can control your avatar via VRChat's avatar interaction system.
+
+## 🎥 Video
+
+<iframe width="560" height="315" src="https://www.youtube.com/embed/dQw4w9WgXcQ?si=1234567890" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 
 ## 📥 Quickstart
 
-The following is what most users will care about:
+StayPutVR is open-source and created by Foxipso. You can download the code in this Github repo and use the application for free!
 
-StayPutVR is FOSS and created by Foxipso. You can download the code in this Github repo and use the application for free!
+You then need a compatible avatar. You can use my public test avatar (Foxipso Base) or add it to your own.
 
-However, to integrate StayPutVR with your avatar in VRChat, you'll need to find a public avatar or purchase the prefab from my Gumroad, or make one yourself:
+The easiest way to add it is to use my 3D cuffs and collar, which comes complete with a HUD and poseable locks that your friends can set. Using my prefab also supports me and my work!
 
-[foxipso.gumroad.com](https://foxipso.gumroad.com/l/stayputvr)
+[foxipso.gumroad.com/l/stayputvr](https://foxipso.gumroad.com/l/stayputvr)
 
-Not only does this support me and my work (and is greatly appreciated!) this is also the easiest way to integrate StayPutVR with your avatar in VRChat. The prefab comes with compatible cuffs and a collar, which have status lights and effects to indicate when you're in position, being shocked, etc.
+1. Install the application
+2. Start SteamVR and StayPutVR
+3. Make sure you see "Connected to Driver"
+4. Go to the Devices tab. Move each device to identify it and assign a role using the drop-down. 
+5. If you wish to integrate with VRChat or another OSC application, go to the OSC tab, verify the settings, and click Enable OSC.
+6. Configure the countdown timer, safe zones, and other settings like PiShock if you wish.
+7. Lock individual devices on the Devices Tab, or set devices to "Will Lock" and then click "Lock All Included Devices" to lock them all at the same time!
+8. Move your devices and you should get a warning if you're out of bounds, or a shock if you're out of bounds and the device is set to shock!
+
+In VRChat, you can now use my public test avatar (Foxipso Base), add it to your own avatars using [my prefab](https://foxipso.gumroad.com/l/stayputvr), or make your own custom objects that utilize the OSC integration.
 
 ## ✨ Features
 
@@ -179,13 +192,19 @@ StayPutVR automatically saves and loads configurations in JSON format, allowing 
 4. Run `cmake --build build --config Release`
 5. Install with `cmake --build build --target install --config Release`
 
+## 💖 Support Development
+
+If you enjoy using StayPutVR and want to support me, consider making a donation! Your contributions help me create content for VRChat!
+
+[![](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/donate/?hosted_button_id=YRN6YJ5XU8Z8E)
+
 ## 📅 Version History
 
-1.0.0 - Initial release with tabbed UI and core functionality
+1.0.0 - Initial release
 
 ## ⚖️ License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Apache 2.0 License. See [LICENSE](LICENSE) for details.
 
 ## 🙏 Acknowledgments
 
