@@ -2,6 +2,7 @@
 #include <iostream>
 #include <string>
 #include <format>
+#include <algorithm>
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -44,12 +45,17 @@ namespace StayPutVR {
         
         // Initialize timestamps
         last_sound_time_ = std::chrono::steady_clock::now();
-        last_pishock_time_ = std::chrono::steady_clock::now();
         last_osc_toggle_time_ = std::chrono::steady_clock::now();
     }
 
     UIManager::~UIManager() {
         Shutdown();
+        
+        // Shutdown Twitch manager
+        ShutdownTwitchManager();
+        
+        // Shutdown PiShock manager
+        ShutdownPiShockManager();
         
         // Clean up device manager
         if (device_manager_) {
@@ -217,6 +223,12 @@ namespace StayPutVR {
             }
         }
         
+        // Initialize Twitch manager
+        InitializeTwitchManager();
+        
+        // Initialize PiShock manager
+        InitializePiShockManager();
+        
         return true;
     }
 
@@ -247,6 +259,14 @@ namespace StayPutVR {
                 ActivateGlobalLockInternal(true);
             }
         }
+        
+        // Update Twitch manager
+        if (twitch_manager_) {
+            twitch_manager_->Update();
+        }
+        
+        // Process Twitch unlock timer
+        ProcessTwitchUnlockTimer();
         
         // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
@@ -787,25 +807,21 @@ namespace StayPutVR {
                         }
                     }
                     
-                    if (config_.pishock_enabled) {
+                    if (pishock_manager_ && pishock_manager_->IsEnabled()) {
                         if (StayPutVR::Logger::IsInitialized()) {
                             Logger::Info("Triggering initial PiShock disobedience actions for device " + device.serial);
                         }
-                        SendPiShockDisobedienceActions();
+                        pishock_manager_->TriggerDisobedienceActions(device.serial);
                     }
                 } 
                 // Continue triggering PiShock for devices that remain in out-of-bounds zone
-                else if (device.exceeds_threshold && config_.pishock_enabled) {
-                    // Check if enough time has passed since the last PiShock action
-                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
-                    
-                    // Only send repeating PiShock actions every 2 seconds
-                    if (elapsed >= 2) {
+                else if (device.exceeds_threshold && pishock_manager_ && pishock_manager_->IsEnabled()) {
+                    // PiShockManager handles its own rate limiting
+                    if (pishock_manager_->CanTriggerAction()) {
                         if (StayPutVR::Logger::IsInitialized()) {
-                            Logger::Info("Triggering continuous PiShock disobedience actions for device " + device.serial + 
-                                        " (" + std::to_string(elapsed) + " seconds since last action)");
+                            Logger::Info("Triggering continuous PiShock disobedience actions for device " + device.serial);
                         }
-                        SendPiShockDisobedienceActions();
+                        pishock_manager_->TriggerDisobedienceActions(device.serial);
                     }
                 }
             }
@@ -1123,6 +1139,9 @@ namespace StayPutVR {
             case TabType::PISHOCK:
                 RenderPiShockTab();
                 break;
+            case TabType::TWITCH:
+                RenderTwitchTab();
+                break;
             case TabType::SETTINGS:
                 RenderSettingsTab();
                 break;
@@ -1160,6 +1179,11 @@ namespace StayPutVR {
             
             if (ImGui::BeginTabItem("PiShock")) {
                 current_tab_ = TabType::PISHOCK;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("Twitch")) {
+                current_tab_ = TabType::TWITCH;
                 ImGui::EndTabItem();
             }
             
@@ -1681,6 +1705,69 @@ namespace StayPutVR {
         }
         
         ImGui::Text("Countdown plays a 3-second countdown sound before locking devices.");
+        
+        ImGui::Spacing();
+        ImGui::Separator();
+        
+        // Unlock Timer
+        ImGui::Text("Unlock Timer");
+        ImGui::Separator();
+        
+        bool unlock_timer_enabled = config_.unlock_timer_enabled;
+        if (ImGui::Checkbox("Enable Automatic Unlock Timer", &unlock_timer_enabled)) {
+            config_.unlock_timer_enabled = unlock_timer_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Automatically unlock devices after a specified duration (useful for Twitch integrations)");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::BeginDisabled(!config_.unlock_timer_enabled);
+        
+        float unlock_timer_minutes = config_.unlock_timer_duration / 60.0f;
+        if (ImGui::SliderFloat("Unlock Timer Duration", &unlock_timer_minutes, 1.0f, 60.0f, "%.1f minutes")) {
+            config_.unlock_timer_duration = unlock_timer_minutes * 60.0f;
+            changed = true;
+        }
+        
+        bool unlock_timer_show_remaining = config_.unlock_timer_show_remaining;
+        if (ImGui::Checkbox("Show Remaining Time", &unlock_timer_show_remaining)) {
+            config_.unlock_timer_show_remaining = unlock_timer_show_remaining;
+            changed = true;
+        }
+        
+        bool unlock_timer_audio_warnings = config_.unlock_timer_audio_warnings;
+        if (ImGui::Checkbox("Audio Warnings", &unlock_timer_audio_warnings)) {
+            config_.unlock_timer_audio_warnings = unlock_timer_audio_warnings;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Play audio warnings at 60s, 30s, and 10s remaining");
+            ImGui::EndTooltip();
+        }
+        
+        // Show current unlock timer status if active
+        if (twitch_unlock_timer_active_) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Unlock Timer Active!");
+            ImGui::Text("Time remaining: %.1f seconds", twitch_unlock_timer_remaining_);
+            
+            if (ImGui::Button("Cancel Unlock Timer")) {
+                twitch_unlock_timer_active_ = false;
+                twitch_unlock_timer_remaining_ = 0.0f;
+            }
+        }
+        
+        ImGui::EndDisabled();
         
         // Save changes if anything was modified
         if (changed) {
@@ -3216,109 +3303,48 @@ namespace StayPutVR {
                              config_.pishock_api_key.empty() || config_.pishock_share_code.empty());
         
         if (ImGui::Button("Test Out of Bounds Actions")) {
-            SendPiShockDisobedienceActions();
+            if (pishock_manager_) {
+                pishock_manager_->TestActions();
+            }
         }
         
         ImGui::EndDisabled();
         ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
 
-    void UIManager::SendPiShockDisobedienceActions() {
-        if (Logger::IsInitialized()) {
-            Logger::Debug("SendPiShockDisobedienceActions called - begin log tracking");
-        }
+    // PiShock Helper Methods Implementation
+    void UIManager::InitializePiShockManager() {
+        pishock_manager_ = std::make_unique<PiShockManager>();
         
-        if (!config_.pishock_enabled || !config_.pishock_user_agreement ||
-            config_.pishock_username.empty() || config_.pishock_api_key.empty() || 
-            config_.pishock_share_code.empty()) {
+        if (pishock_manager_->Initialize(&config_)) {
+            // Set up callback for PiShock action results
+            pishock_manager_->SetActionCallback(
+                [this](const std::string& action_type, bool success, const std::string& message) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Info("PiShock " + action_type + " " + (success ? "succeeded" : "failed") + 
+                                   (message.empty() ? "" : ": " + message));
+                    }
+                }
+            );
+            
             if (Logger::IsInitialized()) {
-                Logger::Warning("PiShock disobedience actions skipped: not fully configured");
+                Logger::Info("PiShockManager initialized successfully");
             }
-            return;
-        }
-        
-        // Rate limiting - only send every 2 seconds to avoid spamming
-        auto current_time = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(current_time - last_pishock_time_).count();
-        if (elapsed < 2) {
+        } else {
             if (Logger::IsInitialized()) {
-                Logger::Debug("PiShock disobedience actions skipped: rate limited, elapsed=" + 
-                              std::to_string(elapsed) + " seconds since last action");
+                Logger::Error("Failed to initialize PiShockManager");
             }
-            return;
         }
-        
-        // Update timestamp 
-        last_pishock_time_ = current_time;
-        
-        // Calculate actual intensity and duration values
-        // PiShock API requires values 1-100 for intensity and 1-15 for duration
-        int intensity = static_cast<int>(config_.pishock_disobedience_intensity * 100.0f);
-        int duration = static_cast<int>(config_.pishock_disobedience_duration * 15.0f);
-        
-        if (Logger::IsInitialized()) {
-            Logger::Debug("PiShock disobedience settings: beep=" + 
-                         std::to_string(config_.pishock_disobedience_beep) + 
-                         ", vibrate=" + std::to_string(config_.pishock_disobedience_vibrate) + 
-                         ", shock=" + std::to_string(config_.pishock_disobedience_shock) + 
-                         ", intensity=" + std::to_string(intensity) + 
-                         ", duration=" + std::to_string(duration));
-        }
-        
-        // Send actions based on configuration asynchronously
-        if (config_.pishock_disobedience_beep) {
-            SendPiShockCommandAsync(
-                config_.pishock_username, 
-                config_.pishock_api_key, 
-                config_.pishock_share_code, 
-                2, // beep operation
-                0, // intensity not used for beep
-                duration,
-                [](bool success, const std::string& response) {
-                    if (Logger::IsInitialized()) {
-                        Logger::Debug("PiShock disobedience beep result: " + 
-                                     std::string(success ? "success" : "failed") + " - " + response);
-                    }
-                }
-            );
-        }
-        
-        if (config_.pishock_disobedience_vibrate) {
-            SendPiShockCommandAsync(
-                config_.pishock_username, 
-                config_.pishock_api_key, 
-                config_.pishock_share_code, 
-                1, // vibrate operation
-                intensity,
-                duration,
-                [](bool success, const std::string& response) {
-                    if (Logger::IsInitialized()) {
-                        Logger::Debug("PiShock disobedience vibrate result: " + 
-                                     std::string(success ? "success" : "failed") + " - " + response);
-                    }
-                }
-            );
-        }
-        
-        if (config_.pishock_disobedience_shock) {
-            SendPiShockCommandAsync(
-                config_.pishock_username, 
-                config_.pishock_api_key, 
-                config_.pishock_share_code, 
-                0, // shock operation
-                intensity,
-                duration,
-                [](bool success, const std::string& response) {
-                    if (Logger::IsInitialized()) {
-                        Logger::Debug("PiShock disobedience shock result: " + 
-                                     std::string(success ? "success" : "failed") + " - " + response);
-                    }
-                }
-            );
-        }
-        
-        if (Logger::IsInitialized()) {
-            Logger::Info("Sent PiShock disobedience actions asynchronously");
+    }
+
+    void UIManager::ShutdownPiShockManager() {
+        if (pishock_manager_) {
+            pishock_manager_->Shutdown();
+            pishock_manager_.reset();
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("PiShockManager shut down");
+            }
         }
     }
 
@@ -3459,6 +3485,723 @@ namespace StayPutVR {
             case DeviceRole::RightFoot: return OSCDeviceType::FootRight;
             case DeviceRole::Hip: return OSCDeviceType::Hip;
             default: return OSCDeviceType::HMD; // Default fallback, though this shouldn't be used for None role
+        }
+    }
+
+    void UIManager::RenderTwitchTab() {
+        ImGui::Text("Twitch Integration");
+        ImGui::Separator();
+        
+        // Safety warning (similar to PiShock)
+        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
+        ImGui::Text("Twitch integration allows viewers to trigger device locking through donations/bits/subscriptions. This should only be used with people you trust and in safe environments. The makers of StayPutVR accept no liability for misuse of this feature. Always have a safety mechanism to quickly disconnect devices if needed. Test all features thoroughly before use with live viewers.");
+        ImGui::PopTextWrapPos();
+        
+        // User agreement checkbox
+        bool user_agreement = config_.twitch_user_agreement;
+        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
+            config_.twitch_user_agreement = user_agreement;
+            SaveConfig();
+        }
+        
+        ImGui::Separator();
+        
+        // Main enable/disable checkbox (disabled until agreement is checked)
+        ImGui::BeginDisabled(!user_agreement);
+        bool twitch_enabled = config_.twitch_enabled;
+        if (ImGui::Checkbox("Enable Twitch Integration", &twitch_enabled)) {
+            config_.twitch_enabled = twitch_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Enable Twitch API integration for chat bot and donation triggers");
+            ImGui::EndTooltip();
+        }
+        
+        // Connection status
+        if (config_.twitch_enabled && twitch_manager_) {
+            std::string status = twitch_manager_->GetConnectionStatus();
+            if (twitch_manager_->IsConnected()) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ("✓ " + status).c_str());
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ("✗ " + status).c_str());
+                std::string error = twitch_manager_->GetLastError();
+                if (!error.empty()) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), ("Error: " + error).c_str());
+                }
+            }
+        }
+        
+        ImGui::Separator();
+        
+        // Twitch API Authentication
+        ImGui::Text("Twitch API Authentication:");
+        ImGui::TextWrapped("You'll need to create a Twitch application at https://dev.twitch.tv/console to get these credentials.");
+        
+        static char client_id_buffer[128] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_client_id != client_id_buffer) {
+            strcpy_s(client_id_buffer, sizeof(client_id_buffer), config_.twitch_client_id.c_str());
+        }
+        
+        if (ImGui::InputText("Client ID", client_id_buffer, sizeof(client_id_buffer))) {
+            config_.twitch_client_id = client_id_buffer;
+            SaveConfig();
+        }
+        
+        static char client_secret_buffer[128] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_client_secret != client_secret_buffer) {
+            strcpy_s(client_secret_buffer, sizeof(client_secret_buffer), config_.twitch_client_secret.c_str());
+        }
+        
+        if (ImGui::InputText("Client Secret", client_secret_buffer, sizeof(client_secret_buffer), ImGuiInputTextFlags_Password)) {
+            config_.twitch_client_secret = client_secret_buffer;
+            SaveConfig();
+        }
+        
+        static char channel_name_buffer[128] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_channel_name != channel_name_buffer) {
+            strcpy_s(channel_name_buffer, sizeof(channel_name_buffer), config_.twitch_channel_name.c_str());
+        }
+        
+        if (ImGui::InputText("Channel Name", channel_name_buffer, sizeof(channel_name_buffer))) {
+            config_.twitch_channel_name = channel_name_buffer;
+            SaveConfig();
+        }
+        
+        static char bot_username_buffer[128] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_bot_username != bot_username_buffer) {
+            strcpy_s(bot_username_buffer, sizeof(bot_username_buffer), config_.twitch_bot_username.c_str());
+        }
+        
+        if (ImGui::InputText("Bot Username", bot_username_buffer, sizeof(bot_username_buffer))) {
+            config_.twitch_bot_username = bot_username_buffer;
+            SaveConfig();
+        }
+        
+        // OAuth buttons
+        ImGui::Spacing();
+        ImGui::BeginDisabled(!config_.twitch_enabled || config_.twitch_client_id.empty() || config_.twitch_client_secret.empty());
+        
+        if (ImGui::Button("Connect to Twitch")) {
+            if (twitch_manager_) {
+                twitch_manager_->ConnectToTwitch();
+            }
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Disconnect from Twitch")) {
+            if (twitch_manager_) {
+                twitch_manager_->DisconnectFromTwitch();
+            }
+        }
+        
+        ImGui::EndDisabled();
+        
+        ImGui::Separator();
+        
+        // Chat Bot Settings
+        ImGui::Text("Chat Bot Settings:");
+        
+        bool chat_enabled = config_.twitch_chat_enabled;
+        if (ImGui::Checkbox("Enable Chat Commands", &chat_enabled)) {
+            config_.twitch_chat_enabled = chat_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::BeginDisabled(!config_.twitch_chat_enabled);
+        
+        static char prefix_buffer[16] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_command_prefix != prefix_buffer) {
+            strcpy_s(prefix_buffer, sizeof(prefix_buffer), config_.twitch_command_prefix.c_str());
+        }
+        
+        if (ImGui::InputText("Command Prefix", prefix_buffer, sizeof(prefix_buffer))) {
+            config_.twitch_command_prefix = prefix_buffer;
+            SaveConfig();
+        }
+        
+        static char lock_cmd_buffer[64] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_lock_command != lock_cmd_buffer) {
+            strcpy_s(lock_cmd_buffer, sizeof(lock_cmd_buffer), config_.twitch_lock_command.c_str());
+        }
+        
+        if (ImGui::InputText("Lock Command", lock_cmd_buffer, sizeof(lock_cmd_buffer))) {
+            config_.twitch_lock_command = lock_cmd_buffer;
+            SaveConfig();
+        }
+        
+        static char unlock_cmd_buffer[64] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_unlock_command != unlock_cmd_buffer) {
+            strcpy_s(unlock_cmd_buffer, sizeof(unlock_cmd_buffer), config_.twitch_unlock_command.c_str());
+        }
+        
+        if (ImGui::InputText("Unlock Command", unlock_cmd_buffer, sizeof(unlock_cmd_buffer))) {
+            config_.twitch_unlock_command = unlock_cmd_buffer;
+            SaveConfig();
+        }
+        
+        static char status_cmd_buffer[64] = "";
+        // Always sync buffer with current config value
+        if (config_.twitch_status_command != status_cmd_buffer) {
+            strcpy_s(status_cmd_buffer, sizeof(status_cmd_buffer), config_.twitch_status_command.c_str());
+        }
+        
+        if (ImGui::InputText("Status Command", status_cmd_buffer, sizeof(status_cmd_buffer))) {
+            config_.twitch_status_command = status_cmd_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::EndDisabled();
+        
+        ImGui::Separator();
+        
+        // Donation Trigger Settings
+        ImGui::Text("Donation Trigger Settings:");
+        ImGui::TextWrapped("Configure which viewer actions can trigger device locking. These provide security by requiring financial contribution.");
+        
+        bool bits_enabled = config_.twitch_bits_enabled;
+        if (ImGui::Checkbox("Enable Bits/Cheering Triggers", &bits_enabled)) {
+            config_.twitch_bits_enabled = bits_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::BeginDisabled(!config_.twitch_bits_enabled);
+        int bits_minimum = config_.twitch_bits_minimum;
+        if (ImGui::InputInt("Minimum Bits", &bits_minimum)) {
+            config_.twitch_bits_minimum = (std::max)(1, bits_minimum);
+            SaveConfig();
+        }
+        ImGui::EndDisabled();
+        
+        bool subs_enabled = config_.twitch_subs_enabled;
+        if (ImGui::Checkbox("Enable Subscription Triggers", &subs_enabled)) {
+            config_.twitch_subs_enabled = subs_enabled;
+            SaveConfig();
+        }
+        
+        bool donations_enabled = config_.twitch_donations_enabled;
+        if (ImGui::Checkbox("Enable Donation Triggers", &donations_enabled)) {
+            config_.twitch_donations_enabled = donations_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::BeginDisabled(!config_.twitch_donations_enabled);
+        float donation_minimum = config_.twitch_donation_minimum;
+        if (ImGui::InputFloat("Minimum Donation ($)", &donation_minimum)) {
+            config_.twitch_donation_minimum = (std::max)(0.01f, donation_minimum);
+            SaveConfig();
+        }
+        ImGui::EndDisabled();
+        
+        ImGui::Separator();
+        
+        // Lock Duration Settings
+        ImGui::Text("Lock Duration Settings:");
+        
+        bool duration_enabled = config_.twitch_lock_duration_enabled;
+        if (ImGui::Checkbox("Enable Dynamic Lock Duration", &duration_enabled)) {
+            config_.twitch_lock_duration_enabled = duration_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("When enabled, lock duration scales with donation amount");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::BeginDisabled(!config_.twitch_lock_duration_enabled);
+        
+        float base_duration = config_.twitch_lock_base_duration;
+        if (ImGui::SliderFloat("Base Duration", &base_duration, 10.0f, 300.0f, "%.0f seconds")) {
+            config_.twitch_lock_base_duration = base_duration;
+            SaveConfig();
+        }
+        
+        float per_dollar = config_.twitch_lock_per_dollar;
+        if (ImGui::SliderFloat("Per Dollar/100 Bits", &per_dollar, 1.0f, 120.0f, "%.0f seconds")) {
+            config_.twitch_lock_per_dollar = per_dollar;
+            SaveConfig();
+        }
+        
+        float max_duration = config_.twitch_lock_max_duration;
+        if (ImGui::SliderFloat("Maximum Duration", &max_duration, 60.0f, 3600.0f, "%.0f seconds")) {
+            config_.twitch_lock_max_duration = max_duration;
+            SaveConfig();
+        }
+        
+        ImGui::EndDisabled();
+        
+        ImGui::Separator();
+        
+        // Device Targeting
+        ImGui::Text("Device Targeting:");
+        ImGui::TextWrapped("Choose which devices can be locked by Twitch triggers.");
+        
+        bool target_all = config_.twitch_target_all_devices;
+        if (ImGui::Checkbox("Target All Devices", &target_all)) {
+            config_.twitch_target_all_devices = target_all;
+            SaveConfig();
+        }
+        
+        ImGui::BeginDisabled(config_.twitch_target_all_devices);
+        
+        bool target_hmd = config_.twitch_target_hmd;
+        if (ImGui::Checkbox("HMD", &target_hmd)) {
+            config_.twitch_target_hmd = target_hmd;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        bool target_left_hand = config_.twitch_target_left_hand;
+        if (ImGui::Checkbox("Left Hand", &target_left_hand)) {
+            config_.twitch_target_left_hand = target_left_hand;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        bool target_right_hand = config_.twitch_target_right_hand;
+        if (ImGui::Checkbox("Right Hand", &target_right_hand)) {
+            config_.twitch_target_right_hand = target_right_hand;
+            SaveConfig();
+        }
+        
+        bool target_left_foot = config_.twitch_target_left_foot;
+        if (ImGui::Checkbox("Left Foot", &target_left_foot)) {
+            config_.twitch_target_left_foot = target_left_foot;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        bool target_right_foot = config_.twitch_target_right_foot;
+        if (ImGui::Checkbox("Right Foot", &target_right_foot)) {
+            config_.twitch_target_right_foot = target_right_foot;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        bool target_hip = config_.twitch_target_hip;
+        if (ImGui::Checkbox("Hip", &target_hip)) {
+            config_.twitch_target_hip = target_hip;
+            SaveConfig();
+        }
+        
+        ImGui::EndDisabled();
+        
+        ImGui::Separator();
+        
+        // OAuth Setup and Test Buttons
+        ImGui::Text("OAuth Setup:");
+        ImGui::BeginDisabled(!config_.twitch_enabled || config_.twitch_client_id.empty() || config_.twitch_client_secret.empty());
+        
+        // OAuth Status
+        static std::string oauth_url = "";
+        static bool oauth_server_running = false;
+        
+        if (twitch_manager_) {
+            // Check if we already have tokens
+            if (!config_.twitch_access_token.empty()) {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✅ OAuth tokens available");
+                
+                if (ImGui::Button("Test Connection")) {
+                    twitch_manager_->ConnectToTwitch();
+                }
+                
+                ImGui::SameLine();
+                if (ImGui::Button("Clear Tokens")) {
+                    config_.twitch_access_token.clear();
+                    config_.twitch_refresh_token.clear();
+                    SaveConfig();
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "⚠️ OAuth setup required");
+                
+                if (!oauth_server_running) {
+                    if (ImGui::Button("Start OAuth Setup")) {
+                        // Start the OAuth server and generate URL
+                        twitch_manager_->StartOAuthServer();
+                        oauth_url = twitch_manager_->GenerateOAuthURL();
+                        oauth_server_running = true;
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "🌐 OAuth server running on localhost:8080");
+                    
+                    if (ImGui::Button("Stop OAuth Server")) {
+                        twitch_manager_->StopOAuthServer();
+                        oauth_server_running = false;
+                        oauth_url.clear();
+                    }
+                }
+            }
+        }
+        
+        // Show OAuth URL if available
+        if (oauth_server_running && !oauth_url.empty()) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Step 1: Click the button below to open Twitch authorization in your browser:");
+            
+            if (ImGui::Button("🌐 Open Twitch Authorization", ImVec2(300, 30))) {
+                // Open URL in default browser
+                std::string command = "start \"\" \"" + oauth_url + "\"";
+                system(command.c_str());
+            }
+            
+            ImGui::Spacing();
+            ImGui::TextWrapped("Step 2: Authorize the application in your browser. You'll be redirected automatically and this will complete the setup!");
+            
+            ImGui::Spacing();
+            ImGui::Text("OAuth URL (for manual copy if needed):");
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+            ImGui::InputTextMultiline("##oauth_url", const_cast<char*>(oauth_url.c_str()), oauth_url.length(), 
+                                     ImVec2(-1, 60), ImGuiInputTextFlags_ReadOnly);
+            ImGui::PopStyleColor();
+            
+            if (ImGui::Button("Copy URL to Clipboard")) {
+                ImGui::SetClipboardText(oauth_url.c_str());
+            }
+        }
+        
+        ImGui::EndDisabled();
+        
+        ImGui::Separator();
+        
+        // Test Buttons
+        ImGui::Text("Test Functions:");
+        ImGui::BeginDisabled(!config_.twitch_enabled || !twitch_manager_ || !twitch_manager_->IsConnected());
+        
+        if (ImGui::Button("Test Chat Message")) {
+            if (twitch_manager_) {
+                twitch_manager_->TestChatMessage();
+            }
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Test Donation Lock")) {
+            if (twitch_manager_) {
+                twitch_manager_->TestDonationEvent("TestUser", 5.0f);
+            }
+        }
+        
+        ImGui::EndDisabled();
+        
+        ImGui::EndDisabled(); // End of user_agreement disabled block
+    }
+
+    // Twitch Helper Methods Implementation
+    void UIManager::InitializeTwitchManager() {
+        twitch_manager_ = std::make_unique<TwitchManager>();
+        
+        if (twitch_manager_->Initialize(&config_)) {
+            // Set up callbacks for Twitch events
+            twitch_manager_->SetDonationCallback(
+                [this](const std::string& username, float amount, const std::string& message) {
+                    OnTwitchDonation(username, amount, message);
+                }
+            );
+            
+            twitch_manager_->SetBitsCallback(
+                [this](const std::string& username, int bits, const std::string& message) {
+                    OnTwitchBits(username, bits, message);
+                }
+            );
+            
+            twitch_manager_->SetSubscriptionCallback(
+                [this](const std::string& username, int months, bool is_gift) {
+                    OnTwitchSubscription(username, months, is_gift);
+                }
+            );
+            
+            // Set up chat command callback to handle lock/unlock commands
+            twitch_manager_->SetChatCommandCallback(
+                [this](const std::string& username, const std::string& command, const std::string& args) {
+                    OnTwitchChatCommand(username, command, args);
+                }
+            );
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("TwitchManager initialized successfully");
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to initialize TwitchManager");
+            }
+        }
+    }
+
+    void UIManager::ShutdownTwitchManager() {
+        if (twitch_manager_) {
+            twitch_manager_->Shutdown();
+            twitch_manager_.reset();
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("TwitchManager shut down");
+            }
+        }
+    }
+
+    void UIManager::OnTwitchDonation(const std::string& username, float amount, const std::string& message) {
+        if (!config_.twitch_enabled) {
+            return;
+        }
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("Processing Twitch donation from " + username + ": $" + std::to_string(amount));
+        }
+        
+        // Check if donation meets minimum requirement
+        if (amount < config_.twitch_donation_minimum) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Donation amount below minimum threshold");
+            }
+            return;
+        }
+        
+        // Calculate lock duration if dynamic duration is enabled
+        float lock_duration = 0.0f;
+        if (config_.twitch_lock_duration_enabled) {
+            lock_duration = config_.twitch_lock_base_duration + (amount * config_.twitch_lock_per_dollar);
+            lock_duration = (std::min)(lock_duration, config_.twitch_lock_max_duration);
+        } else {
+            lock_duration = config_.unlock_timer_duration; // Use default unlock timer duration
+        }
+        
+        // Activate appropriate device locks
+        if (config_.twitch_target_all_devices) {
+            ActivateGlobalLock(true);
+            
+            if (config_.twitch_chat_enabled && twitch_manager_ && twitch_manager_->IsConnected()) {
+                twitch_manager_->SendChatMessage("@" + username + " Thank you for the $" + std::to_string(amount) + 
+                                    " donation! All devices locked for " + std::to_string((int)lock_duration) + " seconds!");
+            }
+        } else {
+            // Lock specific devices based on targeting settings
+            int locked_count = 0;
+            for (auto& device : device_positions_) {
+                bool should_lock = false;
+                
+                switch (device.role) {
+                    case DeviceRole::HMD:
+                        should_lock = config_.twitch_target_hmd;
+                        break;
+                    case DeviceRole::LeftController:
+                        should_lock = config_.twitch_target_left_hand;
+                        break;
+                    case DeviceRole::RightController:
+                        should_lock = config_.twitch_target_right_hand;
+                        break;
+                    case DeviceRole::LeftFoot:
+                        should_lock = config_.twitch_target_left_foot;
+                        break;
+                    case DeviceRole::RightFoot:
+                        should_lock = config_.twitch_target_right_foot;
+                        break;
+                    case DeviceRole::Hip:
+                        should_lock = config_.twitch_target_hip;
+                        break;
+                    default:
+                        should_lock = false;
+                        break;
+                }
+                
+                if (should_lock) {
+                    LockDevicePosition(device.serial, true);
+                    locked_count++;
+                }
+            }
+            
+            if (config_.twitch_chat_enabled && twitch_manager_ && twitch_manager_->IsConnected()) {
+                twitch_manager_->SendChatMessage("@" + username + " Thank you for the $" + std::to_string(amount) + 
+                                    " donation! " + std::to_string(locked_count) + " devices locked for " + 
+                                    std::to_string((int)lock_duration) + " seconds!");
+            }
+        }
+        
+        // Start unlock timer if enabled
+        if (config_.unlock_timer_enabled && lock_duration > 0) {
+            twitch_unlock_timer_active_ = true;
+            twitch_unlock_timer_remaining_ = lock_duration;
+            twitch_unlock_timer_start_ = std::chrono::steady_clock::now();
+        }
+    }
+
+    void UIManager::OnTwitchBits(const std::string& username, int bits, const std::string& message) {
+        if (!config_.twitch_enabled || !config_.twitch_bits_enabled) {
+            return;
+        }
+        
+        if (bits < config_.twitch_bits_minimum) {
+            return;
+        }
+        
+        // Convert bits to dollar equivalent for lock duration calculation
+        float dollar_equivalent = bits / 100.0f; // 100 bits = $1
+        OnTwitchDonation(username, dollar_equivalent, message);
+    }
+
+    void UIManager::OnTwitchSubscription(const std::string& username, int months, bool is_gift) {
+        if (!config_.twitch_enabled || !config_.twitch_subs_enabled) {
+            return;
+        }
+        
+        // Treat subscription as a $5 donation for lock duration calculation
+        float sub_value = is_gift ? 10.0f : 5.0f; // Gift subs worth more
+        OnTwitchDonation(username, sub_value, is_gift ? "Gift subscription!" : "Subscription!");
+    }
+
+    void UIManager::ProcessTwitchUnlockTimer() {
+        if (!twitch_unlock_timer_active_) {
+            return;
+        }
+        
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - twitch_unlock_timer_start_).count() / 1000.0f;
+        
+        twitch_unlock_timer_remaining_ = (std::max)(0.0f, twitch_unlock_timer_remaining_ - elapsed);
+        twitch_unlock_timer_start_ = current_time;
+        
+        // Check for audio warnings
+        if (config_.unlock_timer_audio_warnings) {
+            if ((twitch_unlock_timer_remaining_ <= 60.0f && twitch_unlock_timer_remaining_ > 59.0f) ||
+                (twitch_unlock_timer_remaining_ <= 30.0f && twitch_unlock_timer_remaining_ > 29.0f) ||
+                (twitch_unlock_timer_remaining_ <= 10.0f && twitch_unlock_timer_remaining_ > 9.0f)) {
+                
+                // Play warning sound (using existing audio system)
+                if (config_.audio_enabled) {
+                    AudioManager::PlayWarningSound(config_.audio_volume);
+                }
+                
+                // Send chat message if enabled
+                if (config_.twitch_chat_enabled && twitch_manager_ && twitch_manager_->IsConnected()) {
+                    twitch_manager_->SendChatMessage("⏰ " + std::to_string((int)twitch_unlock_timer_remaining_) + " seconds until unlock!");
+                }
+            }
+        }
+        
+        // Check if timer has expired
+        if (twitch_unlock_timer_remaining_ <= 0.0f) {
+            twitch_unlock_timer_active_ = false;
+            
+            // Unlock all devices
+            ActivateGlobalLock(false);
+            
+            // Reset individual locks as well
+            for (auto& device : device_positions_) {
+                if (device.locked) {
+                    LockDevicePosition(device.serial, false);
+                }
+            }
+            
+            if (config_.twitch_chat_enabled && twitch_manager_ && twitch_manager_->IsConnected()) {
+                twitch_manager_->SendChatMessage("🔓 Timer expired - all devices unlocked!");
+            }
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Twitch unlock timer expired - all devices unlocked");
+            }
+        }
+    }
+
+    void UIManager::OnTwitchChatCommand(const std::string& username, const std::string& command, const std::string& args) {
+        if (!config_.twitch_enabled || !config_.twitch_chat_enabled) {
+            return;
+        }
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("Processing Twitch chat command '" + command + "' from " + username);
+        }
+        
+        // Handle lock command - equivalent to clicking "Lock All Included Devices"
+        if (command == config_.twitch_lock_command) {
+            // Count devices that will be locked
+            int devices_to_lock = 0;
+            for (const auto& device : device_positions_) {
+                if (device.include_in_locking) {
+                    devices_to_lock++;
+                }
+            }
+            
+            if (devices_to_lock == 0) {
+                if (Logger::IsInitialized()) {
+                    Logger::Warning("No devices selected for locking via chat command");
+                }
+                return;
+            }
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Executing global lock via chat command - " + std::to_string(devices_to_lock) + " devices will be locked");
+            }
+            
+            // Use the same method as the UI button
+            ActivateGlobalLock(true);
+            
+        }
+        // Handle unlock command - equivalent to clicking "Unlock All Included Devices"  
+        else if (command == config_.twitch_unlock_command) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Executing global unlock via chat command");
+            }
+            
+            // Use the same method as the UI button
+            ActivateGlobalLock(false);
+            
+        }
+        // Handle status command - report current lock state
+        else if (command == config_.twitch_status_command) {
+            int total_devices = 0;
+            int included_devices = 0;
+            int locked_devices = 0;
+            
+            for (const auto& device : device_positions_) {
+                total_devices++;
+                if (device.include_in_locking) {
+                    included_devices++;
+                    if (device.locked || global_lock_active_) {
+                        locked_devices++;
+                    }
+                }
+            }
+            
+            std::string status_message = "@" + username + " StayPutVR Status: " + 
+                                       std::to_string(total_devices) + " devices detected, " +
+                                       std::to_string(included_devices) + " included in locking";
+            
+            if (global_lock_active_) {
+                status_message += ", GLOBAL LOCK ACTIVE (" + std::to_string(locked_devices) + " devices locked)";
+            } else if (locked_devices > 0) {
+                status_message += ", " + std::to_string(locked_devices) + " devices individually locked";
+            } else {
+                status_message += ", all devices unlocked";
+            }
+            
+            // Send status response to chat
+            if (twitch_manager_ && twitch_manager_->IsConnected()) {
+                twitch_manager_->SendChatMessage(status_message);
+            }
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Sent status response: " + status_message);
+            }
+        }
+        else {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("Unknown chat command: " + command);
+            }
         }
     }
 

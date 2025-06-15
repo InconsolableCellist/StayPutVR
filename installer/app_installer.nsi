@@ -9,7 +9,7 @@
 
 ; Define installer name and output file
 Name "StayPutVR"
-OutFile "StayPutVR_Setup.exe"
+OutFile "StayPutVR v1.0 Setup.exe"
 
 ; Default installation directory
 InstallDir "$PROGRAMFILES\StayPutVR"
@@ -120,8 +120,8 @@ FunctionEnd
 
 ; Function to detect SteamVR installation path
 Function DetectSteamVRPath
-    Call DetectSteamPath
-    StrCpy $1 "$0\steamapps\common\SteamVR"
+    ; Always use the explicit default path as requested
+    StrCpy $1 "C:\Program Files (x86)\Steam\steamapps\common\SteamVR"
     Return
 FunctionEnd
 
@@ -315,7 +315,7 @@ Section "Install"
     WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\bin\stayputvr_app.exe,0"
     WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "StayPutVR Team"
-    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "0.1.0"
+    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.0"
     
     ; Get size of installation directory
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
@@ -374,8 +374,8 @@ Function un.DetectSteamPath
 FunctionEnd
 
 Function un.DetectSteamVRPath
-    Call un.DetectSteamPath
-    StrCpy $1 "$0\steamapps\common\SteamVR"
+    ; Always use the explicit default path as requested
+    StrCpy $1 "C:\Program Files (x86)\Steam\steamapps\common\SteamVR"
     Return
 FunctionEnd
 

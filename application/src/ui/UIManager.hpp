@@ -27,6 +27,8 @@
 #include "../../../common/PathUtils.hpp"
 #include "../DeviceManager/DeviceManager.hpp"
 #include "../../../common/OSCManager.hpp"
+#include "../managers/TwitchManager.hpp"
+#include "../managers/PiShockManager.hpp"
 
 namespace StayPutVR {
 
@@ -39,7 +41,8 @@ namespace StayPutVR {
         TIMERS,
         OSC,
         SETTINGS,
-        PISHOCK
+        PISHOCK,
+        TWITCH
     };
 
     struct DevicePosition {
@@ -151,6 +154,7 @@ namespace StayPutVR {
         void RenderOSCTab();
         void RenderSettingsTab();
         void RenderPiShockTab();
+        void RenderTwitchTab();
         
         // Original UI elements (to be migrated to tabs)
         void RenderDeviceList();
@@ -178,6 +182,12 @@ namespace StayPutVR {
         // DeviceManager reference
         DeviceManager* device_manager_ = nullptr;
         
+        // TwitchManager instance
+        std::unique_ptr<TwitchManager> twitch_manager_;
+        
+        // PiShockManager instance
+        std::unique_ptr<PiShockManager> pishock_manager_;
+        
         // Countdown timer variables
         bool countdown_active_ = false;
         float countdown_remaining_ = 0.0f;
@@ -203,10 +213,24 @@ namespace StayPutVR {
         OSCDeviceType DeviceRoleToOSCDeviceType(DeviceRole role) const;
         
         // PiShock helper functions
-        void SendPiShockDisobedienceActions();
+        void InitializePiShockManager();
+        void ShutdownPiShockManager();
         
-        // Timestamp of last sent PiShock signal for rate limiting
-        std::chrono::steady_clock::time_point last_pishock_time_ = std::chrono::steady_clock::now();
+        // Twitch helper functions
+        void InitializeTwitchManager();
+        void ShutdownTwitchManager();
+        void ProcessTwitchUnlockTimer();
+        
+        // Twitch unlock timer variables
+        bool twitch_unlock_timer_active_ = false;
+        float twitch_unlock_timer_remaining_ = 0.0f;
+        std::chrono::steady_clock::time_point twitch_unlock_timer_start_;
+        
+        // Twitch donation callbacks
+            void OnTwitchDonation(const std::string& username, float amount, const std::string& message);
+    void OnTwitchBits(const std::string& username, int bits, const std::string& message);
+    void OnTwitchSubscription(const std::string& username, int months, bool is_gift);
+    void OnTwitchChatCommand(const std::string& username, const std::string& command, const std::string& args);
         
         // Last time OSC lock was toggled (for debouncing)
         std::chrono::steady_clock::time_point last_osc_toggle_time_;

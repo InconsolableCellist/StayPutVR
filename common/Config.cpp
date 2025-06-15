@@ -69,6 +69,39 @@ Config::Config()
     , start_with_steamvr(true)
     , minimize_to_tray(false)
     , show_notifications(true)
+    , twitch_enabled(false)
+    , twitch_user_agreement(false)
+    , twitch_client_id("")
+    , twitch_client_secret("")
+    , twitch_access_token("")
+    , twitch_refresh_token("")
+    , twitch_channel_name("")
+    , twitch_bot_username("")
+    , twitch_chat_enabled(false)
+    , twitch_command_prefix("!")
+    , twitch_lock_command("lock")
+    , twitch_unlock_command("unlock")
+    , twitch_status_command("status")
+    , twitch_bits_enabled(false)
+    , twitch_bits_minimum(100)
+    , twitch_subs_enabled(false)
+    , twitch_donations_enabled(false)
+    , twitch_donation_minimum(5.0f)
+    , twitch_lock_duration_enabled(false)
+    , twitch_lock_base_duration(60.0f)
+    , twitch_lock_per_dollar(30.0f)
+    , twitch_lock_max_duration(600.0f)
+    , twitch_target_all_devices(true)
+    , twitch_target_hmd(false)
+    , twitch_target_left_hand(false)
+    , twitch_target_right_hand(false)
+    , twitch_target_left_foot(false)
+    , twitch_target_right_foot(false)
+    , twitch_target_hip(false)
+    , unlock_timer_enabled(false)
+    , unlock_timer_duration(300.0f)
+    , unlock_timer_show_remaining(true)
+    , unlock_timer_audio_warnings(true)
 {
 }
 
@@ -157,6 +190,53 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
         pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.5f);
         pishock_disobedience_duration = j.value("pishock_disobedience_duration", 0.5f);
+
+        // Twitch Integration Settings
+        twitch_enabled = j.value("twitch_enabled", false);
+        twitch_user_agreement = j.value("twitch_user_agreement", false);
+        
+        // Twitch API Authentication
+        twitch_client_id = j.value("twitch_client_id", "");
+        twitch_client_secret = j.value("twitch_client_secret", "");
+        twitch_access_token = j.value("twitch_access_token", "");
+        twitch_refresh_token = j.value("twitch_refresh_token", "");
+        twitch_channel_name = j.value("twitch_channel_name", "");
+        twitch_bot_username = j.value("twitch_bot_username", "");
+        
+        // Twitch Chat Bot Settings
+        twitch_chat_enabled = j.value("twitch_chat_enabled", false);
+        twitch_command_prefix = j.value("twitch_command_prefix", "!");
+        twitch_lock_command = j.value("twitch_lock_command", "lock");
+        twitch_unlock_command = j.value("twitch_unlock_command", "unlock");
+        twitch_status_command = j.value("twitch_status_command", "status");
+        
+        // Twitch Donation Trigger Settings
+        twitch_bits_enabled = j.value("twitch_bits_enabled", false);
+        twitch_bits_minimum = j.value("twitch_bits_minimum", 100);
+        twitch_subs_enabled = j.value("twitch_subs_enabled", false);
+        twitch_donations_enabled = j.value("twitch_donations_enabled", false);
+        twitch_donation_minimum = j.value("twitch_donation_minimum", 5.0f);
+        
+        // Twitch Lock Duration Settings
+        twitch_lock_duration_enabled = j.value("twitch_lock_duration_enabled", false);
+        twitch_lock_base_duration = j.value("twitch_lock_base_duration", 60.0f);
+        twitch_lock_per_dollar = j.value("twitch_lock_per_dollar", 30.0f);
+        twitch_lock_max_duration = j.value("twitch_lock_max_duration", 600.0f);
+        
+        // Twitch Device Targeting
+        twitch_target_all_devices = j.value("twitch_target_all_devices", true);
+        twitch_target_hmd = j.value("twitch_target_hmd", false);
+        twitch_target_left_hand = j.value("twitch_target_left_hand", false);
+        twitch_target_right_hand = j.value("twitch_target_right_hand", false);
+        twitch_target_left_foot = j.value("twitch_target_left_foot", false);
+        twitch_target_right_foot = j.value("twitch_target_right_foot", false);
+        twitch_target_hip = j.value("twitch_target_hip", false);
+        
+        // Unlock Timer Settings
+        unlock_timer_enabled = j.value("unlock_timer_enabled", false);
+        unlock_timer_duration = j.value("unlock_timer_duration", 300.0f);
+        unlock_timer_show_remaining = j.value("unlock_timer_show_remaining", true);
+        unlock_timer_audio_warnings = j.value("unlock_timer_audio_warnings", true);
 
         // Load logging settings
         log_level = j.value("log_level", "WARNING");
@@ -330,6 +410,53 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_disobedience_vibrate"] = pishock_disobedience_vibrate;
         j["pishock_disobedience_intensity"] = pishock_disobedience_intensity;
         j["pishock_disobedience_duration"] = pishock_disobedience_duration;
+
+        // Twitch Integration Settings
+        j["twitch_enabled"] = twitch_enabled;
+        j["twitch_user_agreement"] = twitch_user_agreement;
+        
+        // Twitch API Authentication
+        j["twitch_client_id"] = twitch_client_id;
+        j["twitch_client_secret"] = twitch_client_secret;
+        j["twitch_access_token"] = twitch_access_token;
+        j["twitch_refresh_token"] = twitch_refresh_token;
+        j["twitch_channel_name"] = twitch_channel_name;
+        j["twitch_bot_username"] = twitch_bot_username;
+        
+        // Twitch Chat Bot Settings
+        j["twitch_chat_enabled"] = twitch_chat_enabled;
+        j["twitch_command_prefix"] = twitch_command_prefix;
+        j["twitch_lock_command"] = twitch_lock_command;
+        j["twitch_unlock_command"] = twitch_unlock_command;
+        j["twitch_status_command"] = twitch_status_command;
+        
+        // Twitch Donation Trigger Settings
+        j["twitch_bits_enabled"] = twitch_bits_enabled;
+        j["twitch_bits_minimum"] = twitch_bits_minimum;
+        j["twitch_subs_enabled"] = twitch_subs_enabled;
+        j["twitch_donations_enabled"] = twitch_donations_enabled;
+        j["twitch_donation_minimum"] = twitch_donation_minimum;
+        
+        // Twitch Lock Duration Settings
+        j["twitch_lock_duration_enabled"] = twitch_lock_duration_enabled;
+        j["twitch_lock_base_duration"] = twitch_lock_base_duration;
+        j["twitch_lock_per_dollar"] = twitch_lock_per_dollar;
+        j["twitch_lock_max_duration"] = twitch_lock_max_duration;
+        
+        // Twitch Device Targeting
+        j["twitch_target_all_devices"] = twitch_target_all_devices;
+        j["twitch_target_hmd"] = twitch_target_hmd;
+        j["twitch_target_left_hand"] = twitch_target_left_hand;
+        j["twitch_target_right_hand"] = twitch_target_right_hand;
+        j["twitch_target_left_foot"] = twitch_target_left_foot;
+        j["twitch_target_right_foot"] = twitch_target_right_foot;
+        j["twitch_target_hip"] = twitch_target_hip;
+        
+        // Unlock Timer Settings
+        j["unlock_timer_enabled"] = unlock_timer_enabled;
+        j["unlock_timer_duration"] = unlock_timer_duration;
+        j["unlock_timer_show_remaining"] = unlock_timer_show_remaining;
+        j["unlock_timer_audio_warnings"] = unlock_timer_audio_warnings;
 
         // Logging settings
         j["log_level"] = log_level;

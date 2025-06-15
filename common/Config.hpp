@@ -75,6 +75,53 @@ public:
     float pishock_disobedience_intensity = 0.5f;
     float pishock_disobedience_duration = 0.5f;
 
+    // Twitch Integration Settings
+    bool twitch_enabled = false;
+    bool twitch_user_agreement = false;
+    
+    // Twitch API Authentication
+    std::string twitch_client_id;
+    std::string twitch_client_secret;
+    std::string twitch_access_token;
+    std::string twitch_refresh_token;
+    std::string twitch_channel_name;
+    std::string twitch_bot_username;
+    
+    // Twitch Chat Bot Settings
+    bool twitch_chat_enabled = false;
+    std::string twitch_command_prefix = "!";
+    std::string twitch_lock_command = "lock";
+    std::string twitch_unlock_command = "unlock";
+    std::string twitch_status_command = "status";
+    
+    // Twitch Donation Trigger Settings
+    bool twitch_bits_enabled = false;
+    int twitch_bits_minimum = 100;  // Minimum bits to trigger lock
+    bool twitch_subs_enabled = false;
+    bool twitch_donations_enabled = false;
+    float twitch_donation_minimum = 5.0f;  // Minimum donation amount to trigger lock
+    
+    // Twitch Lock Duration Settings
+    bool twitch_lock_duration_enabled = false;
+    float twitch_lock_base_duration = 60.0f;  // Base lock duration in seconds
+    float twitch_lock_per_dollar = 30.0f;     // Additional seconds per dollar/100 bits
+    float twitch_lock_max_duration = 600.0f;  // Maximum lock duration in seconds
+    
+    // Twitch Device Targeting
+    bool twitch_target_all_devices = true;
+    bool twitch_target_hmd = false;
+    bool twitch_target_left_hand = false;
+    bool twitch_target_right_hand = false;
+    bool twitch_target_left_foot = false;
+    bool twitch_target_right_foot = false;
+    bool twitch_target_hip = false;
+    
+    // Unlock Timer Settings (for Twitch and general use)
+    bool unlock_timer_enabled = false;
+    float unlock_timer_duration = 300.0f;  // Default 5 minutes in seconds
+    bool unlock_timer_show_remaining = true;
+    bool unlock_timer_audio_warnings = true;  // Audio warnings at 60s, 30s, 10s
+
     // Boundary Settings
     float warning_threshold;  // Warning zone distance in meters
     float bounds_threshold;   // Out of bounds distance in meters
