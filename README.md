@@ -9,7 +9,7 @@
 
 # 🔒 StayPutVR
 
-![logo](https://github.com/InconsolableCellist/StayPutVR/blob/master/logo.png)
+<img src="https://github.com/InconsolableCellist/StayPutVR/blob/master/logo.png" alt="StayPutVR Logo" width="300">
 
 Lock yourself or your friends into positions in VR! Want your friend to keep his or her ~~paws~~ hands behind his back? No problem. Chat wants to make you stand on one foot for 60 seconds? Easy. Have to bend over and touch your toes or you lose some kind of game? It's possible, with ~~punishments~~ consequences for failing.
 
