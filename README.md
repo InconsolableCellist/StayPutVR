@@ -1,3 +1,24 @@
+# Table of Contents
+
+- [🔒 StayPutVR](#-stayputvr)
+  - [🎥 Video](#-video)
+  - [📥 Quickstart](#-quickstart)
+  - [✨ Features](#-features)
+  - [📡 OSC Integration](#-osc-integration)
+  - [📡 PiShock Integration](#-pishock-integration)
+  - [💬 Twitch Integration (experimental)](#-twitch-integration-experimental)
+  - [🖥️ Interface](#-interface)
+  - [🔧 System Requirements](#-system-requirements)
+  - [📂 Project Structure](#-project-structure)
+  - [📚 Dependencies](#-dependencies)
+  - [📋 Configuration](#-configuration)
+  - [💾 Building From Source](#-building-from-source)
+  - [💖 Support Development](#-support-development)
+  - [🗺️ Roadmap](#-roadmap)
+  - [📅 Version History](#-version-history)
+  - [⚖️ License](#-license)
+  - [🙏 Acknowledgments](#-acknowledgments)
+
 # 🔒 StayPutVR
 
 Lock yourself or your friends into positions in VR! Want your friend to keep his or her ~~paws~~ hands behind his back? No problem. Chat wants to make you stand on one foot for 60 seconds? Easy. Have to bend over and touch your toes or you lose some kind of game? It's possible, with ~~punishments~~ consequences for failing.
