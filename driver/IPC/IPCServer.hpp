@@ -8,6 +8,7 @@
 #include <atomic>
 #include <queue>
 #include <condition_variable>
+#include <chrono>
 #include "../../common/DeviceTypes.hpp"
 
 namespace StayPutVR {
@@ -24,8 +25,10 @@ namespace StayPutVR {
         ~IPCServer();
         
         bool Initialize();
+        bool InitializeIfNeeded();
         void Shutdown();
         bool IsConnected() const;
+
         void SendDeviceUpdates(const std::vector<DevicePositionData>& devices);
         void ProcessIncomingMessages();
         
@@ -35,13 +38,18 @@ namespace StayPutVR {
         HANDLE pipe_handle_ = INVALID_HANDLE_VALUE;
         std::atomic<bool> connected_ = false;
         std::atomic<bool> running_ = false;
+        std::atomic<bool> initialized_ = false;
+
         std::thread listener_thread_;
         std::thread writer_thread_;
         std::mutex mutex_;
         std::condition_variable write_cv_;
         bool writer_busy_ = false;
         
-        // Structure to hold message data for async write queue
+        std::chrono::steady_clock::time_point last_connection_log_;
+        std::chrono::steady_clock::time_point last_failure_log_;
+        static constexpr std::chrono::minutes LOG_THROTTLE_INTERVAL{1};
+        
         struct MessageData {
             std::vector<uint8_t> buffer;
             bool processed = false;
@@ -57,5 +65,8 @@ namespace StayPutVR {
         bool WriteMessage(const std::vector<uint8_t>& buffer);
         bool WriteMessageAsync(const std::vector<uint8_t>& buffer);
         bool PerformAsyncWrite(std::shared_ptr<MessageData> msg_data);
+        
+        void LogConnectionFailure();
+        void LogConnectionSuccess();
     };
 }

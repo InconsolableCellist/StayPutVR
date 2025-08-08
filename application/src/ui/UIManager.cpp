@@ -1213,11 +1213,8 @@ namespace StayPutVR {
             
             if (ImGui::Button("Retry Connection")) {
                 if (device_manager_) {
-                    // First disconnect if needed
-                    device_manager_->Shutdown();
-                    
-                    // Then try to reconnect
-                    if (device_manager_->Initialize()) {
+                    // Use the new thread-safe manual reconnection method
+                    if (device_manager_->ManualReconnect()) {
                         if (StayPutVR::Logger::IsInitialized()) {
                             StayPutVR::Logger::Info("Successfully reconnected to driver");
                         }

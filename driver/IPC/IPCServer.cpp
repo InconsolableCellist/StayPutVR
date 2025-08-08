@@ -4,8 +4,10 @@
 
 namespace StayPutVR {
 
-    IPCServer::IPCServer() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false), writer_busy_(false) {
+    IPCServer::IPCServer() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false), initialized_(false), writer_busy_(false) {
         Logger::Info("IPCServer: Constructor called");
+        last_connection_log_ = std::chrono::steady_clock::now() - LOG_THROTTLE_INTERVAL; // Allow immediate first log
+        last_failure_log_ = std::chrono::steady_clock::now() - LOG_THROTTLE_INTERVAL;
     }
 
     IPCServer::~IPCServer() {
@@ -15,7 +17,7 @@ namespace StayPutVR {
     bool IPCServer::Initialize() {
         Logger::Info("IPCServer: Initializing");
         
-        if (connected_) {
+        if (initialized_) {
             Logger::Warning("IPCServer: Already initialized");
             return true;
         }
@@ -30,9 +32,22 @@ namespace StayPutVR {
         listener_thread_ = std::thread(&IPCServer::ListenerThread, this);
         writer_thread_ = std::thread(&IPCServer::WriterThread, this);
         
+        initialized_ = true;
         Logger::Info("IPCServer: Initialized successfully");
         return true;
     }
+    
+    bool IPCServer::InitializeIfNeeded() {
+        if (initialized_) {
+            return true; // Already initialized
+        }
+        
+        // Only initialize when first needed
+        Logger::Info("IPCServer: Starting lazy initialization");
+        return Initialize();
+    }
+    
+
     
     void IPCServer::Shutdown() {
         Logger::Info("IPCServer: Shutting down");
@@ -62,6 +77,7 @@ namespace StayPutVR {
         }
         
         connected_ = false;
+        initialized_ = false;
         Logger::Info("IPCServer: Shut down");
     }
     
@@ -69,112 +85,122 @@ namespace StayPutVR {
         return connected_;
     }
     
+    void IPCServer::LogConnectionFailure() {
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_failure_log_ > LOG_THROTTLE_INTERVAL) {
+            Logger::Info("IPCServer: No client application connected (StayPutVR companion app not running)");
+            last_failure_log_ = now;
+        }
+    }
+    
+    void IPCServer::LogConnectionSuccess() {
+        auto now = std::chrono::steady_clock::now();
+        if (now - last_connection_log_ > LOG_THROTTLE_INTERVAL) {
+            Logger::Info("IPCServer: Client application connected successfully");
+            last_connection_log_ = now;
+        }
+    }
+    
     void IPCServer::SendDeviceUpdates(const std::vector<DevicePositionData>& devices) {
-        if (!connected_ || pipe_handle_ == INVALID_HANDLE_VALUE) {
+        if (devices.empty()) {
+            return;
+        }
+        
+        // Lazy initialization - only start IPC when first device update is needed
+        if (!InitializeIfNeeded()) {
+            LogConnectionFailure();
+            return;
+        }
+        
+        if (!connected_) {
+            // Don't spam logs - use throttled logging
+            LogConnectionFailure();
             return;
         }
         
         try {
-            // Create a buffer with ample space to avoid resizing issues
+            // Create message buffer
             std::vector<uint8_t> buffer;
-            buffer.reserve(1024); // Pre-allocate to avoid reallocations
             
-            // Message type
+            // Message type: 1 = device update
             uint8_t msgType = static_cast<uint8_t>(MessageType::DEVICE_UPDATE);
             buffer.push_back(msgType);
             
-            // Filter out devices with suspicious serials
-            std::vector<DevicePositionData> validDevices;
-            for (const auto& device : devices) {
-                if (device.serial != "Null Serial Number" && !device.serial.empty()) {
-                    validDevices.push_back(device);
-                } else {
-                    Logger::Warning("Skipping device with suspicious serial: " + device.serial);
-                }
-            }
-            
             // Number of devices
-            uint32_t numDevices = static_cast<uint32_t>(validDevices.size());
-            buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&numDevices),
-                         reinterpret_cast<uint8_t*>(&numDevices) + sizeof(numDevices));
+            uint32_t deviceCount = static_cast<uint32_t>(devices.size());
+            buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&deviceCount),
+                         reinterpret_cast<uint8_t*>(&deviceCount) + sizeof(deviceCount));
             
-            // Device data - only process valid devices
-            for (const auto& device : validDevices) {
-                // Serial length
+            // Device data
+            for (const auto& device : devices) {
+                // Serial length and string
                 uint32_t serialLen = static_cast<uint32_t>(device.serial.size());
                 buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&serialLen),
                              reinterpret_cast<uint8_t*>(&serialLen) + sizeof(serialLen));
-                
-                // Serial string
                 buffer.insert(buffer.end(), device.serial.begin(), device.serial.end());
                 
                 // Device type
                 uint8_t deviceType = static_cast<uint8_t>(device.type);
                 buffer.push_back(deviceType);
                 
-                // Position (x, y, z)
+                // Position (3 floats)
                 buffer.insert(buffer.end(), reinterpret_cast<const uint8_t*>(device.position),
-                             reinterpret_cast<const uint8_t*>(device.position) + sizeof(float) * 3);
+                             reinterpret_cast<const uint8_t*>(device.position) + 3 * sizeof(float));
                 
-                // Rotation (quaternion)
+                // Rotation (4 floats)  
                 buffer.insert(buffer.end(), reinterpret_cast<const uint8_t*>(device.rotation),
-                             reinterpret_cast<const uint8_t*>(device.rotation) + sizeof(float) * 4);
+                             reinterpret_cast<const uint8_t*>(device.rotation) + 4 * sizeof(float));
                 
                 // Connected flag
-                buffer.push_back(device.connected ? 1 : 0);
-                
-                Logger::Debug("IPCServer: Added device " + device.serial + " to message");
+                uint8_t connectedFlag = device.connected ? 1 : 0;
+                buffer.push_back(connectedFlag);
             }
             
-            // Don't send empty updates
-            if (validDevices.empty()) {
-                Logger::Debug("No valid devices to send, skipping update");
-                return;
-            }
-            
-            // Send the message asynchronously
+            // Send the message
             WriteMessageAsync(buffer);
         }
         catch (const std::exception& e) {
-            Logger::Error("Exception in SendDeviceUpdates: " + std::string(e.what()));
+            Logger::Error("IPCServer: Exception in SendDeviceUpdates: " + std::string(e.what()));
         }
     }
     
     void IPCServer::ProcessIncomingMessages() {
-        // For a one-way communication model, we can make this a no-op
-        // or just do a quick non-blocking check for any messages
+        // Only process messages if connected
+        if (!connected_ || pipe_handle_ == INVALID_HANDLE_VALUE) {
+            return;
+        }
         
-        // This is a passive check that won't block VR performance
-        if (connected_ && pipe_handle_ != INVALID_HANDLE_VALUE) {
-            try {
-                std::vector<uint8_t> buffer;
-                // Non-blocking read will return quickly if no messages
-                if (ReadMessage(buffer)) {
-                    // Process the message if we got one
-                    if (!buffer.empty()) {
-                        uint8_t msgTypeRaw = buffer[0];
-                        MessageType msgType = static_cast<MessageType>(msgTypeRaw);
-                        
-                        Logger::Debug("IPCServer: ProcessIncomingMessages received a message type: " + 
-                                     std::to_string(static_cast<int>(msgType)));
-                        
-                        // Handle the message based on type
-                        switch (msgType) {
-                            case MessageType::COMMAND:
-                                Logger::Debug("IPCServer: Processing command message");
-                                // Process command (not implemented yet)
-                                break;
-                            default:
-                                Logger::Warning("IPCServer: Unknown message type: " + std::to_string(msgTypeRaw));
-                                break;
-                        }
+        try {
+            std::vector<uint8_t> buffer;
+            // Non-blocking read will return quickly if no messages
+            if (ReadMessage(buffer)) {
+                // Process the message if we got one
+                if (!buffer.empty()) {
+                    uint8_t msgTypeRaw = buffer[0];
+                    MessageType msgType = static_cast<MessageType>(msgTypeRaw);
+                    
+                    Logger::Debug("IPCServer: ProcessIncomingMessages received a message type: " + 
+                                 std::to_string(static_cast<int>(msgType)));
+                    
+                    // Handle the message based on type
+                    switch (msgType) {
+                        case MessageType::COMMAND:
+                            Logger::Debug("IPCServer: Processing command message");
+                            // Process command (not implemented yet)
+                            break;
+                        default:
+                            Logger::Warning("IPCServer: Unknown message type: " + std::to_string(msgTypeRaw));
+                            break;
                     }
                 }
             }
-            catch (const std::exception& e) {
-                Logger::Error("IPCServer: Exception in ProcessIncomingMessages: " + std::string(e.what()));
-            }
         }
+        catch (const std::exception& e) {
+            Logger::Error("IPCServer: Exception in ProcessIncomingMessages: " + std::string(e.what()));
+        }
+        
+        // This method is designed to be called frequently from VR RunFrame
+        // so it must be non-blocking and fast - no loops or retries here
     }
     
     void IPCServer::ListenerThread() {
@@ -183,13 +209,16 @@ namespace StayPutVR {
         while (running_) {
             // Wait for a client connection
             if (!WaitForConnection()) {
-                // Failed to accept connection, retry
-                Logger::Warning("IPCServer: Failed to accept connection, retrying in 1 second");
-                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                // Failed to accept connection, use throttled logging instead of spamming
+                LogConnectionFailure();
+                
+                // Wait longer between retries to reduce system load
+                std::this_thread::sleep_for(std::chrono::seconds(5)); // Changed from 1 second to 5 seconds
                 continue;
             }
             
             Logger::Info("IPCServer: Client connected");
+            LogConnectionSuccess();
             connected_ = true;
             
             // Process messages from the client (if any)
@@ -199,7 +228,7 @@ namespace StayPutVR {
             while (running_ && connected_) {
                 try {
                     // Brief sleep to prevent busy-waiting
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Increased from 5ms to 50ms
                     
                     Logger::Debug("IPCServer: Checking for incoming messages");
                     std::vector<uint8_t> buffer;
@@ -214,8 +243,13 @@ namespace StayPutVR {
                         
                         // Only log or disconnect if we have persistent failures
                         // that indicate a real connection problem
-                        if (consecutive_read_failures > 100) {
-                            Logger::Warning("IPCServer: Multiple read failures, checking pipe status");
+                        if (consecutive_read_failures > 200) { // Increased threshold from 100 to 200
+                            // Use throttled logging instead of warning on every failure
+                            auto now = std::chrono::steady_clock::now();
+                            if (now - last_failure_log_ > std::chrono::minutes(5)) { // Log every 5 minutes instead of every minute
+                                Logger::Debug("IPCServer: Multiple read failures, checking pipe status (normal for one-way communication)");
+                                last_failure_log_ = now;
+                            }
                             
                             // Check if the pipe is still valid
                             if (pipe_handle_ == INVALID_HANDLE_VALUE) {
@@ -239,33 +273,18 @@ namespace StayPutVR {
                         uint8_t msgTypeRaw = buffer[0];
                         MessageType msgType = static_cast<MessageType>(msgTypeRaw);
                         
-                        // Get message type as string for logging
-                        std::string msgTypeStr;
-                        switch (msgType) {
-                            case MessageType::DEVICE_UPDATE:
-                                msgTypeStr = "DEVICE_UPDATE";
-                                break;
-                            case MessageType::COMMAND:
-                                msgTypeStr = "COMMAND";
-                                break;
-                            default:
-                                msgTypeStr = "UNKNOWN (" + std::to_string(msgTypeRaw) + ")";
-                                break;
-                        }
+                        Logger::Debug("IPCServer: Received message type: " + std::to_string(static_cast<int>(msgType)));
                         
-                        Logger::Debug("IPCServer: Received " + msgTypeStr + " message with size: " + std::to_string(buffer.size()));
-                        
+                        // Handle the message based on type
                         switch (msgType) {
                             case MessageType::COMMAND:
                                 Logger::Debug("IPCServer: Processing command message");
                                 // Process command (not implemented yet)
                                 break;
                             default:
-                                Logger::Warning("IPCServer: Unknown message type: " + msgTypeStr);
+                                Logger::Warning("IPCServer: Unknown message type: " + std::to_string(msgTypeRaw));
                                 break;
                         }
-                    } else {
-                        Logger::Warning("IPCServer: Received empty message buffer");
                     }
                 }
                 catch (const std::exception& e) {
@@ -291,9 +310,9 @@ namespace StayPutVR {
             if (running_) {
                 Logger::Info("IPCServer: Creating new pipe for next connection");
                 if (!CreatePipe()) {
-                    // Failed to create pipe, retry
-                    Logger::Error("IPCServer: Failed to create new pipe, retrying in 1 second");
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+                    // Failed to create pipe, use throttled logging and longer retry
+                    Logger::Error("IPCServer: Failed to create new pipe, retrying in 10 seconds");
+                    std::this_thread::sleep_for(std::chrono::seconds(10)); // Increased from 1 second to 10 seconds
                 }
             }
         }

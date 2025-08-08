@@ -16,11 +16,25 @@ namespace StayPutVR {
     }
 
     bool IPCClient::Connect() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
         Logger::Info("IPCClient: Connecting to pipe");
         
         if (connected_) {
             Logger::Warning("IPCClient: Already connected");
             return true;
+        }
+        
+        // Ensure we're in a clean state before connecting
+        if (pipe_handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(pipe_handle_);
+            pipe_handle_ = INVALID_HANDLE_VALUE;
+        }
+        
+        // Ensure reader thread is stopped
+        if (reader_thread_.joinable()) {
+            running_ = false;
+            reader_thread_.join();
         }
         
         // Try to connect to the named pipe
@@ -87,6 +101,8 @@ namespace StayPutVR {
     }
 
     void IPCClient::Disconnect() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        
         Logger::Info("IPCClient: Disconnecting");
         
         // Check if we're already disconnected
