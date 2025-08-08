@@ -59,6 +59,10 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 - ⏱️ Configurable timers for automatic unlocking
 - 💬 Twitch chat bot with real-time command processing
 
+## 📚 Documentation
+
+View the [wiki](https://github.com/foxipso/StayPutVR/wiki) for more information.
+
 ## 🗺️ Roadmap 
 
 * OpenShock integration
