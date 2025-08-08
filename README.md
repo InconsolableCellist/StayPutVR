@@ -61,7 +61,7 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 
 ## 📚 Documentation
 
-View the [wiki](https://github.com/foxipso/StayPutVR/wiki) for more information.
+View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more information.
 
 ## 🗺️ Roadmap 
 
