@@ -73,6 +73,19 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 * Placement spheres/hints (attempt #2)
 * In-world audio emitters (attempt #2)
 
+## 💾 Building From Source
+
+### Prerequisites
+- Visual Studio 2019 or higher with C++ desktop development workload
+- CMake 3.15 or higher
+
+### Build Steps
+1. Clone the repository
+2. Open a command prompt in the project directory
+3. Run `cmake -B build`
+4. Run `cmake --build build --config Release`
+5. Install with `cmake --build build --target install --config Release`
+
 ## 📅 Version History
 
 1.0.0 - Initial release
