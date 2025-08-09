@@ -3,6 +3,7 @@
   - [📥 Quickstart](#-quickstart)
   - [✨ Features](#-features)
   - [🗺️ Roadmap](#-roadmap)
+  - [💾 Building From Source](#-building-from-source)
   - [📅 Version History](#-version-history)
   - [⚖️ License](#-license)
   - [🙏 Acknowledgments](#-acknowledgments)
