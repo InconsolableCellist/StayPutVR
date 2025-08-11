@@ -217,8 +217,8 @@ namespace StayPutVR {
                 // Failed to accept connection, use throttled logging instead of spamming
                 LogConnectionFailure();
                 
-                // Wait longer between retries to reduce system load
-                std::this_thread::sleep_for(std::chrono::seconds(5)); // Changed from 1 second to 5 seconds
+                // Wait longer between retries when no client is available (normal case)
+                std::this_thread::sleep_for(std::chrono::seconds(10)); // Increased to 10 seconds when no client
                 continue;
             }
             
@@ -441,8 +441,8 @@ namespace StayPutVR {
             // Connection is pending, wait for result
             Logger::Debug("IPCServer: Connection pending, waiting for client");
             
-            // Use a longer timeout here since this is just waiting for initial connection
-            DWORD waitResult = WaitForSingleObject(connectOverlapped.hEvent, 1000); // 1 second timeout
+            // Use a longer timeout here since this is just waiting for initial connection  
+            DWORD waitResult = WaitForSingleObject(connectOverlapped.hEvent, 2000); // 2 second timeout
             
             if (waitResult == WAIT_OBJECT_0) {
                 // Connection completed
@@ -472,9 +472,16 @@ namespace StayPutVR {
         }
         else {
             // Connection failed
-            Logger::Error("IPCServer: ConnectNamedPipe failed: " + std::to_string(error));
             CloseHandle(connectOverlapped.hEvent);
-            return false;
+            
+            // Handle specific error codes gracefully
+            if (error == 232) { // ERROR_NO_DATA - no client connected yet, this is normal
+                // Don't log as error - this is expected when server starts before client
+                return false;
+            } else {
+                Logger::Error("IPCServer: ConnectNamedPipe failed: " + std::to_string(error));
+                return false;
+            }
         }
     }
     
