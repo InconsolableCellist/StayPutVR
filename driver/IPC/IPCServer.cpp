@@ -4,10 +4,11 @@
 
 namespace StayPutVR {
 
-    IPCServer::IPCServer() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false), initialized_(false), writer_busy_(false) {
+    IPCServer::IPCServer() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false), initialized_(false), writer_busy_(false), consecutive_failures_(0) {
         Logger::Info("IPCServer: Constructor called");
         last_connection_log_ = std::chrono::steady_clock::now() - LOG_THROTTLE_INTERVAL; // Allow immediate first log
         last_failure_log_ = std::chrono::steady_clock::now() - LOG_THROTTLE_INTERVAL;
+        circuit_breaker_timeout_ = std::chrono::steady_clock::now();
     }
 
     IPCServer::~IPCServer() {
@@ -99,6 +100,14 @@ namespace StayPutVR {
             Logger::Info("IPCServer: Client application connected successfully");
             last_connection_log_ = now;
         }
+        // Reset circuit breaker on successful connection
+        consecutive_failures_ = 0;
+    }
+    
+    bool IPCServer::IsCircuitBreakerOpen() const {
+        auto now = std::chrono::steady_clock::now();
+        return (consecutive_failures_ >= MAX_CONSECUTIVE_FAILURES) && 
+               (now < circuit_breaker_timeout_);
     }
     
     void IPCServer::SendDeviceUpdates(const std::vector<DevicePositionData>& devices) {
@@ -106,16 +115,14 @@ namespace StayPutVR {
             return;
         }
         
-        // Lazy initialization - only start IPC when first device update is needed
-        if (!InitializeIfNeeded()) {
-            LogConnectionFailure();
-            return;
+        // Fast exit if not initialized or connected - no blocking operations
+        if (!initialized_ || !connected_) {
+            return; // Silently fail - don't log in high-frequency VR loop
         }
         
-        if (!connected_) {
-            // Don't spam logs - use throttled logging
-            LogConnectionFailure();
-            return;
+        // Circuit breaker: if we've had too many consecutive failures, temporarily stop trying
+        if (IsCircuitBreakerOpen()) {
+            return; // Silently fail during circuit breaker timeout
         }
         
         try {
@@ -179,17 +186,15 @@ namespace StayPutVR {
                     uint8_t msgTypeRaw = buffer[0];
                     MessageType msgType = static_cast<MessageType>(msgTypeRaw);
                     
-                    Logger::Debug("IPCServer: ProcessIncomingMessages received a message type: " + 
-                                 std::to_string(static_cast<int>(msgType)));
+                    // Process message silently to avoid logging in VR frame loop
                     
                     // Handle the message based on type
                     switch (msgType) {
                         case MessageType::COMMAND:
-                            Logger::Debug("IPCServer: Processing command message");
                             // Process command (not implemented yet)
                             break;
                         default:
-                            Logger::Warning("IPCServer: Unknown message type: " + std::to_string(msgTypeRaw));
+                            // Unknown message type - silently ignore in VR loop
                             break;
                     }
                 }
@@ -696,8 +701,16 @@ namespace StayPutVR {
                 }
                 
                 if (!success && connected_) {
+                    consecutive_failures_++;
+                    if (consecutive_failures_ >= MAX_CONSECUTIVE_FAILURES) {
+                        Logger::Warning("IPCServer: Too many consecutive failures, opening circuit breaker");
+                        circuit_breaker_timeout_ = std::chrono::steady_clock::now() + CIRCUIT_BREAKER_TIMEOUT;
+                    }
                     Logger::Error("IPCServer: Failed to write message, disconnecting client");
                     connected_ = false;
+                } else if (success) {
+                    // Reset failure count on successful write
+                    consecutive_failures_ = 0;
                 }
                 
                 // Process the next message immediately if there is one
@@ -802,7 +815,7 @@ namespace StayPutVR {
                 }
                 
                 // Wait for the operation to complete with a timeout
-                DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 100); // 100ms timeout
+                DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 1000); // 1000ms timeout
                 if (waitResult != WAIT_OBJECT_0) {
                     CloseHandle(overlapped.hEvent);
                     if (waitResult == WAIT_TIMEOUT) {
@@ -857,7 +870,7 @@ namespace StayPutVR {
                 }
                 
                 // Wait for the operation to complete with a timeout
-                DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 100); // 100ms timeout
+                DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 1000); // 1000ms timeout
                 if (waitResult != WAIT_OBJECT_0) {
                     CloseHandle(overlapped.hEvent);
                     if (waitResult == WAIT_TIMEOUT) {

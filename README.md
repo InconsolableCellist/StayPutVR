@@ -61,6 +61,7 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 - 🔊 Audio cues for warnings and boundary violations
 - ⏱️ Configurable timers for automatic unlocking
 - 💬 Twitch chat bot with real-time command processing
+- ⚡ **High Performance**: Optimized for ultra-low latency VR with sub-millisecond frame times
 
 ## 📚 Documentation
 
@@ -88,6 +89,10 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 5. Install with `cmake --build build --target install --config Release`
 
 ## 📅 Version History
+
+**1.0.1** - Performance & Stability Release
+- **VR Performance Improvements**: Eliminated potential blocking operations in VR driver main loop
+- **SteamVR Crash Fix**: Resolved `VRApplicationError_IPCFailed` crashes caused by IPC timeouts (after headset reconnects)
 
 1.0.0 - Initial release
 

@@ -196,8 +196,14 @@ vr::EVRInitError StayPutVR::VRDriver::Init(vr::IVRDriverContext* pDriverContext)
         // In a full driver you might add virtual devices here
         
         // IPC is always enabled - it's the core purpose of this driver
-        // It will be lazy-initialized when VR devices are detected and companion app is available
-        Logger::Info("VRDriver: IPC will initialize when VR devices are detected and companion app is available");
+        // Initialize IPC immediately to prevent blocking in RunFrame
+        Logger::Info("VRDriver: Initializing IPC server during driver init");
+        if (!ipc_server_.Initialize()) {
+            Logger::Warning("VRDriver: Failed to initialize IPC server, but continuing (non-critical)");
+            // Don't fail driver init - VR should work without companion app
+        } else {
+            Logger::Info("VRDriver: IPC server initialized successfully");
+        }
         
         Log("StayPutVR driver loaded successfully");
         Logger::Info("VRDriver: Driver loaded successfully");
@@ -253,8 +259,6 @@ void StayPutVR::VRDriver::RunFrame()
         
         // Only attempt IPC operations if we have devices to send
         if (!tracked_devices.empty()) {
-            Logger::Debug("VRDriver: Found " + std::to_string(tracked_devices.size()) + " tracked devices");
-            
             // Convert to DevicePositionData for IPC
             std::vector<DevicePositionData> device_positions;
             for (const auto& device : tracked_devices) {
@@ -276,39 +280,31 @@ void StayPutVR::VRDriver::RunFrame()
                     pos_data.connected = device.pose.deviceIsConnected;
                     
                     device_positions.push_back(pos_data);
-                    
-                    Logger::Debug("VRDriver: Added device " + device.serial + " to update list");
                 }
                 catch (const std::exception& e) {
-                    Logger::Error("VRDriver: Exception preparing device data: " + std::string(e.what()));
+                    // Silently continue - don't spam logs in VR frame loop
+                    continue;
                 }
             }
             
-            // Send device positions via IPC (this will lazy-initialize IPC if needed)
-            Logger::Debug("VRDriver: Sending device updates via IPC, count: " + std::to_string(device_positions.size()));
+            // Send device positions via IPC - completely non-blocking
             try {
                 ipc_server_.SendDeviceUpdates(device_positions);
-                Logger::Debug("VRDriver: Device updates sent successfully");
-            }
-            catch (const std::exception& e) {
-                Logger::Error("VRDriver: Exception in SendDeviceUpdates: " + std::string(e.what()));
             }
             catch (...) {
-                Logger::Error("VRDriver: Unknown exception in SendDeviceUpdates");
+                // Silently handle IPC errors - don't let them affect VR performance
+                // IPC is non-critical for VR operation
             }
         }
         
-        // Process incoming messages only if IPC is connected
+        // Process incoming messages only if IPC is connected - non-blocking
         if (ipc_server_.IsConnected()) {
             try {
-                Logger::Debug("VRDriver: Processing incoming IPC messages");
                 ipc_server_.ProcessIncomingMessages();
             }
-            catch (const std::exception& e) {
-                Logger::Error("VRDriver: Exception in ProcessIncomingMessages: " + std::string(e.what()));
-            }
             catch (...) {
-                Logger::Error("VRDriver: Unknown exception in ProcessIncomingMessages");
+                // Silently handle IPC errors - don't let them affect VR performance
+                // IPC is non-critical for VR operation
             }
         }
     }
