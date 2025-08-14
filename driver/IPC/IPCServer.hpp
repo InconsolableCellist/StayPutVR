@@ -50,6 +50,12 @@ namespace StayPutVR {
         std::chrono::steady_clock::time_point last_failure_log_;
         static constexpr std::chrono::minutes LOG_THROTTLE_INTERVAL{1};
         
+        // Circuit breaker pattern to prevent repeated failures from affecting VR
+        std::atomic<int> consecutive_failures_{0};
+        std::chrono::steady_clock::time_point circuit_breaker_timeout_;
+        static constexpr int MAX_CONSECUTIVE_FAILURES = 5;
+        static constexpr std::chrono::seconds CIRCUIT_BREAKER_TIMEOUT{30};
+        
         struct MessageData {
             std::vector<uint8_t> buffer;
             bool processed = false;
@@ -68,5 +74,6 @@ namespace StayPutVR {
         
         void LogConnectionFailure();
         void LogConnectionSuccess();
+        bool IsCircuitBreakerOpen() const;
     };
 }

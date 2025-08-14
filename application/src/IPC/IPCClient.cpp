@@ -53,9 +53,9 @@ namespace StayPutVR {
             if (error == ERROR_PIPE_BUSY) {
                 Logger::Warning("IPCClient: Pipe is busy, waiting...");
                 
-                // Wait for the pipe to become available
-                if (!WaitNamedPipeA(PIPE_NAME, 5000)) {
-                    Logger::Error("IPCClient: Timed out waiting for pipe");
+                // Wait for the pipe to become available (increased timeout for driver startup)
+                if (!WaitNamedPipeA(PIPE_NAME, 15000)) { // 15 second timeout
+                    Logger::Warning("IPCClient: Timed out waiting for pipe (driver may not be loaded)");
                     return false;
                 }
                 

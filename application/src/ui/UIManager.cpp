@@ -2397,7 +2397,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.0.0");
+        ImGui::Text("Version: 1.0.1");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
