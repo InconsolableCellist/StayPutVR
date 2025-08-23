@@ -200,6 +200,30 @@ namespace StayPutVR {
                     }
                 );
                 
+                OSCManager::GetInstance().SetGlobalOutOfBoundsCallback(
+                    [this](bool triggered) {
+                        if (!config_.osc_global_out_of_bounds_enabled) {
+                            return;
+                        }
+                        if (Logger::IsInitialized()) {
+                            Logger::Info("Global out-of-bounds triggered via OSC");
+                        }
+                        TriggerGlobalOutOfBoundsActions();
+                    }
+                );
+                
+                OSCManager::GetInstance().SetBiteCallback(
+                    [this](bool triggered) {
+                        if (!config_.osc_bite_enabled) {
+                            return;
+                        }
+                        if (Logger::IsInitialized()) {
+                            Logger::Info("Bite triggered via OSC");
+                        }
+                        TriggerBiteActions();
+                    }
+                );
+                
                 if (Logger::IsInitialized()) {
                     Logger::Info("UIManager: OSC auto-connection successful, callbacks registered");
                 }
@@ -267,6 +291,10 @@ namespace StayPutVR {
         
         // Process Twitch unlock timer
         ProcessTwitchUnlockTimer();
+        
+        // Process global out-of-bounds timer
+        ProcessGlobalOutOfBoundsTimer();
+        ProcessBiteTimer();
         
         // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
@@ -2009,6 +2037,62 @@ namespace StayPutVR {
             changed = true;
         }
         
+        ImGui::Separator();
+        ImGui::Text("Global Out-of-Bounds Trigger");
+        ImGui::TextWrapped("Enable automatic out-of-bounds actions when receiving the SPVR_Global_OutOfBounds parameter from VRChat.");
+        
+        bool global_out_of_bounds_enabled = config_.osc_global_out_of_bounds_enabled;
+        if (ImGui::Checkbox("Enable Global Out-of-Bounds Trigger", &global_out_of_bounds_enabled)) {
+            config_.osc_global_out_of_bounds_enabled = global_out_of_bounds_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("When enabled, receiving the /avatar/parameters/SPVR_Global_OutOfBounds parameter will trigger out-of-bounds actions");
+            ImGui::EndTooltip();
+        }
+        
+        // Global out-of-bounds path input
+        static char global_out_of_bounds_path[128];
+        if (strlen(global_out_of_bounds_path) == 0) {
+            strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
+        }
+        if (ImGui::InputText("Global Out-of-Bounds Path", global_out_of_bounds_path, IM_ARRAYSIZE(global_out_of_bounds_path))) {
+            config_.osc_global_out_of_bounds_path = global_out_of_bounds_path;
+            changed = true;
+        }
+        
+        ImGui::Separator();
+        ImGui::Text("Bite Trigger");
+        ImGui::TextWrapped("Enable disobedience actions when receiving the SPVR_Bite parameter from VRChat.");
+        
+        bool bite_enabled = config_.osc_bite_enabled;
+        if (ImGui::Checkbox("Enable Bite Trigger", &bite_enabled)) {
+            config_.osc_bite_enabled = bite_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("When enabled, receiving the /avatar/parameters/SPVR_Bite parameter will trigger disobedience actions");
+            ImGui::EndTooltip();
+        }
+        
+        // Bite path input
+        static char bite_path[128];
+        if (strlen(bite_path) == 0) {
+            strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
+        }
+        if (ImGui::InputText("Bite Path", bite_path, IM_ARRAYSIZE(bite_path))) {
+            config_.osc_bite_path = bite_path;
+            changed = true;
+        }
+        
         // Chaining mode
         ImGui::Text("Chaining Mode");
         ImGui::Separator();
@@ -2074,6 +2158,12 @@ namespace StayPutVR {
             
             config_.osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
             strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
+            
+            config_.osc_global_out_of_bounds_path = "/avatar/parameters/SPVR_Global_OutOfBounds";
+            strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
+            
+            config_.osc_bite_path = "/avatar/parameters/SPVR_Bite";
+            strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
             
             // Update OSCManager with new paths
             if (osc_enabled_) {
@@ -2397,7 +2487,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.0.1");
+        ImGui::Text("Version: 1.0.2");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
@@ -3376,6 +3466,30 @@ namespace StayPutVR {
             }
         );
         
+        OSCManager::GetInstance().SetGlobalOutOfBoundsCallback(
+            [this](bool triggered) {
+                if (!config_.osc_global_out_of_bounds_enabled) {
+                    return; // Feature disabled
+                }
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Global out-of-bounds triggered via OSC");
+                }
+                TriggerGlobalOutOfBoundsActions();
+            }
+        );
+        
+        OSCManager::GetInstance().SetBiteCallback(
+            [this](bool triggered) {
+                if (!config_.osc_bite_enabled) {
+                    return;
+                }
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Bite triggered via OSC");
+                }
+                TriggerBiteActions();
+            }
+        );
+        
         if (Logger::IsInitialized()) {
             Logger::Info("VerifyOSCCallbacks: OSC callbacks verified and re-registered");
         }
@@ -3426,7 +3540,6 @@ namespace StayPutVR {
             }
         }
         
-        // NEW CODE: Add diagnostic logging if no device was found with the matching role
         bool found_matching_device = false;
         for (auto& dev : device_positions_) {
             DeviceRole targetRole = DeviceRole::None;
@@ -4198,6 +4311,192 @@ namespace StayPutVR {
         else {
             if (Logger::IsInitialized()) {
                 Logger::Warning("Unknown chat command: " + command);
+            }
+        }
+    }
+
+    void UIManager::TriggerGlobalOutOfBoundsActions() {
+        if (Logger::IsInitialized()) {
+            Logger::Info("Triggering global out-of-bounds actions with " + std::to_string(GLOBAL_OUT_OF_BOUNDS_DURATION) + "s timer");
+        }
+        
+        // Start the timer for resetting back to normal state
+        global_out_of_bounds_timer_active_ = true;
+        global_out_of_bounds_timer_start_ = std::chrono::steady_clock::now();
+        
+        // Play out-of-bounds audio if enabled
+        if (config_.out_of_bounds_audio) {
+            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+            if (std::filesystem::exists(filePath)) {
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Playing disobedience.wav for global out-of-bounds trigger");
+                }
+                AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+            } else {
+                if (Logger::IsInitialized()) {
+                    Logger::Warning("disobedience.wav not found, cannot play out-of-bounds sound");
+                }
+            }
+        }
+        
+        // Trigger PiShock disobedience actions if enabled
+        if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Triggering PiShock disobedience actions for global out-of-bounds");
+            }
+            pishock_manager_->TriggerDisobedienceActions("GLOBAL");
+        }
+    }
+
+    void UIManager::TriggerBiteActions() {
+        if (Logger::IsInitialized()) {
+            Logger::Info("Triggering bite disobedience actions with " + std::to_string(BITE_DURATION) + "s timer");
+        }
+        
+        // Start the timer for resetting back to normal state
+        bite_timer_active_ = true;
+        bite_timer_start_ = std::chrono::steady_clock::now();
+        
+        // Play out-of-bounds audio if enabled
+        if (config_.out_of_bounds_audio) {
+            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+            if (std::filesystem::exists(filePath)) {
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Playing disobedience.wav for bite trigger");
+                }
+                AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+            } else {
+                if (Logger::IsInitialized()) {
+                    Logger::Warning("disobedience.wav not found, cannot play bite sound");
+                }
+            }
+        }
+        
+        // Trigger PiShock disobedience actions if enabled
+        if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Triggering PiShock disobedience actions for bite");
+            }
+            pishock_manager_->TriggerDisobedienceActions("BITE");
+        }
+        
+        // Update all device statuses to show out-of-bounds
+        for (auto& device : device_positions_) {
+            if (device.role != DeviceRole::None) {
+                OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                UpdateDeviceStatus(oscDevice, DeviceStatus::LockedOutOfBounds);
+                
+                if (Logger::IsInitialized()) {
+                    Logger::Debug("Updated device " + device.serial + " status to LockedOutOfBounds for bite trigger");
+                }
+            }
+        }
+    }
+
+    void UIManager::ProcessGlobalOutOfBoundsTimer() {
+        if (!global_out_of_bounds_timer_active_) {
+            return;
+        }
+        
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - global_out_of_bounds_timer_start_);
+        float elapsed_seconds = elapsed.count() / 1000.0f;
+        
+        if (elapsed_seconds >= GLOBAL_OUT_OF_BOUNDS_DURATION) {
+            // Timer expired, reset devices back to normal locked state
+            global_out_of_bounds_timer_active_ = false;
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Global out-of-bounds timer expired, resetting devices to their normal states");
+            }
+            
+            // Reset all devices back to their appropriate state (locked or unlocked)
+            for (auto& device : device_positions_) {
+                if (device.role != DeviceRole::None) {
+                    OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                    
+                    // Determine if device should be locked (either globally or individually)
+                    bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
+                    
+                    DeviceStatus newStatus;
+                    
+                    if (should_be_locked) {
+                        // Device should be locked - determine appropriate locked status
+                        newStatus = DeviceStatus::LockedSafe;
+                        
+                        // If the device is actually still out of bounds physically, keep it as disobedience
+                        if (device.exceeds_threshold) {
+                            newStatus = DeviceStatus::LockedDisobedience;
+                        } else if (device.in_warning_zone) {
+                            newStatus = DeviceStatus::LockedWarning;
+                        }
+                    } else {
+                        // Device should be unlocked
+                        newStatus = DeviceStatus::Unlocked;
+                    }
+                    
+                    UpdateDeviceStatus(oscDevice, newStatus);
+                    
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("Reset device " + device.serial + " to status: " + 
+                                     std::to_string(static_cast<int>(newStatus)) + 
+                                     " (should_be_locked=" + std::to_string(should_be_locked) + ")");
+                    }
+                }
+            }
+        }
+    }
+
+    void UIManager::ProcessBiteTimer() {
+        if (!bite_timer_active_) {
+            return;
+        }
+        
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - bite_timer_start_);
+        float elapsed_seconds = elapsed.count() / 1000.0f;
+        
+        if (elapsed_seconds >= BITE_DURATION) {
+            // Timer expired, reset devices back to normal locked state
+            bite_timer_active_ = false;
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("Bite timer expired, resetting devices to their normal states");
+            }
+            
+            // Reset all devices back to their appropriate state (locked or unlocked)
+            for (auto& device : device_positions_) {
+                if (device.role != DeviceRole::None) {
+                    OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                    
+                    // Determine if device should be locked (either globally or individually)
+                    bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
+                    
+                    DeviceStatus newStatus;
+                    
+                    if (should_be_locked) {
+                        // Device should be locked - determine appropriate locked status
+                        newStatus = DeviceStatus::LockedSafe;
+                        
+                        // If the device is actually still out of bounds physically, keep it as disobedience
+                        if (device.exceeds_threshold) {
+                            newStatus = DeviceStatus::LockedDisobedience;
+                        } else if (device.in_warning_zone) {
+                            newStatus = DeviceStatus::LockedWarning;
+                        }
+                    } else {
+                        // Device should be unlocked
+                        newStatus = DeviceStatus::Unlocked;
+                    }
+                    
+                    UpdateDeviceStatus(oscDevice, newStatus);
+                    
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("Reset device " + device.serial + " to status: " + 
+                                     std::to_string(static_cast<int>(newStatus)) + 
+                                     " (should_be_locked=" + std::to_string(should_be_locked) + ")");
+                    }
+                }
             }
         }
     }

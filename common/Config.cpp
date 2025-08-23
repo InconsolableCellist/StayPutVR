@@ -33,8 +33,12 @@ Config::Config()
     , osc_include_path_left_foot("/avatar/parameters/SPVR_FootLeft_include")
     , osc_include_path_right_foot("/avatar/parameters/SPVR_FootRight_include")
     , osc_include_path_hip("/avatar/parameters/SPVR_Hip_include")
+    , osc_bite_path("/avatar/parameters/SPVR_Bite")
+    , osc_bite_enabled(true)
     , osc_global_lock_path("/avatar/parameters/SPVR_Global_Lock")
     , osc_global_unlock_path("/avatar/parameters/SPVR_Global_Unlock")
+    , osc_global_out_of_bounds_path("/avatar/parameters/SPVR_Global_OutOfBounds")
+    , osc_global_out_of_bounds_enabled(true)
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
@@ -166,6 +170,10 @@ bool Config::LoadFromFile(const std::string& filename) {
         // Load global lock/unlock paths
         osc_global_lock_path = j.value("osc_global_lock_path", "/avatar/parameters/SPVR_Global_Lock");
         osc_global_unlock_path = j.value("osc_global_unlock_path", "/avatar/parameters/SPVR_Global_Unlock");
+        osc_global_out_of_bounds_path = j.value("osc_global_out_of_bounds_path", "/avatar/parameters/SPVR_Global_OutOfBounds");
+        osc_global_out_of_bounds_enabled = j.value("osc_global_out_of_bounds_enabled", true);
+        osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
+        osc_bite_enabled = j.value("osc_bite_enabled", true);
 
         // PiShock settings
         pishock_enabled = j.value("pishock_enabled", false);
@@ -386,6 +394,10 @@ bool Config::SaveToFile(const std::string& filename) const {
         // Global lock/unlock paths
         j["osc_global_lock_path"] = osc_global_lock_path;
         j["osc_global_unlock_path"] = osc_global_unlock_path;
+        j["osc_global_out_of_bounds_path"] = osc_global_out_of_bounds_path;
+        j["osc_global_out_of_bounds_enabled"] = osc_global_out_of_bounds_enabled;
+        j["osc_bite_path"] = osc_bite_path;
+        j["osc_bite_enabled"] = osc_bite_enabled;
 
         // PiShock settings
         j["pishock_enabled"] = pishock_enabled;

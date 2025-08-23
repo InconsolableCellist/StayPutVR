@@ -46,10 +46,17 @@ public:
     std::string osc_include_path_left_foot = "/avatar/parameters/SPVR_FootLeft_include";
     std::string osc_include_path_right_foot = "/avatar/parameters/SPVR_FootRight_include";
     std::string osc_include_path_hip = "/avatar/parameters/SPVR_Hip_include";
+
+    std::string osc_bite_path = "/avatar/parameters/SPVR_Bite";
+    bool osc_bite_enabled = true;
     
     // Global lock/unlock paths
     std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
     std::string osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
+    
+    // Global out-of-bounds path and setting
+    std::string osc_global_out_of_bounds_path = "/avatar/parameters/SPVR_Global_OutOfBounds";
+    bool osc_global_out_of_bounds_enabled = true;
     
     // PiShock Settings via VRCOSC
     bool pishock_enabled = false;

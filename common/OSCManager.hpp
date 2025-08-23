@@ -73,6 +73,12 @@ public:
     // Set callback for global lock/unlock
     void SetGlobalLockCallback(std::function<void(bool)> callback) { global_lock_callback_ = callback; }
     
+    // Set callback for global out-of-bounds
+    void SetGlobalOutOfBoundsCallback(std::function<void(bool)> callback) { global_out_of_bounds_callback_ = callback; }
+    
+    // Set callback for bite actions
+    void SetBiteCallback(std::function<void(bool)> callback) { bite_callback_ = callback; }
+    
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
     void SendPiShockDuration(float duration); // 0-1 float
@@ -133,6 +139,8 @@ private:
     
     std::string osc_global_lock_path_ = "/avatar/parameters/SPVR_global_lock";
     std::string osc_global_unlock_path_ = "/avatar/parameters/SPVR_global_unlock";
+    std::string osc_global_out_of_bounds_path_ = "/avatar/parameters/SPVR_Global_OutOfBounds";
+    std::string osc_bite_path_ = "/avatar/parameters/SPVR_Bite";
     
     // Helper methods for sending OSC messages
     bool SendOSCMessage(const std::string& path, int value);
@@ -147,6 +155,12 @@ private:
     
     // Callback for global lock/unlock events
     std::function<void(bool)> global_lock_callback_;
+    
+    // Callback for global out-of-bounds events
+    std::function<void(bool)> global_out_of_bounds_callback_;
+    
+    // Callback for bite events
+    std::function<void(bool)> bite_callback_;
 };
 
 } // namespace StayPutVR 

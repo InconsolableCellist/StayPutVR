@@ -195,6 +195,8 @@ void OSCManager::SetConfig(const Config& config) {
     
     osc_global_lock_path_ = config.osc_global_lock_path;
     osc_global_unlock_path_ = config.osc_global_unlock_path;
+    osc_global_out_of_bounds_path_ = config.osc_global_out_of_bounds_path;
+    osc_bite_path_ = config.osc_bite_path;
     
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Updated OSC paths from config");
@@ -336,6 +338,16 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                 }
                 else if (address == osc_global_unlock_path_ && global_lock_callback_ && value_bool) {
                     global_lock_callback_(false);
+                }
+                
+                // Global out-of-bounds path
+                else if (address == osc_global_out_of_bounds_path_ && global_out_of_bounds_callback_ && value_bool) {
+                    global_out_of_bounds_callback_(true);
+                }
+                
+                // Bite path
+                else if (address == osc_bite_path_ && bite_callback_ && value_bool) {
+                    bite_callback_(true);
                 }
                 
                 // Latch_IsPosed paths: direct state change (not toggle)

@@ -196,6 +196,8 @@ namespace StayPutVR {
         // OSC callbacks
         void OnDeviceLocked(OSCDeviceType device, bool locked);
         void OnDeviceIncluded(OSCDeviceType device, bool include);
+        void TriggerGlobalOutOfBoundsActions();
+        void TriggerBiteActions();
         
         // Helper functions
         void UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status);
@@ -221,10 +223,24 @@ namespace StayPutVR {
         void ShutdownTwitchManager();
         void ProcessTwitchUnlockTimer();
         
+        // Global out-of-bounds timer helper
+        void ProcessGlobalOutOfBoundsTimer();
+        void ProcessBiteTimer();
+        
         // Twitch unlock timer variables
         bool twitch_unlock_timer_active_ = false;
         float twitch_unlock_timer_remaining_ = 0.0f;
         std::chrono::steady_clock::time_point twitch_unlock_timer_start_;
+        
+        // Global out-of-bounds timer variables
+        bool global_out_of_bounds_timer_active_ = false;
+        std::chrono::steady_clock::time_point global_out_of_bounds_timer_start_;
+        static constexpr float GLOBAL_OUT_OF_BOUNDS_DURATION = 1.0f; // Duration in seconds
+        
+        // Bite timer variables
+        bool bite_timer_active_ = false;
+        std::chrono::steady_clock::time_point bite_timer_start_;
+        static constexpr float BITE_DURATION = 3.0f; // Duration in seconds
         
         // Twitch donation callbacks
             void OnTwitchDonation(const std::string& username, float amount, const std::string& message);
