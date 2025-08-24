@@ -58,6 +58,7 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
   - ❌ **Non-Compliance zone**: Now you've done it.
   - 🛑 **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
 - 📡 Integration with VRChat, PiShock, and Twitch (experimental)
+- 🦷 Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
 - 🔊 Audio cues for warnings and boundary violations
 - ⏱️ Configurable timers for automatic unlocking
 - 💬 Twitch chat bot with real-time command processing
@@ -89,6 +90,15 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 5. Install with `cmake --build build --target install --config Release`
 
 ## 📅 Version History
+
+**1.1.0** - OpenShock Support
+- **OpenShock Integration**: Added full support for OpenShock devices with equivalent functionality to PiShock
+- **New OpenShock Tab**: Dedicated UI tab for OpenShock configuration with API token and device ID fields
+- **Disobedience Actions**: OpenShock devices now trigger on out-of-bounds, global violations, and bite detection
+- **Safety Features**: Same safety agreement and rate limiting as PiShock integration
+
+**1.0.2** - BiteTech support
+- **BiteTech Support**: Added support for BiteTech devices, including bite detection and disobedience actions.
 
 **1.0.1** - Performance & Stability Release
 - **VR Performance Improvements**: Eliminated potential blocking operations in VR driver main loop
