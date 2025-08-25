@@ -57,7 +57,7 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
   - ⚠️ **Warning zone**: You're straying too far--watch out!
   - ❌ **Non-Compliance zone**: Now you've done it.
   - 🛑 **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
-- 📡 Integration with VRChat, PiShock, and Twitch (experimental)
+- 📡 Integration with VRChat, PiShock, OpenShock, and Twitch (experimental)
 - 🦷 Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
 - 🔊 Audio cues for warnings and boundary violations
 - ⏱️ Configurable timers for automatic unlocking
