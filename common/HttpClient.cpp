@@ -508,4 +508,156 @@ void SendPiShockCommandAsync(
     HttpClient::QueueAsyncRequest(request);
 }
 
+bool SendOpenShockCommand(
+    const std::string& serverUrl,
+    const std::string& apiToken,
+    const std::string& deviceId,
+    int operation,
+    int intensity,
+    int duration,
+    std::string& response) {
+    
+    if (!HttpClient::Initialize()) {
+        Logger::Error("Failed to initialize HTTP client for OpenShock");
+        return false;
+    }
+    
+    // Create the JSON payload for OpenShock API
+    nlohmann::json requestBody = nlohmann::json::array();
+    
+    nlohmann::json control_data;
+    control_data["id"] = deviceId;
+    
+    // Convert operation integer to string type
+    std::string type_string;
+    switch (operation) {
+        case 0: type_string = "Shock"; break;
+        case 1: type_string = "Vibrate"; break;
+        case 2: type_string = "Sound"; break;
+        default: type_string = "Stop"; break;
+    }
+    control_data["type"] = type_string;
+    
+    // For sound, intensity is required but not meaningful, use 1 as minimum
+    if (type_string == "Sound" && intensity == 0) {
+        control_data["intensity"] = 1;
+    } else {
+        control_data["intensity"] = intensity;
+    }
+    
+    control_data["duration"] = duration;
+    control_data["exclusive"] = true;  // Stop other commands when this one starts
+    
+    requestBody.push_back(control_data);
+    
+    Logger::Info("Sending OpenShock command. Operation: " + std::to_string(operation) + 
+                 ", Intensity: " + std::to_string(intensity) + 
+                 ", Duration: " + std::to_string(duration) + "ms");
+    
+    // Prepare headers for OpenShock API
+    std::map<std::string, std::string> headers;
+    headers["Open-Shock-Token"] = apiToken;
+    headers["User-Agent"] = "StayPutVR/1.1";
+    headers["Content-Type"] = "application/json";
+    
+            bool success = HttpClient::SendHttpRequest(
+            serverUrl + "/1/shockers/control",
+            "POST",
+            headers,
+            requestBody.dump(),
+            response
+        );
+    
+    if (success) {
+        Logger::Info("OpenShock command succeeded: " + response);
+    } else {
+        Logger::Error("OpenShock command failed: " + response);
+    }
+    
+    return success;
+}
+
+void SendOpenShockCommandAsync(
+    const std::string& serverUrl,
+    const std::string& apiToken,
+    const std::string& deviceId,
+    int operation,
+    int intensity,
+    int duration,
+    std::function<void(bool success, const std::string& response)> callback) {
+    
+    if (!HttpClient::Initialize()) {
+        Logger::Error("Failed to initialize HTTP client for OpenShock");
+        if (callback) {
+            callback(false, "Failed to initialize HTTP client");
+        }
+        return;
+    }
+    
+    // Create a lambda that will make the request on a background thread
+    auto request = [serverUrl, apiToken, deviceId, operation, intensity, duration, callback]() {
+        std::string response;
+        
+        // Create the JSON payload for OpenShock API
+        nlohmann::json requestBody = nlohmann::json::array();
+        
+        nlohmann::json control_data;
+        control_data["id"] = deviceId;
+        
+        // Convert operation integer to string type
+        std::string type_string;
+        switch (operation) {
+            case 0: type_string = "Shock"; break;
+            case 1: type_string = "Vibrate"; break;
+            case 2: type_string = "Sound"; break;
+            default: type_string = "Stop"; break;
+        }
+        control_data["type"] = type_string;
+        
+        // For sound, intensity is required but not meaningful, use 1 as minimum
+        if (type_string == "Sound" && intensity == 0) {
+            control_data["intensity"] = 1;
+        } else {
+            control_data["intensity"] = intensity;
+        }
+        
+        control_data["duration"] = duration;
+        control_data["exclusive"] = true;  // Stop other commands when this one starts
+        
+        requestBody.push_back(control_data);
+        
+        Logger::Info("Sending async OpenShock command. Operation: " + std::to_string(operation) + 
+                    ", Intensity: " + std::to_string(intensity) + 
+                    ", Duration: " + std::to_string(duration) + "ms");
+        
+        // Prepare headers for OpenShock API
+        std::map<std::string, std::string> headers;
+        headers["Open-Shock-Token"] = apiToken;
+        headers["User-Agent"] = "StayPutVR/1.1";
+        headers["Content-Type"] = "application/json";
+        
+        bool success = HttpClient::SendHttpRequest(
+            serverUrl + "/1/shockers/control",
+            "POST",
+            headers,
+            requestBody.dump(),
+            response
+        );
+        
+        if (success) {
+            Logger::Info("OpenShock async command succeeded: " + response);
+        } else {
+            Logger::Error("OpenShock async command failed: " + response);
+        }
+        
+        // Call the callback if provided
+        if (callback) {
+            callback(success, response);
+        }
+    };
+    
+    // Add the request to the async queue
+    HttpClient::QueueAsyncRequest(request);
+}
+
 } // namespace StayPutVR 

@@ -77,4 +77,26 @@ void SendPiShockCommandAsync(
     std::function<void(bool success, const std::string& response)> callback = nullptr
 );
 
+// Synchronous utility function for OpenShock API
+bool SendOpenShockCommand(
+    const std::string& serverUrl,
+    const std::string& apiToken,
+    const std::string& deviceId,
+    int operation,           // 0 = shock, 1 = vibrate, 2 = sound
+    int intensity,           // 1-100 for shock/vibrate
+    int duration,            // Duration in milliseconds
+    std::string& response
+);
+
+// Asynchronous utility function for OpenShock API
+void SendOpenShockCommandAsync(
+    const std::string& serverUrl,
+    const std::string& apiToken,
+    const std::string& deviceId,
+    int operation,           // 0 = shock, 1 = vibrate, 2 = sound
+    int intensity,           // 1-100 for shock/vibrate
+    int duration,            // Duration in milliseconds
+    std::function<void(bool success, const std::string& response)> callback = nullptr
+);
+
 } // namespace StayPutVR 

@@ -91,11 +91,9 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
-**1.1.0** - OpenShock Support
-- **OpenShock Integration**: Added full support for OpenShock devices with equivalent functionality to PiShock
-- **New OpenShock Tab**: Dedicated UI tab for OpenShock configuration with API token and device ID fields
-- **Disobedience Actions**: OpenShock devices now trigger on out-of-bounds, global violations, and bite detection
-- **Safety Features**: Same safety agreement and rate limiting as PiShock integration
+**1.0.3** - OpenShock Support (Beta)
+- **OpenShock Integration**: OpenShock support equivalent to PiShock
+- Fixed a bug where the default OSC receive port was 9005 instead of 9001 (VRChat default)
 
 **1.0.2** - BiteTech support
 - **BiteTech Support**: Added support for BiteTech devices, including bite detection and disobedience actions.

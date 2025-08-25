@@ -15,7 +15,7 @@ Config::Config()
     : log_level("WARNING")
     , osc_address("127.0.0.1")
     , osc_send_port(9000)
-    , osc_receive_port(9005)
+    , osc_receive_port(9001)
     , osc_address_bounds("/stayputvr/bounds")
     , osc_address_warning("/stayputvr/warning")
     , osc_address_disable("/stayputvr/disable")
@@ -143,10 +143,10 @@ bool Config::LoadFromFile(const std::string& filename) {
         if (j.contains("osc_port")) {
             int old_port = j.value("osc_port", 9000);
             osc_send_port = old_port;
-            osc_receive_port = 9005; // Default receive port for older configs
+            osc_receive_port = 9001;
         } else {
             osc_send_port = j.value("osc_send_port", 9000);
-            osc_receive_port = j.value("osc_receive_port", 9005);
+            osc_receive_port = j.value("osc_receive_port", 9001);
         }
         
         chaining_mode = j.value("chaining_mode", false);
@@ -198,6 +198,25 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
         pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.5f);
         pishock_disobedience_duration = j.value("pishock_disobedience_duration", 0.5f);
+
+        // OpenShock Settings
+        openshock_enabled = j.value("openshock_enabled", false);
+        openshock_user_agreement = j.value("openshock_user_agreement", false);
+        
+        // OpenShock API Settings
+        openshock_api_token = j.value("openshock_api_token", "");
+        openshock_device_id = j.value("openshock_device_id", "");
+        openshock_server_url = j.value("openshock_server_url", "https://api.openshock.app");
+        
+        // Warning Zone OpenShock Settings
+        openshock_warning_action = j.value("openshock_warning_action", 0);
+        openshock_warning_intensity = j.value("openshock_warning_intensity", 0.25f);
+        openshock_warning_duration = j.value("openshock_warning_duration", 0.25f);
+        
+        // Disobedience (Out of Bounds) OpenShock Settings
+        openshock_disobedience_action = j.value("openshock_disobedience_action", 0);
+        openshock_disobedience_intensity = j.value("openshock_disobedience_intensity", 0.5f);
+        openshock_disobedience_duration = j.value("openshock_disobedience_duration", 0.5f);
 
         // Twitch Integration Settings
         twitch_enabled = j.value("twitch_enabled", false);
@@ -422,6 +441,25 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_disobedience_vibrate"] = pishock_disobedience_vibrate;
         j["pishock_disobedience_intensity"] = pishock_disobedience_intensity;
         j["pishock_disobedience_duration"] = pishock_disobedience_duration;
+
+        // OpenShock Settings
+        j["openshock_enabled"] = openshock_enabled;
+        j["openshock_user_agreement"] = openshock_user_agreement;
+        
+        // OpenShock API Settings
+        j["openshock_api_token"] = openshock_api_token;
+        j["openshock_device_id"] = openshock_device_id;
+        j["openshock_server_url"] = openshock_server_url;
+        
+        // Warning Zone OpenShock Settings
+        j["openshock_warning_action"] = openshock_warning_action;
+        j["openshock_warning_intensity"] = openshock_warning_intensity;
+        j["openshock_warning_duration"] = openshock_warning_duration;
+        
+        // Disobedience (Out of Bounds) OpenShock Settings
+        j["openshock_disobedience_action"] = openshock_disobedience_action;
+        j["openshock_disobedience_intensity"] = openshock_disobedience_intensity;
+        j["openshock_disobedience_duration"] = openshock_disobedience_duration;
 
         // Twitch Integration Settings
         j["twitch_enabled"] = twitch_enabled;

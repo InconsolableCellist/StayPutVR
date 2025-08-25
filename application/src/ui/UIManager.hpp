@@ -29,6 +29,7 @@
 #include "../../../common/OSCManager.hpp"
 #include "../managers/TwitchManager.hpp"
 #include "../managers/PiShockManager.hpp"
+#include "../managers/OpenShockManager.hpp"
 
 namespace StayPutVR {
 
@@ -42,6 +43,7 @@ namespace StayPutVR {
         OSC,
         SETTINGS,
         PISHOCK,
+        OPENSHOCK,
         TWITCH
     };
 
@@ -154,6 +156,7 @@ namespace StayPutVR {
         void RenderOSCTab();
         void RenderSettingsTab();
         void RenderPiShockTab();
+        void RenderOpenShockTab();
         void RenderTwitchTab();
         
         // Original UI elements (to be migrated to tabs)
@@ -179,14 +182,13 @@ namespace StayPutVR {
         // Timestamp of last played sound for rate limiting
         std::chrono::steady_clock::time_point last_sound_time_ = std::chrono::steady_clock::now();
         
-        // DeviceManager reference
         DeviceManager* device_manager_ = nullptr;
         
-        // TwitchManager instance
         std::unique_ptr<TwitchManager> twitch_manager_;
         
-        // PiShockManager instance
         std::unique_ptr<PiShockManager> pishock_manager_;
+        
+        std::unique_ptr<OpenShockManager> openshock_manager_;
         
         // Countdown timer variables
         bool countdown_active_ = false;
@@ -214,9 +216,11 @@ namespace StayPutVR {
         // Helper function to convert DeviceRole to OSCDeviceType
         OSCDeviceType DeviceRoleToOSCDeviceType(DeviceRole role) const;
         
-        // PiShock helper functions
         void InitializePiShockManager();
         void ShutdownPiShockManager();
+        
+        void InitializeOpenShockManager();
+        void ShutdownOpenShockManager();
         
         // Twitch helper functions
         void InitializeTwitchManager();

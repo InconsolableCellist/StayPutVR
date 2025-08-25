@@ -51,13 +51,10 @@ namespace StayPutVR {
     UIManager::~UIManager() {
         Shutdown();
         
-        // Shutdown Twitch manager
         ShutdownTwitchManager();
-        
-        // Shutdown PiShock manager
         ShutdownPiShockManager();
+        ShutdownOpenShockManager();
         
-        // Clean up device manager
         if (device_manager_) {
             delete device_manager_;
             device_manager_ = nullptr;
@@ -247,11 +244,9 @@ namespace StayPutVR {
             }
         }
         
-        // Initialize Twitch manager
         InitializeTwitchManager();
-        
-        // Initialize PiShock manager
         InitializePiShockManager();
+        InitializeOpenShockManager();
         
         return true;
     }
@@ -841,6 +836,13 @@ namespace StayPutVR {
                         }
                         pishock_manager_->TriggerDisobedienceActions(device.serial);
                     }
+                    
+                    if (openshock_manager_ && openshock_manager_->IsEnabled()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering initial OpenShock disobedience actions for device " + device.serial);
+                        }
+                        openshock_manager_->TriggerDisobedienceActions(device.serial);
+                    }
                 } 
                 // Continue triggering PiShock for devices that remain in out-of-bounds zone
                 else if (device.exceeds_threshold && pishock_manager_ && pishock_manager_->IsEnabled()) {
@@ -850,6 +852,17 @@ namespace StayPutVR {
                             Logger::Info("Triggering continuous PiShock disobedience actions for device " + device.serial);
                         }
                         pishock_manager_->TriggerDisobedienceActions(device.serial);
+                    }
+                }
+                
+                // Continue triggering OpenShock for devices that remain in out-of-bounds zone
+                else if (device.exceeds_threshold && openshock_manager_ && openshock_manager_->IsEnabled()) {
+                    // OpenShockManager handles its own rate limiting
+                    if (openshock_manager_->CanTriggerAction()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering continuous OpenShock disobedience actions for device " + device.serial);
+                        }
+                        openshock_manager_->TriggerDisobedienceActions(device.serial);
                     }
                 }
             }
@@ -1167,6 +1180,9 @@ namespace StayPutVR {
             case TabType::PISHOCK:
                 RenderPiShockTab();
                 break;
+            case TabType::OPENSHOCK:
+                RenderOpenShockTab();
+                break;
             case TabType::TWITCH:
                 RenderTwitchTab();
                 break;
@@ -1207,6 +1223,11 @@ namespace StayPutVR {
             
             if (ImGui::BeginTabItem("PiShock")) {
                 current_tab_ = TabType::PISHOCK;
+                ImGui::EndTabItem();
+            }
+            
+            if (ImGui::BeginTabItem("OpenShock")) {
+                current_tab_ = TabType::OPENSHOCK;
                 ImGui::EndTabItem();
             }
             
@@ -1832,7 +1853,7 @@ namespace StayPutVR {
         // Create buffers for editing
         static char osc_ip[128];
         static int osc_send_port = 9000;
-        static int osc_receive_port = 9005;
+        static int osc_receive_port = 9001;
         
         // Initialize with current values
         if (strlen(osc_ip) == 0) {
@@ -2487,7 +2508,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.0.2");
+        ImGui::Text("Version: 1.0.3");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
@@ -3072,7 +3093,7 @@ namespace StayPutVR {
                     config_.osc_send_port = 9000;
                 }
                 if (config_.osc_receive_port <= 0) {
-                    config_.osc_receive_port = 9005;
+                    config_.osc_receive_port = 9001;
                 }
                 
                 if (StayPutVR::Logger::IsInitialized()) {
@@ -3081,7 +3102,7 @@ namespace StayPutVR {
             } else {
                 // Set default OSC ports for new config
                 config_.osc_send_port = 9000;
-                config_.osc_receive_port = 9005;
+                config_.osc_receive_port = 9001;
                 
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Error("UIManager: Failed to load config");
@@ -4346,6 +4367,14 @@ namespace StayPutVR {
             }
             pishock_manager_->TriggerDisobedienceActions("GLOBAL");
         }
+        
+        // Trigger OpenShock disobedience actions if enabled
+        if (openshock_manager_ && openshock_manager_->IsEnabled()) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Triggering OpenShock disobedience actions for global out-of-bounds");
+            }
+            openshock_manager_->TriggerDisobedienceActions("GLOBAL");
+        }
     }
 
     void UIManager::TriggerBiteActions() {
@@ -4378,6 +4407,14 @@ namespace StayPutVR {
                 Logger::Info("Triggering PiShock disobedience actions for bite");
             }
             pishock_manager_->TriggerDisobedienceActions("BITE");
+        }
+        
+        // Trigger OpenShock disobedience actions if enabled
+        if (openshock_manager_ && openshock_manager_->IsEnabled()) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Triggering OpenShock disobedience actions for bite");
+            }
+            openshock_manager_->TriggerDisobedienceActions("BITE");
         }
         
         // Update all device statuses to show out-of-bounds
@@ -4499,6 +4536,296 @@ namespace StayPutVR {
                 }
             }
         }
+    }
+
+    // OpenShock Helper Methods Implementation
+    void UIManager::InitializeOpenShockManager() {
+        openshock_manager_ = std::make_unique<OpenShockManager>();
+        
+        if (openshock_manager_->Initialize(&config_)) {
+            // Set up callback for OpenShock action results
+            openshock_manager_->SetActionCallback(
+                [this](const std::string& action_type, bool success, const std::string& message) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Info("OpenShock " + action_type + " " + (success ? "succeeded" : "failed") + 
+                                   (message.empty() ? "" : ": " + message));
+                    }
+                }
+            );
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("OpenShockManager initialized successfully");
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to initialize OpenShockManager");
+            }
+        }
+    }
+
+    void UIManager::ShutdownOpenShockManager() {
+        if (openshock_manager_) {
+            openshock_manager_->Shutdown();
+            openshock_manager_.reset();
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("OpenShockManager shut down");
+            }
+        }
+    }
+
+    void UIManager::RenderOpenShockTab() {
+        ImGui::Text("OpenShock Integration");
+        ImGui::Separator();
+        
+        // Safety warning (moved to the top)
+        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
+        ImGui::Text("OpenShock should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of OpenShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
+        ImGui::PopTextWrapPos();
+        
+        // Add agreement checkbox right after the disclaimer
+        bool user_agreement = config_.openshock_user_agreement;
+        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
+            config_.openshock_user_agreement = user_agreement;
+            SaveConfig();
+        }
+        
+        ImGui::Separator();
+        
+        // Main enable/disable checkbox for OpenShock (disabled until agreement is checked)
+        ImGui::BeginDisabled(!user_agreement);
+        bool openshock_enabled = config_.openshock_enabled;
+        if (ImGui::Checkbox("Enable OpenShock Integration", &openshock_enabled)) {
+            config_.openshock_enabled = openshock_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Enable direct integration with OpenShock API for out-of-bounds enforcement");
+            ImGui::EndTooltip();
+        }
+        
+        // OpenShock API Credentials
+        ImGui::Separator();
+        ImGui::Text("OpenShock API Credentials:");
+        
+        static char api_token_buffer[256] = "";
+        // Always sync the buffer with the current config value
+        if (config_.openshock_api_token != api_token_buffer) {
+            strcpy_s(api_token_buffer, sizeof(api_token_buffer), config_.openshock_api_token.c_str());
+        }
+        
+        if (ImGui::InputText("API Token", api_token_buffer, sizeof(api_token_buffer), ImGuiInputTextFlags_Password)) {
+            config_.openshock_api_token = api_token_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("API Token from your OpenShock account (found in Account settings)");
+            ImGui::EndTooltip();
+        }
+        
+        static char device_id_buffer[128] = "";
+        // Always sync the buffer with the current config value
+        if (config_.openshock_device_id != device_id_buffer) {
+            strcpy_s(device_id_buffer, sizeof(device_id_buffer), config_.openshock_device_id.c_str());
+        }
+        
+        if (ImGui::InputText("Device ID", device_id_buffer, sizeof(device_id_buffer))) {
+            config_.openshock_device_id = device_id_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("ID of the OpenShock device you want to control");
+            ImGui::EndTooltip();
+        }
+        
+        static char server_url_buffer[256] = "";
+        // Always sync the buffer with the current config value
+        if (config_.openshock_server_url != server_url_buffer) {
+            strcpy_s(server_url_buffer, sizeof(server_url_buffer), config_.openshock_server_url.c_str());
+        }
+        
+        if (ImGui::InputText("Server URL", server_url_buffer, sizeof(server_url_buffer))) {
+            config_.openshock_server_url = server_url_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("OpenShock server URL (default: https://api.openshock.app)");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::Separator();
+        
+        if (!config_.openshock_enabled) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        }
+        
+        // Warning Zone Actions
+        ImGui::Text("Warning Zone Actions:");
+        ImGui::Separator();
+        
+        ImGui::Text("Action Type:");
+        int warning_action = config_.openshock_warning_action;
+        
+        if (ImGui::RadioButton("None##Warning", warning_action == 0)) {
+            config_.openshock_warning_action = 0;
+            SaveConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Shock##Warning", warning_action == 1)) {
+            config_.openshock_warning_action = 1;
+            SaveConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Vibrate##Warning", warning_action == 2)) {
+            config_.openshock_warning_action = 2;
+            SaveConfig();
+        }
+        
+        // Warning Intensity and Duration sliders
+        float warning_intensity = config_.openshock_warning_intensity;
+        if (ImGui::SliderFloat("Warning Intensity", &warning_intensity, 0.0f, 1.0f, "%.2f")) {
+            config_.openshock_warning_intensity = warning_intensity;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Intensity level for warning zone actions (0.0 = minimum, 1.0 = maximum)");
+            ImGui::EndTooltip();
+        }
+        
+        float warning_duration = config_.openshock_warning_duration;
+        if (ImGui::SliderFloat("Warning Duration", &warning_duration, 0.0f, 1.0f, "%.2f")) {
+            config_.openshock_warning_duration = warning_duration;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Duration for warning zone actions (0.0 = shortest, 1.0 = longest)");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::Separator();
+        
+        // Disobedience (Out of Bounds) Actions
+        ImGui::Text("Disobedience (Out of Bounds) Actions:");
+        ImGui::Separator();
+        
+        ImGui::Text("Action Type:");
+        int disobedience_action = config_.openshock_disobedience_action;
+        
+        if (ImGui::RadioButton("None", disobedience_action == 0)) {
+            config_.openshock_disobedience_action = 0;
+            SaveConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Shock", disobedience_action == 1)) {
+            config_.openshock_disobedience_action = 1;
+            SaveConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Vibrate", disobedience_action == 2)) {
+            config_.openshock_disobedience_action = 2;
+            SaveConfig();
+        }
+        
+        // Intensity and Duration sliders
+        float disobedience_intensity = config_.openshock_disobedience_intensity;
+        if (ImGui::SliderFloat("Disobedience Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+            config_.openshock_disobedience_intensity = disobedience_intensity;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Intensity level for disobedience actions (0.0 = minimum, 1.0 = maximum)");
+            ImGui::EndTooltip();
+        }
+        
+        float disobedience_duration = config_.openshock_disobedience_duration;
+        if (ImGui::SliderFloat("Disobedience Duration", &disobedience_duration, 0.0f, 1.0f, "%.2f")) {
+            config_.openshock_disobedience_duration = disobedience_duration;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Duration for disobedience actions (0.0 = shortest, 1.0 = longest)");
+            ImGui::EndTooltip();
+        }
+        
+        if (!config_.openshock_enabled) {
+            ImGui::PopStyleColor();
+        }
+        
+        // Status and Test Section
+        ImGui::Separator();
+        ImGui::Text("Status:");
+        
+        if (openshock_manager_) {
+            std::string status = openshock_manager_->GetConnectionStatus();
+            
+            if (status == "Ready") {
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Status: %s", status.c_str());
+            } else if (status == "Disabled") {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Status: %s", status.c_str());
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Status: %s", status.c_str());
+            }
+            
+            std::string last_error = openshock_manager_->GetLastError();
+            if (!last_error.empty()) {
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Last Error: %s", last_error.c_str());
+            }
+        }
+        
+        // Test button
+        ImGui::Separator();
+        
+        bool can_test = config_.openshock_enabled && 
+                       openshock_manager_ && 
+                       openshock_manager_->IsFullyConfigured();
+        
+        ImGui::BeginDisabled(!can_test);
+        if (ImGui::Button("Test OpenShock Actions", ImVec2(200, 30))) {
+            if (openshock_manager_) {
+                openshock_manager_->TestActions();
+            }
+        }
+        ImGui::EndDisabled();
+        
+        if (!can_test) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Configure OpenShock settings to enable testing");
+        }
+        
+        ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
 
 } // namespace StayPutVR 

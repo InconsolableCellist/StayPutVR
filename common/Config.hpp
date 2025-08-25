@@ -25,7 +25,7 @@ public:
     bool osc_enabled = false;
     std::string osc_address = "127.0.0.1";
     int osc_send_port = 9000;
-    int osc_receive_port = 9005;
+    int osc_receive_port = 9001;
     bool chaining_mode = false;
     std::string osc_address_bounds;
     std::string osc_address_warning;
@@ -81,6 +81,25 @@ public:
     bool pishock_disobedience_vibrate = false;
     float pishock_disobedience_intensity = 0.5f;
     float pishock_disobedience_duration = 0.5f;
+
+    // OpenShock Settings
+    bool openshock_enabled = false;
+    bool openshock_user_agreement = false;
+    
+    // OpenShock API Settings
+    std::string openshock_api_token;
+    std::string openshock_device_id;
+    std::string openshock_server_url = "https://api.openshock.app"; 
+    
+    // Warning Zone OpenShock Settings
+    int openshock_warning_action = 0; // 0=none, 1=shock, 2=vibrate
+    float openshock_warning_intensity = 0.25f;
+    float openshock_warning_duration = 0.25f;
+    
+    // Disobedience (Out of Bounds) OpenShock Settings
+    int openshock_disobedience_action = 0; // 0=none, 1=shock, 2=vibrate
+    float openshock_disobedience_intensity = 0.1f;
+    float openshock_disobedience_duration = 0.05f;
 
     // Twitch Integration Settings
     bool twitch_enabled = false;
