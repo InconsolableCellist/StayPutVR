@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <sstream>
 #include <iostream>
+#include <algorithm>
 #include "Logger.hpp"
 #include <nlohmann/json.hpp>
 #include "PathUtils.hpp"
@@ -205,7 +206,20 @@ bool Config::LoadFromFile(const std::string& filename) {
         
         // OpenShock API Settings
         openshock_api_token = j.value("openshock_api_token", "");
-        openshock_device_id = j.value("openshock_device_id", "");
+        
+        // Load multiple device IDs - support both old single ID and new array format
+        if (j.contains("openshock_device_ids") && j["openshock_device_ids"].is_array()) {
+            auto device_ids_json = j["openshock_device_ids"];
+            for (size_t i = 0; i < min(device_ids_json.size(), static_cast<size_t>(5)); ++i) {
+                if (device_ids_json[i].is_string()) {
+                    openshock_device_ids[i] = device_ids_json[i];
+                }
+            }
+        } else if (j.contains("openshock_device_id") && j["openshock_device_id"].is_string()) {
+            // Legacy single device ID - put it in slot 0
+            openshock_device_ids[0] = j["openshock_device_id"];
+        }
+        
         openshock_server_url = j.value("openshock_server_url", "https://api.openshock.app");
         
         // Warning Zone OpenShock Settings
@@ -298,6 +312,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         device_names.clear();
         device_settings.clear();
         device_roles.clear();
+        device_shock_ids.clear();
         
         // Load device names, settings, and roles from new format (direct properties)
         if (j.contains("device_names") && j["device_names"].is_object()) {
@@ -325,6 +340,21 @@ bool Config::LoadFromFile(const std::string& filename) {
                 if (Logger::IsInitialized()) {
                     Logger::Info("Loaded device role from direct property: " + serial + " -> role value: " + 
                                 std::to_string(role.get<int>()));
+                }
+            }
+        }
+        
+        if (j.contains("device_shock_ids") && j["device_shock_ids"].is_object()) {
+            for (auto& [serial, shock_ids_json] : j["device_shock_ids"].items()) {
+                if (shock_ids_json.is_array() && shock_ids_json.size() >= 5) {
+                    std::array<bool, 5> shock_ids;
+                    for (size_t i = 0; i < 5; ++i) {
+                        shock_ids[i] = shock_ids_json[i].get<bool>();
+                    }
+                    device_shock_ids[serial] = shock_ids;
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("Loaded device shock IDs for " + serial);
+                    }
                 }
             }
         }
@@ -448,7 +478,14 @@ bool Config::SaveToFile(const std::string& filename) const {
         
         // OpenShock API Settings
         j["openshock_api_token"] = openshock_api_token;
-        j["openshock_device_id"] = openshock_device_id;
+        
+        // Save device IDs array
+        nlohmann::json device_ids_json = nlohmann::json::array();
+        for (const auto& id : openshock_device_ids) {
+            device_ids_json.push_back(id);
+        }
+        j["openshock_device_ids"] = device_ids_json;
+        
         j["openshock_server_url"] = openshock_server_url;
         
         // Warning Zone OpenShock Settings
@@ -538,10 +575,11 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["show_notifications"] = show_notifications;
         
         // Save device names and settings directly at the root level
-        // Create JSON objects for device_roles and device_settings
+        // Create JSON objects for device_roles, device_settings, and device_shock_ids
         nlohmann::json device_roles_json = nlohmann::json::object();
         nlohmann::json device_settings_json = nlohmann::json::object();
         nlohmann::json device_names_json = nlohmann::json::object();
+        nlohmann::json device_shock_ids_json = nlohmann::json::object();
         
         // Populate device roles
         for (const auto& [serial, role] : device_roles) {
@@ -561,13 +599,24 @@ bool Config::SaveToFile(const std::string& filename) const {
         }
         j["device_names"] = device_names_json;
         
+        // Populate device shock IDs
+        for (const auto& [serial, shock_ids] : device_shock_ids) {
+            nlohmann::json shock_ids_array = nlohmann::json::array();
+            for (bool enabled : shock_ids) {
+                shock_ids_array.push_back(enabled);
+            }
+            device_shock_ids_json[serial] = shock_ids_array;
+        }
+        j["device_shock_ids"] = device_shock_ids_json;
+        
         // Populate the devices array for backward compatibility
         nlohmann::json devices = nlohmann::json::array();
-        // Create a set of all serials across all three maps
+        // Create a set of all serials across all device maps
         std::unordered_set<std::string> all_serials;
         for (const auto& [serial, _] : device_names) all_serials.insert(serial);
         for (const auto& [serial, _] : device_settings) all_serials.insert(serial);
         for (const auto& [serial, _] : device_roles) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_shock_ids) all_serials.insert(serial);
         
         // Create device objects
         for (const auto& serial : all_serials) {

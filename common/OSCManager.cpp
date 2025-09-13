@@ -257,23 +257,16 @@ void OSCManager::ReceiveThreadFunction() {
 
 void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
     try {
-        // Parse the OSC packet
         OSCPP::Server::Packet packet(data, size);
         
-        // Check if this is a message (not a bundle)
         if (packet.isMessage()) {
             OSCPP::Server::Message message(packet);
             std::string address = message.address();
             
-            // Only log messages that contain "SPVR_" in their path
             bool should_log = address.find("SPVR_") != std::string::npos;
-            
-            // Get the argument stream from the message
             OSCPP::Server::ArgStream args = message.args();
             
-            // Check if we have at least one argument
             if (!args.atEnd()) {
-                // Get the argument type and value
                 bool value_bool = false;
                 char tag = args.tag();
                 
@@ -294,7 +287,6 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     }
                 }
                 else if (tag == 'T' || tag == 'F') {
-                    // Handle OSC boolean values
                     value_bool = (tag == 'T');
                     if (Logger::IsInitialized() && should_log) {
                         Logger::Debug("OSCManager: Received boolean value: " + std::string(value_bool ? "true" : "false") + 
@@ -302,15 +294,12 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     }
                 }
                 else {
-                    // Unsupported argument type
                     if (Logger::IsInitialized() && should_log) {
                         Logger::Warning("OSCManager: Unsupported argument type: " + std::string(1, tag) + 
                                       " for address: " + address);
                     }
                     return;
                 }
-                
-                // Now handle the address and call the appropriate callbacks
                 
                 // Standard device lock paths
                 if (address == osc_lock_path_hmd_ && lock_callback_) {

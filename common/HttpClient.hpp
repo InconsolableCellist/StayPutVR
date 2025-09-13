@@ -99,4 +99,15 @@ void SendOpenShockCommandAsync(
     std::function<void(bool success, const std::string& response)> callback = nullptr
 );
 
+// Multi-device synchronous utility function for OpenShock API
+bool SendOpenShockCommandMulti(
+    const std::string& serverUrl,
+    const std::string& apiToken,
+    const std::vector<std::string>& deviceIds,  // List of device IDs to send to
+    int operation,           // 0 = shock, 1 = vibrate, 2 = sound
+    int intensity,           // 1-100 for shock/vibrate
+    int duration,            // Duration in milliseconds
+    std::string& response
+);
+
 } // namespace StayPutVR 

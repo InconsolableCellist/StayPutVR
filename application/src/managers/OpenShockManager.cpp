@@ -48,8 +48,17 @@ namespace StayPutVR {
     bool OpenShockManager::ValidateConfiguration() const {
         if (!config_) return false;
         
+        // Check if at least one device ID is configured
+        bool has_device_id = false;
+        for (const auto& id : config_->openshock_device_ids) {
+            if (!id.empty()) {
+                has_device_id = true;
+                break;
+            }
+        }
+        
         return !config_->openshock_api_token.empty() &&
-               !config_->openshock_device_id.empty() &&
+               has_device_id &&
                !config_->openshock_server_url.empty();
     }
 
@@ -79,14 +88,14 @@ namespace StayPutVR {
                 {
                     int intensity = ConvertIntensityToAPI(config_->openshock_disobedience_intensity);
                     int duration = ConvertDurationToAPI(config_->openshock_disobedience_duration);
-                    SendShock(intensity, duration, "Disobedience - Shock");
+                    SendShock(intensity, duration, "Disobedience - Shock", device_serial);
                 }
                 break;
             case 2: // Vibrate
                 {
                     int intensity = ConvertIntensityToAPI(config_->openshock_disobedience_intensity);
                     int duration = ConvertDurationToAPI(config_->openshock_disobedience_duration);
-                    SendVibrate(intensity, duration, "Disobedience - Vibrate");
+                    SendVibrate(intensity, duration, "Disobedience - Vibrate", device_serial);
                 }
                 break;
             default: // 0 = None
@@ -113,13 +122,13 @@ namespace StayPutVR {
             case 1: // Shock
                 {
                     int intensity = (std::max)(1, ConvertIntensityToAPI(config_->openshock_warning_intensity) / 2);
-                    SendShock(intensity, 1000, "Warning - Shock");
+                    SendShock(intensity, 1000, "Warning - Shock", device_serial);
                 }
                 break;
             case 2: // Vibrate
                 {
                     int intensity = (std::max)(1, ConvertIntensityToAPI(config_->openshock_warning_intensity) / 2);
-                    SendVibrate(intensity, 1000, "Warning - Vibrate");
+                    SendVibrate(intensity, 1000, "Warning - Vibrate", device_serial);
                 }
                 break;
             default: // 0 = None
@@ -144,17 +153,17 @@ namespace StayPutVR {
         TriggerDisobedienceActions("TEST");
     }
 
-    void OpenShockManager::SendSound(int intensity, int duration, const std::string& reason) {
+    void OpenShockManager::SendSound(int intensity, int duration, const std::string& reason, const std::string& device_serial) {
         OpenShockActionData action;
         action.type = OpenShockActionType::SOUND;
         action.intensity = 0; // Sound doesn't use intensity
         action.duration = (std::max)(300, (std::min)(65535, duration)); // API minimum is 300ms, max 65535ms
         action.reason = reason;
 
-        ExecuteActionAsync(action);
+        ExecuteActionAsyncMulti(action, device_serial);
     }
 
-    void OpenShockManager::SendVibrate(int intensity, int duration, const std::string& reason) {
+    void OpenShockManager::SendVibrate(int intensity, int duration, const std::string& reason, const std::string& device_serial) {
         if (!ValidateActionParameters(intensity, duration)) {
             SetError("Invalid vibrate parameters");
             return;
@@ -166,10 +175,10 @@ namespace StayPutVR {
         action.duration = duration;
         action.reason = reason;
 
-        ExecuteActionAsync(action);
+        ExecuteActionAsyncMulti(action, device_serial);
     }
 
-    void OpenShockManager::SendShock(int intensity, int duration, const std::string& reason) {
+    void OpenShockManager::SendShock(int intensity, int duration, const std::string& reason, const std::string& device_serial) {
         if (!ValidateActionParameters(intensity, duration)) {
             SetError("Invalid shock parameters");
             return;
@@ -181,7 +190,7 @@ namespace StayPutVR {
         action.duration = duration;
         action.reason = reason;
 
-        ExecuteActionAsync(action);
+        ExecuteActionAsyncMulti(action, device_serial);
     }
 
     std::string OpenShockManager::GetConnectionStatus() const {
@@ -256,16 +265,28 @@ namespace StayPutVR {
                        ", Duration: " + std::to_string(action.duration) + "ms" +
                        ", Reason: " + action.reason + ")");
 
+            // Use the master device (device 0) for legacy single-device calls
+            std::vector<std::string> device_ids;
+            if (!config_->openshock_device_ids[0].empty()) {
+                device_ids.push_back(config_->openshock_device_ids[0]);
+            }
+            
             std::string response;
-            bool success = SendOpenShockCommand(
-                config_->openshock_server_url,
-                config_->openshock_api_token,
-                config_->openshock_device_id,
-                static_cast<int>(action.type),
-                action.intensity,
-                action.duration,
-                response
-            );
+            bool success = false;
+            if (!device_ids.empty()) {
+                success = SendOpenShockCommandMulti(
+                    config_->openshock_server_url,
+                    config_->openshock_api_token,
+                    device_ids,
+                    static_cast<int>(action.type),
+                    action.intensity,
+                    action.duration,
+                    response
+                );
+            } else {
+                SetError("No shock devices configured");
+                response = "No shock devices configured";
+            }
             
             LogAction(action, success, response);
             
@@ -292,10 +313,114 @@ namespace StayPutVR {
         }).detach();
     }
 
+    void OpenShockManager::ExecuteActionAsyncMulti(const OpenShockActionData& action, const std::string& device_serial) {
+        // Execute in separate thread to avoid blocking UI
+        std::thread([this, action, device_serial]() {
+            ExecuteActionMulti(action, device_serial);
+        }).detach();
+    }
+
+    void OpenShockManager::ExecuteActionMulti(const OpenShockActionData& action, const std::string& device_serial) {
+        if (!ValidateCredentials()) {
+            SetError("Invalid OpenShock credentials");
+            if (action_callback_) {
+                action_callback_(ActionTypeToString(action.type), false, "Invalid credentials");
+            }
+            return;
+        }
+
+        if (!CheckRateLimit()) {
+            SetError("Rate limit exceeded");
+            if (action_callback_) {
+                action_callback_(ActionTypeToString(action.type), false, "Rate limit exceeded");
+            }
+            return;
+        }
+
+        try {
+            // Determine which shock devices to use
+            std::vector<std::string> device_ids_to_use;
+            
+            if (device_serial.empty()) {
+                // No specific device - use device 0 (master) if configured
+                if (!config_->openshock_device_ids[0].empty()) {
+                    device_ids_to_use.push_back(config_->openshock_device_ids[0]);
+                }
+            } else {
+                // Look up which shock devices are enabled for this device
+                auto shock_it = config_->device_shock_ids.find(device_serial);
+                if (shock_it != config_->device_shock_ids.end()) {
+                    for (int i = 0; i < 5; ++i) {
+                        if (shock_it->second[i] && !config_->openshock_device_ids[i].empty()) {
+                            device_ids_to_use.push_back(config_->openshock_device_ids[i]);
+                        }
+                    }
+                }
+                
+                // If no specific shock devices are configured for this device, use master device (0) as fallback
+                if (device_ids_to_use.empty() && !config_->openshock_device_ids[0].empty()) {
+                    device_ids_to_use.push_back(config_->openshock_device_ids[0]);
+                }
+            }
+            
+            if (device_ids_to_use.empty()) {
+                SetError("No shock devices configured");
+                if (action_callback_) {
+                    action_callback_(ActionTypeToString(action.type), false, "No shock devices configured");
+                }
+                return;
+            }
+
+            Logger::Info("Sending OpenShock " + ActionTypeToString(action.type) + 
+                       " to " + std::to_string(device_ids_to_use.size()) + " device(s)" +
+                       " (Intensity: " + std::to_string(action.intensity) + 
+                       ", Duration: " + std::to_string(action.duration) + "ms" +
+                       ", Reason: " + action.reason + ")");
+
+            // Send command to all selected devices using multiple entries in a single API call
+            std::string response;
+            bool success = SendOpenShockCommandMulti(
+                config_->openshock_server_url,
+                config_->openshock_api_token,
+                device_ids_to_use,
+                static_cast<int>(action.type),
+                action.intensity,
+                action.duration,
+                response
+            );
+            
+            LogAction(action, success, response);
+            
+            if (action_callback_) {
+                action_callback_(ActionTypeToString(action.type), success, 
+                               success ? "Action completed successfully" : response);
+            }
+
+        } catch (const std::exception& e) {
+            std::string error = "OpenShock action failed: " + std::string(e.what());
+            SetError(error);
+            LogAction(action, false, error);
+            
+            if (action_callback_) {
+                action_callback_(ActionTypeToString(action.type), false, error);
+            }
+        }
+    }
+
     bool OpenShockManager::ValidateCredentials() const {
-        return config_ && 
-               !config_->openshock_api_token.empty() &&
-               !config_->openshock_device_id.empty() &&
+        if (!config_) return false;
+        
+        // Check if at least one device ID is configured
+        bool has_device_id = false;
+        for (const auto& id : config_->openshock_device_ids) {
+            if (!id.empty()) {
+                has_device_id = true;
+                break;
+            }
+        }
+        
+        return !config_->openshock_api_token.empty() &&
+               has_device_id &&
                !config_->openshock_server_url.empty();
     }
 

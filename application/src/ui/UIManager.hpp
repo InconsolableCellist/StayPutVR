@@ -10,6 +10,7 @@
 #include <fstream>
 #include <chrono>
 #include <algorithm>
+#include <array>
 
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
@@ -74,6 +75,9 @@ namespace StayPutVR {
         float position_deviation = 0.0f;
         bool exceeds_threshold = false;
         bool in_warning_zone = false;
+        
+        // OpenShock device selection - which shock IDs should be used for this device
+        std::array<bool, 5> shock_device_enabled = {false, false, false, false, false};
     };
 
     struct SimpleDevicePosition {

@@ -660,4 +660,82 @@ void SendOpenShockCommandAsync(
     HttpClient::QueueAsyncRequest(request);
 }
 
+bool SendOpenShockCommandMulti(
+    const std::string& serverUrl,
+    const std::string& apiToken,
+    const std::vector<std::string>& deviceIds,
+    int operation,
+    int intensity,
+    int duration,
+    std::string& response) {
+    
+    if (!HttpClient::Initialize()) {
+        Logger::Error("Failed to initialize HTTP client for OpenShock multi-device command");
+        return false;
+    }
+    
+    if (deviceIds.empty()) {
+        Logger::Error("No device IDs provided for OpenShock multi-device command");
+        return false;
+    }
+    
+    // Create the JSON payload for OpenShock API with multiple devices
+    nlohmann::json requestBody = nlohmann::json::array();
+    
+    // Convert operation integer to string type
+    std::string type_string;
+    switch (operation) {
+        case 0: type_string = "Shock"; break;
+        case 1: type_string = "Vibrate"; break;
+        case 2: type_string = "Sound"; break;
+        default: type_string = "Stop"; break;
+    }
+    
+    // Create control data for each device
+    for (const auto& deviceId : deviceIds) {
+        nlohmann::json control_data;
+        control_data["id"] = deviceId;
+        control_data["type"] = type_string;
+        
+        // For sound, intensity is required but not meaningful, use 1 as minimum
+        if (type_string == "Sound" && intensity == 0) {
+            control_data["intensity"] = 1;
+        } else {
+            control_data["intensity"] = intensity;
+        }
+        
+        control_data["duration"] = duration;
+        control_data["exclusive"] = true;  // Stop other commands when this one starts
+        
+        requestBody.push_back(control_data);
+    }
+    
+    Logger::Info("Sending OpenShock multi-device command to " + std::to_string(deviceIds.size()) + 
+                 " devices. Operation: " + std::to_string(operation) + 
+                 ", Intensity: " + std::to_string(intensity) + 
+                 ", Duration: " + std::to_string(duration) + "ms");
+    
+    // Prepare headers for OpenShock API
+    std::map<std::string, std::string> headers;
+    headers["Open-Shock-Token"] = apiToken;
+    headers["User-Agent"] = "StayPutVR/1.1";
+    headers["Content-Type"] = "application/json";
+    
+    bool success = HttpClient::SendHttpRequest(
+        serverUrl + "/1/shockers/control",
+        "POST",
+        headers,
+        requestBody.dump(),
+        response
+    );
+    
+    if (success) {
+        Logger::Info("OpenShock multi-device command succeeded: " + response);
+    } else {
+        Logger::Error("OpenShock multi-device command failed: " + response);
+    }
+    
+    return success;
+}
+
 } // namespace StayPutVR 

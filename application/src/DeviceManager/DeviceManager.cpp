@@ -5,12 +5,10 @@
 
 namespace StayPutVR {
     bool DeviceManager::Initialize() {
-        // Set device update callback first
         ipc_client_.SetDeviceUpdateCallback([this](const std::vector<DevicePositionData>& devices) {
             this->OnDeviceUpdate(devices);
         });
         
-        // Try initial connection
         if (ipc_client_.Connect()) {
             if (Logger::IsInitialized()) {
                 Logger::Info("DeviceManager: Successfully connected to driver IPC server");
@@ -18,13 +16,11 @@ namespace StayPutVR {
             return true;
         }
         
-        // If initial connection fails, start auto-reconnection if enabled
         if (auto_reconnect_enabled_) {
             if (Logger::IsInitialized()) {
                 Logger::Warning("DeviceManager: Initial connection failed, starting auto-reconnection");
             }
             StartReconnectThread();
-            // Return true to allow application to continue running
             return true;
         } else {
             if (Logger::IsInitialized()) {
@@ -44,10 +40,8 @@ namespace StayPutVR {
     }
 
     void DeviceManager::Update() {
-        // Process IPC messages
         ipc_client_.ProcessMessages();
         
-        // Check for connection loss and start reconnection if needed
         if (auto_reconnect_enabled_ && !ipc_client_.IsConnected() && !reconnect_thread_running_) {
             if (Logger::IsInitialized()) {
                 Logger::Warning("DeviceManager: Connection lost, starting auto-reconnection");

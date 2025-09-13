@@ -50,9 +50,9 @@ namespace StayPutVR {
         void TestActions();
         
         // Individual action methods
-        void SendSound(int intensity = 0, int duration = 1000, const std::string& reason = "");
-        void SendVibrate(int intensity, int duration, const std::string& reason = "");
-        void SendShock(int intensity, int duration, const std::string& reason = "");
+        void SendSound(int intensity = 0, int duration = 1000, const std::string& reason = "", const std::string& device_serial = "");
+        void SendVibrate(int intensity, int duration, const std::string& reason = "", const std::string& device_serial = "");
+        void SendShock(int intensity, int duration, const std::string& reason = "", const std::string& device_serial = "");
         
         // Utility functions
         std::string GetConnectionStatus() const;
@@ -94,6 +94,8 @@ namespace StayPutVR {
         // Action execution
         void ExecuteAction(const OpenShockActionData& action);
         void ExecuteActionAsync(const OpenShockActionData& action);
+        void ExecuteActionAsyncMulti(const OpenShockActionData& action, const std::string& device_serial);
+        void ExecuteActionMulti(const OpenShockActionData& action, const std::string& device_serial);
         
         // Validation helpers
         bool ValidateCredentials() const;

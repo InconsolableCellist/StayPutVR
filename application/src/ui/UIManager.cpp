@@ -62,10 +62,8 @@ namespace StayPutVR {
     }
 
     bool UIManager::Initialize() {
-        // Setup GLFW error callback
         glfwSetErrorCallback(UIManager::GlfwErrorCallback);
         
-        // Initialize GLFW
         if (!glfwInit()) {
             std::cerr << "Failed to initialize GLFW" << std::endl;
             return false;
@@ -98,7 +96,6 @@ namespace StayPutVR {
         glfwMakeContextCurrent(window_);
         glfwSwapInterval(1); // Enable vsync
         
-        // Initialize GLAD
         if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress)) {
             std::cerr << "Failed to initialize GLAD" << std::endl;
             return false;
@@ -110,7 +107,6 @@ namespace StayPutVR {
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
         
-        // Setup Dear ImGui style
         ImGui::StyleColorsDark();
         
         // Setup Platform/Renderer backends
@@ -2705,7 +2701,7 @@ namespace StayPutVR {
         ImGui::Text("Connected Devices: %zu", device_positions_.size());
         ImGui::Separator();
         
-        if (ImGui::BeginTable("DevicesTable", 8, ImGuiTableFlags_Borders)) {
+        if (ImGui::BeginTable("DevicesTable", 9, ImGuiTableFlags_Borders)) {
             ImGui::TableSetupColumn("Device Type");
             ImGui::TableSetupColumn("Serial");
             ImGui::TableSetupColumn("Custom Name");
@@ -2714,6 +2710,7 @@ namespace StayPutVR {
             ImGui::TableSetupColumn("Status");
             ImGui::TableSetupColumn("Will/Won't Lock");
             ImGui::TableSetupColumn("Lock/Unlock");
+            ImGui::TableSetupColumn("Shock Devices");
             ImGui::TableHeadersRow();
             
             for (auto& device : device_positions_) {
@@ -3057,6 +3054,68 @@ namespace StayPutVR {
                     }
                     
                     ImGui::PopStyleColor(3);
+                }
+                
+                ImGui::PopID();
+                
+                // Shock Devices column - NEW ADDITION
+                ImGui::TableNextColumn();
+                ImGui::PushID(("shockDevices" + device.serial).c_str());
+                
+                // Load device shock settings from config
+                auto shock_it = config_.device_shock_ids.find(device.serial);
+                if (shock_it != config_.device_shock_ids.end()) {
+                    device.shock_device_enabled = shock_it->second;
+                }
+                
+                // Small buttons for shock device selection (1-5)
+                ImGui::Text("Shock IDs:");
+                for (int i = 0; i < 5; ++i) {
+                    if (!config_.openshock_device_ids[i].empty()) {
+                        ImGui::PushID(i);
+                        
+                        // Color the button based on whether it's enabled
+                        if (device.shock_device_enabled[i]) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.9f, 0.3f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.7f, 0.1f, 1.0f));
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                        }
+                        
+                        if (ImGui::Button(std::to_string(i + 1).c_str(), ImVec2(25, 25))) {
+                            device.shock_device_enabled[i] = !device.shock_device_enabled[i];
+                            config_.device_shock_ids[device.serial] = device.shock_device_enabled;
+                            SaveConfig();
+                        }
+                        
+                        ImGui::PopStyleColor(3);
+                        ImGui::PopID();
+                        
+                        if (i < 4) ImGui::SameLine();
+                    }
+                }
+                
+                // All/None buttons
+                ImGui::NewLine();
+                if (ImGui::Button("All", ImVec2(40, 20))) {
+                    for (int i = 0; i < 5; ++i) {
+                        if (!config_.openshock_device_ids[i].empty()) {
+                            device.shock_device_enabled[i] = true;
+                        }
+                    }
+                    config_.device_shock_ids[device.serial] = device.shock_device_enabled;
+                    SaveConfig();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("None", ImVec2(40, 20))) {
+                    for (int i = 0; i < 5; ++i) {
+                        device.shock_device_enabled[i] = false;
+                    }
+                    config_.device_shock_ids[device.serial] = device.shock_device_enabled;
+                    SaveConfig();
                 }
                 
                 ImGui::PopID();
@@ -4632,23 +4691,35 @@ namespace StayPutVR {
             ImGui::EndTooltip();
         }
         
-        static char device_id_buffer[128] = "";
-        // Always sync the buffer with the current config value
-        if (config_.openshock_device_id != device_id_buffer) {
-            strcpy_s(device_id_buffer, sizeof(device_id_buffer), config_.openshock_device_id.c_str());
-        }
-        
-        if (ImGui::InputText("Device ID", device_id_buffer, sizeof(device_id_buffer))) {
-            config_.openshock_device_id = device_id_buffer;
-            SaveConfig();
-        }
-        
+        // Device IDs section
+        ImGui::Text("Device IDs:");
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("ID of the OpenShock device you want to control");
+            ImGui::TextUnformatted("OpenShock device IDs. Device 0 is considered the master device.\nLeave unused slots empty.");
             ImGui::EndTooltip();
+        }
+        
+        static char device_id_buffers[5][128] = {"", "", "", "", ""};
+        
+        for (int i = 0; i < 5; ++i) {
+            // Sync buffers with config values
+            if (config_.openshock_device_ids[i] != device_id_buffers[i]) {
+                strcpy_s(device_id_buffers[i], sizeof(device_id_buffers[i]), config_.openshock_device_ids[i].c_str());
+            }
+            
+            std::string label = std::to_string(i) + ": ";
+            if (i == 0) {
+                label += "(master)";
+            }
+            
+            ImGui::PushID(i);
+            if (ImGui::InputText(label.c_str(), device_id_buffers[i], sizeof(device_id_buffers[i]))) {
+                config_.openshock_device_ids[i] = device_id_buffers[i];
+                SaveConfig();
+            }
+            ImGui::PopID();
         }
         
         static char server_url_buffer[256] = "";

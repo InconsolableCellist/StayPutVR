@@ -3,6 +3,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <array>
 #include <nlohmann/json.hpp>
 
 namespace StayPutVR {
@@ -88,7 +89,7 @@ public:
     
     // OpenShock API Settings
     std::string openshock_api_token;
-    std::string openshock_device_id;
+    std::array<std::string, 5> openshock_device_ids; // Support up to 5 device IDs
     std::string openshock_server_url = "https://api.openshock.app"; 
     
     // Warning Zone OpenShock Settings
@@ -178,6 +179,7 @@ public:
     std::unordered_map<std::string, std::string> device_names; // serial -> name
     std::unordered_map<std::string, bool> device_settings; // serial -> include_in_locking
     std::unordered_map<std::string, int> device_roles; // serial -> role (stored as int)
+    std::unordered_map<std::string, std::array<bool, 5>> device_shock_ids; // serial -> which shock IDs to use
 };
 
 } // namespace StayPutVR 

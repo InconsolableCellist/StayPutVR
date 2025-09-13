@@ -17,13 +17,10 @@
 #include "../../common/Config.hpp"
 #include "../../common/HttpClient.hpp"
 
-// Global variables
 std::atomic<bool> g_running = true;
 
-// Main entry point when run as a standalone application
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
     try {
-        // Use AppData path for logging instead of hardcoded SteamVR path
         std::string appDataPath = StayPutVR::GetAppDataPath();
         std::string logPath = appDataPath + "\\logs";
         std::string configPath = appDataPath + "\\config";
@@ -112,16 +109,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         
         StayPutVR::Logger::Info("Entering main loop");
-        // Main loop
         while (g_running) {
             try {
                 // Update UI (which will also update the device manager)
                 ui_manager.Update();
-                
-                // Render the UI
                 ui_manager.Render();
-                
-                // Small sleep to prevent high CPU usage
                 std::this_thread::sleep_for(std::chrono::milliseconds(16)); // ~60fps
             }
             catch (const std::exception& e) {
@@ -138,15 +130,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         StayPutVR::Logger::Info("Shutting down UI");
         ui_manager.Shutdown();
         
-        // Shutdown HttpClient to properly terminate any active worker threads
         StayPutVR::Logger::Info("Shutting down HttpClient");
         StayPutVR::HttpClient::Shutdown();
         
-        // Shutdown audio system
         StayPutVR::Logger::Info("Shutting down audio system");
         StayPutVR::AudioManager::Shutdown();
         
-        // Shutdown OSC manager
         if (config.osc_enabled) {
             StayPutVR::OSCManager::GetInstance().Shutdown();
         }
