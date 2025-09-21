@@ -63,7 +63,10 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 - Configurable timers for automatic unlocking
 - Twitch chat bot with real-time command processing
 - Multi-shocker support (OpenShock)
-- Emergency stop mode (OSC message)
+- Emergency stop mode
+  - Immediately unlocks all devices and prevents any further shocking 
+  - Requires a button push in the UI to go back to normal operation
+  - Can also be activated via an OSC stretch param (>0.5). Integrates with the StayPutVR prefab for a tag you can yank quickly
 
 ## 📚 Documentation
 
@@ -92,8 +95,9 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
-**1.1.0** - Multi-shocker support (9/13/2025)
+**1.1.0** - Multi-shocker support (9/21/2025)
 - Adds support for multiple shockers using OpenShock
+- Adds emergency stop mode (OSC message)
 
 **1.0.3** - OpenShock Support (Beta) (8/25/2025)
 - **OpenShock Integration**: OpenShock support equivalent to PiShock
