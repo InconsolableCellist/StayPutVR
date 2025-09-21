@@ -79,6 +79,9 @@ public:
     // Set callback for bite actions
     void SetBiteCallback(std::function<void(bool)> callback) { bite_callback_ = callback; }
     
+    // Set callback for emergency stop stretch actions
+    void SetEStopStretchCallback(std::function<void(float)> callback) { estop_stretch_callback_ = callback; }
+    
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
     void SendPiShockDuration(float duration); // 0-1 float
@@ -141,6 +144,7 @@ private:
     std::string osc_global_unlock_path_ = "/avatar/parameters/SPVR_global_unlock";
     std::string osc_global_out_of_bounds_path_ = "/avatar/parameters/SPVR_Global_OutOfBounds";
     std::string osc_bite_path_ = "/avatar/parameters/SPVR_Bite";
+    std::string osc_estop_stretch_path_ = "/avatar/parameters/SPVR_EStop_Stretch";
     
     // Helper methods for sending OSC messages
     bool SendOSCMessage(const std::string& path, int value);
@@ -161,6 +165,9 @@ private:
     
     // Callback for bite events
     std::function<void(bool)> bite_callback_;
+    
+    // Callback for emergency stop stretch events
+    std::function<void(float)> estop_stretch_callback_;
 };
 
 } // namespace StayPutVR 

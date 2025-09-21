@@ -86,16 +86,14 @@ namespace StayPutVR {
         switch (config_->openshock_disobedience_action) {
             case 1: // Shock
                 {
-                    int intensity = ConvertIntensityToAPI(config_->openshock_disobedience_intensity);
                     int duration = ConvertDurationToAPI(config_->openshock_disobedience_duration);
-                    SendShock(intensity, duration, "Disobedience - Shock", device_serial);
+                    SendShockWithIndividualIntensities(duration, "Disobedience - Shock", device_serial, true);
                 }
                 break;
             case 2: // Vibrate
                 {
-                    int intensity = ConvertIntensityToAPI(config_->openshock_disobedience_intensity);
                     int duration = ConvertDurationToAPI(config_->openshock_disobedience_duration);
-                    SendVibrate(intensity, duration, "Disobedience - Vibrate", device_serial);
+                    SendVibrateWithIndividualIntensities(duration, "Disobedience - Vibrate", device_serial, true);
                 }
                 break;
             default: // 0 = None
@@ -121,14 +119,12 @@ namespace StayPutVR {
         switch (config_->openshock_warning_action) {
             case 1: // Shock
                 {
-                    int intensity = (std::max)(1, ConvertIntensityToAPI(config_->openshock_warning_intensity) / 2);
-                    SendShock(intensity, 1000, "Warning - Shock", device_serial);
+                    SendShockWithIndividualIntensities(1000, "Warning - Shock", device_serial, false);
                 }
                 break;
             case 2: // Vibrate
                 {
-                    int intensity = (std::max)(1, ConvertIntensityToAPI(config_->openshock_warning_intensity) / 2);
-                    SendVibrate(intensity, 1000, "Warning - Vibrate", device_serial);
+                    SendVibrateWithIndividualIntensities(1000, "Warning - Vibrate", device_serial, false);
                 }
                 break;
             default: // 0 = None
@@ -151,6 +147,206 @@ namespace StayPutVR {
         
         // Test the actual configured disobedience actions
         TriggerDisobedienceActions("TEST");
+    }
+
+    void OpenShockManager::SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience) {
+        if (!ValidateCredentials()) {
+            SetError("Invalid OpenShock credentials");
+            return;
+        }
+
+        if (!CheckRateLimit()) {
+            SetError("Rate limit exceeded");
+            return;
+        }
+
+        try {
+            // Determine which shock devices to use
+            std::vector<std::string> device_ids_to_use;
+            std::vector<int> device_indices; // Keep track of which device index each ID corresponds to
+            
+            if (device_serial.empty()) {
+                // No specific device - use device 0 (master) if configured
+                if (!config_->openshock_device_ids[0].empty()) {
+                    device_ids_to_use.push_back(config_->openshock_device_ids[0]);
+                    device_indices.push_back(0);
+                }
+            } else {
+                // Look up which shock devices are enabled for this device
+                auto shock_it = config_->device_shock_ids.find(device_serial);
+                if (shock_it != config_->device_shock_ids.end()) {
+                    for (int i = 0; i < 5; ++i) {
+                        if (shock_it->second[i] && !config_->openshock_device_ids[i].empty()) {
+                            device_ids_to_use.push_back(config_->openshock_device_ids[i]);
+                            device_indices.push_back(i);
+                        }
+                    }
+                }
+                
+                // If no specific shock devices are configured for this device, use master device (0) as fallback
+                if (device_ids_to_use.empty() && !config_->openshock_device_ids[0].empty()) {
+                    device_ids_to_use.push_back(config_->openshock_device_ids[0]);
+                    device_indices.push_back(0);
+                }
+            }
+            
+            if (device_ids_to_use.empty()) {
+                SetError("No shock devices configured");
+                return;
+            }
+
+            // Send individual commands to each device with their specific intensity
+            for (size_t i = 0; i < device_ids_to_use.size(); ++i) {
+                int device_index = device_indices[i];
+                float intensity_normalized;
+                
+                if (is_disobedience) {
+                    // Use individual disobedience intensities if enabled, otherwise use master
+                    if (config_->openshock_use_individual_disobedience_intensities) {
+                        intensity_normalized = config_->openshock_individual_disobedience_intensities[device_index];
+                    } else {
+                        intensity_normalized = config_->openshock_master_disobedience_intensity;
+                    }
+                } else {
+                    // Warning actions - use individual warning intensities if enabled, otherwise use master
+                    // Apply the /2 reduction for warnings as in the original code
+                    if (config_->openshock_use_individual_warning_intensities) {
+                        intensity_normalized = config_->openshock_individual_warning_intensities[device_index] / 2.0f;
+                    } else {
+                        intensity_normalized = config_->openshock_master_warning_intensity / 2.0f;
+                    }
+                }
+                
+                int intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
+                
+                Logger::Info("Sending OpenShock Shock to device " + std::to_string(device_index) + 
+                           " (ID: " + device_ids_to_use[i] + ")" +
+                           " (Intensity: " + std::to_string(intensity) + 
+                           ", Duration: " + std::to_string(duration) + "ms" +
+                           ", Reason: " + reason + ")");
+
+                // Send command to individual device
+                std::string response;
+                bool success = SendOpenShockCommand(
+                    config_->openshock_server_url,
+                    config_->openshock_api_token,
+                    device_ids_to_use[i],
+                    0, // 0 = Shock
+                    intensity,
+                    duration,
+                    response
+                );
+                
+                if (!success) {
+                    Logger::Error("Failed to send shock to device " + std::to_string(device_index) + ": " + response);
+                }
+            }
+
+        } catch (const std::exception& e) {
+            std::string error = "OpenShock individual shock action failed: " + std::string(e.what());
+            SetError(error);
+            Logger::Error(error);
+        }
+    }
+
+    void OpenShockManager::SendVibrateWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience) {
+        if (!ValidateCredentials()) {
+            SetError("Invalid OpenShock credentials");
+            return;
+        }
+
+        if (!CheckRateLimit()) {
+            SetError("Rate limit exceeded");
+            return;
+        }
+
+        try {
+            // Determine which shock devices to use
+            std::vector<std::string> device_ids_to_use;
+            std::vector<int> device_indices; // Keep track of which device index each ID corresponds to
+            
+            if (device_serial.empty()) {
+                // No specific device - use device 0 (master) if configured
+                if (!config_->openshock_device_ids[0].empty()) {
+                    device_ids_to_use.push_back(config_->openshock_device_ids[0]);
+                    device_indices.push_back(0);
+                }
+            } else {
+                // Look up which shock devices are enabled for this device
+                auto shock_it = config_->device_shock_ids.find(device_serial);
+                if (shock_it != config_->device_shock_ids.end()) {
+                    for (int i = 0; i < 5; ++i) {
+                        if (shock_it->second[i] && !config_->openshock_device_ids[i].empty()) {
+                            device_ids_to_use.push_back(config_->openshock_device_ids[i]);
+                            device_indices.push_back(i);
+                        }
+                    }
+                }
+                
+                // If no specific shock devices are configured for this device, use master device (0) as fallback
+                if (device_ids_to_use.empty() && !config_->openshock_device_ids[0].empty()) {
+                    device_ids_to_use.push_back(config_->openshock_device_ids[0]);
+                    device_indices.push_back(0);
+                }
+            }
+            
+            if (device_ids_to_use.empty()) {
+                SetError("No shock devices configured");
+                return;
+            }
+
+            // Send individual commands to each device with their specific intensity
+            for (size_t i = 0; i < device_ids_to_use.size(); ++i) {
+                int device_index = device_indices[i];
+                float intensity_normalized;
+                
+                if (is_disobedience) {
+                    // Use individual disobedience intensities if enabled, otherwise use master
+                    if (config_->openshock_use_individual_disobedience_intensities) {
+                        intensity_normalized = config_->openshock_individual_disobedience_intensities[device_index];
+                    } else {
+                        intensity_normalized = config_->openshock_master_disobedience_intensity;
+                    }
+                } else {
+                    // Warning actions - use individual warning intensities if enabled, otherwise use master
+                    // Apply the /2 reduction for warnings as in the original code
+                    if (config_->openshock_use_individual_warning_intensities) {
+                        intensity_normalized = config_->openshock_individual_warning_intensities[device_index] / 2.0f;
+                    } else {
+                        intensity_normalized = config_->openshock_master_warning_intensity / 2.0f;
+                    }
+                }
+                
+                int intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
+                
+                Logger::Info("Sending OpenShock Vibrate to device " + std::to_string(device_index) + 
+                           " (ID: " + device_ids_to_use[i] + ")" +
+                           " (Intensity: " + std::to_string(intensity) + 
+                           ", Duration: " + std::to_string(duration) + "ms" +
+                           ", Reason: " + reason + ")");
+
+                // Send command to individual device
+                std::string response;
+                bool success = SendOpenShockCommand(
+                    config_->openshock_server_url,
+                    config_->openshock_api_token,
+                    device_ids_to_use[i],
+                    1, // 1 = Vibrate
+                    intensity,
+                    duration,
+                    response
+                );
+                
+                if (!success) {
+                    Logger::Error("Failed to send vibrate to device " + std::to_string(device_index) + ": " + response);
+                }
+            }
+
+        } catch (const std::exception& e) {
+            std::string error = "OpenShock individual vibrate action failed: " + std::string(e.what());
+            SetError(error);
+            Logger::Error(error);
+        }
     }
 
     void OpenShockManager::SendSound(int intensity, int duration, const std::string& reason, const std::string& device_serial) {

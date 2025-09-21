@@ -130,6 +130,7 @@ namespace StayPutVR {
         
         // Global locking settings
         bool global_lock_active_ = false;
+        bool emergency_stop_active_ = false;
         float position_threshold_ = 0.2f; // Out of bounds threshold in meters
         float warning_threshold_ = 0.1f;  // Warning threshold in meters
         float disable_threshold_ = 0.8f;  // Disable threshold in meters
@@ -204,6 +205,7 @@ namespace StayPutVR {
         void OnDeviceIncluded(OSCDeviceType device, bool include);
         void TriggerGlobalOutOfBoundsActions();
         void TriggerBiteActions();
+        void ResetEmergencyStop();
         
         // Helper functions
         void UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status);

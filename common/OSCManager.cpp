@@ -197,6 +197,7 @@ void OSCManager::SetConfig(const Config& config) {
     osc_global_unlock_path_ = config.osc_global_unlock_path;
     osc_global_out_of_bounds_path_ = config.osc_global_out_of_bounds_path;
     osc_bite_path_ = config.osc_bite_path;
+    osc_estop_stretch_path_ = config.osc_estop_stretch_path;
     
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Updated OSC paths from config");
@@ -268,13 +269,14 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
             
             if (!args.atEnd()) {
                 bool value_bool = false;
+                float float_value = 0.0f;
                 char tag = args.tag();
                 
                 if (tag == 'f') {
-                    float value = args.float32();
-                    value_bool = value > 0.5f;
+                    float_value = args.float32();
+                    value_bool = float_value > 0.5f;
                     if (Logger::IsInitialized() && should_log) {
-                        Logger::Debug("OSCManager: Received float value: " + std::to_string(value) + 
+                        Logger::Debug("OSCManager: Received float value: " + std::to_string(float_value) + 
                                     " for address: " + address);
                     }
                 }
@@ -337,6 +339,13 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                 // Bite path
                 else if (address == osc_bite_path_ && bite_callback_ && value_bool) {
                     bite_callback_(true);
+                }
+                
+                // Emergency stop stretch path
+                else if (address == osc_estop_stretch_path_ && estop_stretch_callback_ && tag == 'f') {
+                    if (float_value >= 0.5f) {
+                        estop_stretch_callback_(float_value);
+                    }
                 }
                 
                 // Latch_IsPosed paths: direct state change (not toggle)

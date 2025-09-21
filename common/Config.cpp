@@ -40,6 +40,8 @@ Config::Config()
     , osc_global_unlock_path("/avatar/parameters/SPVR_Global_Unlock")
     , osc_global_out_of_bounds_path("/avatar/parameters/SPVR_Global_OutOfBounds")
     , osc_global_out_of_bounds_enabled(true)
+    , osc_estop_stretch_path("/avatar/parameters/SPVR_EStop_Stretch")
+    , osc_estop_stretch_enabled(true)
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
@@ -173,6 +175,8 @@ bool Config::LoadFromFile(const std::string& filename) {
         osc_global_unlock_path = j.value("osc_global_unlock_path", "/avatar/parameters/SPVR_Global_Unlock");
         osc_global_out_of_bounds_path = j.value("osc_global_out_of_bounds_path", "/avatar/parameters/SPVR_Global_OutOfBounds");
         osc_global_out_of_bounds_enabled = j.value("osc_global_out_of_bounds_enabled", true);
+        osc_estop_stretch_path = j.value("osc_estop_stretch_path", "/avatar/parameters/SPVR_EStop_Stretch");
+        osc_estop_stretch_enabled = j.value("osc_estop_stretch_enabled", true);
         osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = j.value("osc_bite_enabled", true);
 
@@ -231,6 +235,31 @@ bool Config::LoadFromFile(const std::string& filename) {
         openshock_disobedience_action = j.value("openshock_disobedience_action", 0);
         openshock_disobedience_intensity = j.value("openshock_disobedience_intensity", 0.5f);
         openshock_disobedience_duration = j.value("openshock_disobedience_duration", 0.5f);
+        
+        // Master intensity settings for OpenShock
+        openshock_use_individual_warning_intensities = j.value("openshock_use_individual_warning_intensities", false);
+        openshock_use_individual_disobedience_intensities = j.value("openshock_use_individual_disobedience_intensities", false);
+        openshock_master_warning_intensity = j.value("openshock_master_warning_intensity", 0.25f);
+        openshock_master_disobedience_intensity = j.value("openshock_master_disobedience_intensity", 0.5f);
+        
+        // Individual device intensities for OpenShock
+        if (j.contains("openshock_individual_warning_intensities") && j["openshock_individual_warning_intensities"].is_array()) {
+            auto warning_intensities = j["openshock_individual_warning_intensities"];
+            for (size_t i = 0; i < min(warning_intensities.size(), static_cast<size_t>(5)); ++i) {
+                if (warning_intensities[i].is_number()) {
+                    openshock_individual_warning_intensities[i] = warning_intensities[i];
+                }
+            }
+        }
+        
+        if (j.contains("openshock_individual_disobedience_intensities") && j["openshock_individual_disobedience_intensities"].is_array()) {
+            auto disobedience_intensities = j["openshock_individual_disobedience_intensities"];
+            for (size_t i = 0; i < min(disobedience_intensities.size(), static_cast<size_t>(5)); ++i) {
+                if (disobedience_intensities[i].is_number()) {
+                    openshock_individual_disobedience_intensities[i] = disobedience_intensities[i];
+                }
+            }
+        }
 
         // Twitch Integration Settings
         twitch_enabled = j.value("twitch_enabled", false);
@@ -445,6 +474,8 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_global_unlock_path"] = osc_global_unlock_path;
         j["osc_global_out_of_bounds_path"] = osc_global_out_of_bounds_path;
         j["osc_global_out_of_bounds_enabled"] = osc_global_out_of_bounds_enabled;
+        j["osc_estop_stretch_path"] = osc_estop_stretch_path;
+        j["osc_estop_stretch_enabled"] = osc_estop_stretch_enabled;
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;
 
@@ -497,6 +528,25 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["openshock_disobedience_action"] = openshock_disobedience_action;
         j["openshock_disobedience_intensity"] = openshock_disobedience_intensity;
         j["openshock_disobedience_duration"] = openshock_disobedience_duration;
+        
+        // Master intensity settings for OpenShock
+        j["openshock_use_individual_warning_intensities"] = openshock_use_individual_warning_intensities;
+        j["openshock_use_individual_disobedience_intensities"] = openshock_use_individual_disobedience_intensities;
+        j["openshock_master_warning_intensity"] = openshock_master_warning_intensity;
+        j["openshock_master_disobedience_intensity"] = openshock_master_disobedience_intensity;
+        
+        // Individual device intensities for OpenShock
+        nlohmann::json warning_intensities_json = nlohmann::json::array();
+        for (const auto& intensity : openshock_individual_warning_intensities) {
+            warning_intensities_json.push_back(intensity);
+        }
+        j["openshock_individual_warning_intensities"] = warning_intensities_json;
+        
+        nlohmann::json disobedience_intensities_json = nlohmann::json::array();
+        for (const auto& intensity : openshock_individual_disobedience_intensities) {
+            disobedience_intensities_json.push_back(intensity);
+        }
+        j["openshock_individual_disobedience_intensities"] = disobedience_intensities_json;
 
         // Twitch Integration Settings
         j["twitch_enabled"] = twitch_enabled;

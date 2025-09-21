@@ -217,6 +217,34 @@ namespace StayPutVR {
                     }
                 );
                 
+                OSCManager::GetInstance().SetEStopStretchCallback(
+                    [this](float stretch_value) {
+                        if (!config_.osc_estop_stretch_enabled) {
+                            return;
+                        }
+                        if (Logger::IsInitialized()) {
+                            Logger::Info("Emergency stop stretch triggered via OSC with value: " + std::to_string(stretch_value) + " - entering emergency stop mode");
+                        }
+                        
+                        // Enter emergency stop mode
+                        emergency_stop_active_ = true;
+                        
+                        // Unlock all devices immediately
+                        ActivateGlobalLock(false);
+                        
+                        // Also unlock any individually locked devices
+                        for (auto& device : device_positions_) {
+                            if (device.locked) {
+                                LockDevicePosition(device.serial, false);
+                            }
+                        }
+                        
+                        if (Logger::IsInitialized()) {
+                            Logger::Warning("EMERGENCY STOP MODE ACTIVE - All actions disabled until reset");
+                        }
+                    }
+                );
+                
                 if (Logger::IsInitialized()) {
                     Logger::Info("UIManager: OSC auto-connection successful, callbacks registered");
                 }
@@ -582,6 +610,14 @@ namespace StayPutVR {
     }
     
     void UIManager::LockDevicePosition(const std::string& serial, bool lock) {
+        // Prevent locking during emergency stop mode (but allow unlocking)
+        if (emergency_stop_active_ && lock) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("Cannot lock device " + serial + " - emergency stop mode is active");
+            }
+            return;
+        }
+        
         auto it = device_map_.find(serial);
         if (it != device_map_.end()) {
             size_t index = it->second;
@@ -651,6 +687,14 @@ namespace StayPutVR {
     
     // Internal method to actually handle the lock activation
     void UIManager::ActivateGlobalLockInternal(bool activate) {
+        // Prevent locking during emergency stop mode (but allow unlocking)
+        if (emergency_stop_active_ && activate) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("Cannot activate global lock - emergency stop mode is active");
+            }
+            return;
+        }
+        
         global_lock_active_ = activate;
         
         // If activating, store current positions as original for all included devices
@@ -706,6 +750,11 @@ namespace StayPutVR {
     }
     
     void UIManager::CheckDevicePositionDeviations() {
+        // Skip all position checking and actions if in emergency stop mode
+        if (emergency_stop_active_) {
+            return;
+        }
+        
         bool warning_triggered = false;
         bool out_of_bounds_triggered = false;
         bool success_triggered = false;
@@ -1273,6 +1322,30 @@ namespace StayPutVR {
         }
         
         ImGui::EndChild();
+        
+        // Emergency Stop Status Panel
+        if (emergency_stop_active_) {
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.8f, 0.2f, 0.2f, 0.3f)); // Red background
+            ImGui::BeginChild("EmergencyStopPanel", ImVec2(0, 80), true);
+            
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f)); // Red text
+            ImGui::Text("⚠️ EMERGENCY STOP MODE ACTIVE ⚠️");
+            ImGui::PopStyleColor();
+            
+            ImGui::Text("All locking and disobedience actions are disabled.");
+            ImGui::Text("All devices have been unlocked and cannot be re-locked.");
+            
+            ImGui::Spacing();
+            
+            if (ImGui::Button("Reset Emergency Stop", ImVec2(200, 30))) {
+                ResetEmergencyStop();
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("Click to resume normal operation");
+            
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
         
         // Layout with two columns
         ImGui::Columns(2, "MainTabColumns", false);
@@ -2110,6 +2183,34 @@ namespace StayPutVR {
             changed = true;
         }
         
+        ImGui::Separator();
+        ImGui::Text("Emergency Stop Stretch");
+        ImGui::TextWrapped("Enable emergency unlock when receiving the SPVR_EStop_Stretch parameter from VRChat with a value >= 0.5.");
+        
+        bool estop_stretch_enabled = config_.osc_estop_stretch_enabled;
+        if (ImGui::Checkbox("Enable Emergency Stop Stretch", &estop_stretch_enabled)) {
+            config_.osc_estop_stretch_enabled = estop_stretch_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("When enabled, receiving the /avatar/parameters/SPVR_EStop_Stretch parameter with value >= 0.5 will immediately unlock all devices (emergency stop)");
+            ImGui::EndTooltip();
+        }
+        
+        // Emergency stop stretch path input
+        static char estop_stretch_path[128];
+        if (strlen(estop_stretch_path) == 0) {
+            strcpy_s(estop_stretch_path, sizeof(estop_stretch_path), config_.osc_estop_stretch_path.c_str());
+        }
+        if (ImGui::InputText("Emergency Stop Stretch Path", estop_stretch_path, IM_ARRAYSIZE(estop_stretch_path))) {
+            config_.osc_estop_stretch_path = estop_stretch_path;
+            changed = true;
+        }
+        
         // Chaining mode
         ImGui::Text("Chaining Mode");
         ImGui::Separator();
@@ -2504,7 +2605,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.0.3");
+        ImGui::Text("Version: 1.1.0");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
@@ -2701,22 +2802,19 @@ namespace StayPutVR {
         ImGui::Text("Connected Devices: %zu", device_positions_.size());
         ImGui::Separator();
         
-        if (ImGui::BeginTable("DevicesTable", 9, ImGuiTableFlags_Borders)) {
-            ImGui::TableSetupColumn("Device Type");
-            ImGui::TableSetupColumn("Serial");
-            ImGui::TableSetupColumn("Custom Name");
+        if (ImGui::BeginTable("DevicesTable", 6, ImGuiTableFlags_Borders)) {
+            ImGui::TableSetupColumn("Device Info");
             ImGui::TableSetupColumn("Role");
             ImGui::TableSetupColumn("Position & Rotation");
             ImGui::TableSetupColumn("Status");
-            ImGui::TableSetupColumn("Will/Won't Lock");
-            ImGui::TableSetupColumn("Lock/Unlock");
+            ImGui::TableSetupColumn("Lock Controls");
             ImGui::TableSetupColumn("Shock Devices");
             ImGui::TableHeadersRow();
             
             for (auto& device : device_positions_) {
                 ImGui::TableNextRow();
                 
-                // Device Type
+                // Device Info (Type + Serial combined)
                 ImGui::TableNextColumn();
                 const char* type_str = "Unknown";
                 switch (device.type) {
@@ -2726,36 +2824,7 @@ namespace StayPutVR {
                     case DeviceType::TRACKING_REFERENCE: type_str = "Base Station"; break;
                 }
                 ImGui::Text("%s", type_str);
-                
-                // Serial
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", device.serial.c_str());
-                
-                // Custom Name
-                ImGui::TableNextColumn();
-                
-                // Create a unique ID for input
-                ImGui::PushID(("deviceName" + device.serial).c_str());
-                
-                // Create a buffer for the device name
-                char name_buffer[64] = "";
-                if (!device.device_name.empty()) {
-                    strcpy_s(name_buffer, sizeof(name_buffer), device.device_name.c_str());
-                }
-                
-                // Input field for the device name
-                if (ImGui::InputText("##DeviceName", name_buffer, sizeof(name_buffer))) {
-                    device.device_name = name_buffer;
-                    config_.device_names[device.serial] = name_buffer;
-                    
-                    // Save config immediately when a device name changes
-                    if (StayPutVR::Logger::IsInitialized()) {
-                        StayPutVR::Logger::Info("Device name changed: " + device.serial + " -> " + name_buffer);
-                    }
-                    SaveConfig();
-                }
-                
-                ImGui::PopID();
+                ImGui::Text("Serial: %s", device.serial.c_str());
                 
                 // Device Role Dropdown
                 ImGui::TableNextColumn();
@@ -2959,18 +3028,18 @@ namespace StayPutVR {
                     }
                 }
                 
-                // Will/Won't Lock column
+                // Lock Controls column (combined include and lock/unlock)
                 ImGui::TableNextColumn();
-                ImGui::PushID(("includeInLocking" + device.serial).c_str());
+                ImGui::PushID(("lockControls" + device.serial).c_str());
                 
-                // Replace checkbox with a toggleable button
+                // Include in locking toggle button
                 if (device.include_in_locking) {
                     // Green "Will Lock" button
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.9f, 0.3f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.7f, 0.1f, 1.0f));
                     
-                    if (ImGui::Button("Will Lock", ImVec2(120, 30))) {
+                    if (ImGui::Button("Will Lock", ImVec2(80, 25))) {
                         device.include_in_locking = false;
                         
                         // Update the setting in config directly
@@ -2990,7 +3059,7 @@ namespace StayPutVR {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
                     
-                    if (ImGui::Button("Won't Lock", ImVec2(120, 30))) {
+                    if (ImGui::Button("Won't Lock", ImVec2(80, 25))) {
                         device.include_in_locking = true;
                         
                         // Update the setting in config directly
@@ -3006,11 +3075,8 @@ namespace StayPutVR {
                     ImGui::PopStyleColor(3);
                 }
                 
-                ImGui::PopID();
-                
-                // Lock/Unlock column - NEW ADDITION
-                ImGui::TableNextColumn();
-                ImGui::PushID(("individualLock" + device.serial).c_str());
+                // Individual lock/unlock button on the same line
+                ImGui::SameLine();
                 
                 if (device.locked) {
                     // Orange "Unlock" button
@@ -3018,7 +3084,7 @@ namespace StayPutVR {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.6f, 0.1f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.9f, 0.4f, 0.0f, 1.0f));
                     
-                    if (ImGui::Button("Unlock", ImVec2(120, 30))) {
+                    if (ImGui::Button("Unlock", ImVec2(60, 25))) {
                         // Individual device unlocking
                         LockDevicePosition(device.serial, false);
                         
@@ -3039,7 +3105,7 @@ namespace StayPutVR {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f, 0.6f, 1.0f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.0f, 0.4f, 0.9f, 1.0f));
                     
-                    if (ImGui::Button("Lock", ImVec2(120, 30))) {
+                    if (ImGui::Button("Lock", ImVec2(60, 25))) {
                         // Individual device locking
                         LockDevicePosition(device.serial, true);
                         
@@ -3567,6 +3633,34 @@ namespace StayPutVR {
                     Logger::Info("Bite triggered via OSC");
                 }
                 TriggerBiteActions();
+            }
+        );
+        
+        OSCManager::GetInstance().SetEStopStretchCallback(
+            [this](float stretch_value) {
+                if (!config_.osc_estop_stretch_enabled) {
+                    return;
+                }
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Emergency stop stretch triggered via OSC with value: " + std::to_string(stretch_value) + " - entering emergency stop mode");
+                }
+                
+                // Enter emergency stop mode
+                emergency_stop_active_ = true;
+                
+                // Unlock all devices immediately
+                ActivateGlobalLock(false);
+                
+                // Also unlock any individually locked devices
+                for (auto& device : device_positions_) {
+                    if (device.locked) {
+                        LockDevicePosition(device.serial, false);
+                    }
+                }
+                
+                if (Logger::IsInitialized()) {
+                    Logger::Warning("EMERGENCY STOP MODE ACTIVE - All actions disabled until reset");
+                }
             }
         );
         
@@ -4489,6 +4583,18 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::ResetEmergencyStop() {
+        if (!emergency_stop_active_) {
+            return;
+        }
+        
+        emergency_stop_active_ = false;
+        
+        if (Logger::IsInitialized()) {
+            Logger::Info("Emergency stop mode reset - normal operation resumed");
+        }
+    }
+
     void UIManager::ProcessGlobalOutOfBoundsTimer() {
         if (!global_out_of_bounds_timer_active_) {
             return;
@@ -4769,10 +4875,10 @@ namespace StayPutVR {
             SaveConfig();
         }
         
-        // Warning Intensity and Duration sliders
-        float warning_intensity = config_.openshock_warning_intensity;
-        if (ImGui::SliderFloat("Warning Intensity", &warning_intensity, 0.0f, 1.0f, "%.2f")) {
-            config_.openshock_warning_intensity = warning_intensity;
+        // Warning Intensity Settings
+        bool use_individual_warning = config_.openshock_use_individual_warning_intensities;
+        if (ImGui::Checkbox("Use Individual Device Warning Intensities", &use_individual_warning)) {
+            config_.openshock_use_individual_warning_intensities = use_individual_warning;
             SaveConfig();
         }
         
@@ -4780,8 +4886,47 @@ namespace StayPutVR {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Intensity level for warning zone actions (0.0 = minimum, 1.0 = maximum)");
+            ImGui::TextUnformatted("Enable to set different warning intensity levels for each OpenShock device. When disabled, all devices use the master warning intensity.");
             ImGui::EndTooltip();
+        }
+        
+        if (!use_individual_warning) {
+            // Master warning intensity slider
+            float master_warning_intensity = config_.openshock_master_warning_intensity;
+            if (ImGui::SliderFloat("Warning Intensity", &master_warning_intensity, 0.0f, 1.0f, "%.2f")) {
+                config_.openshock_master_warning_intensity = master_warning_intensity;
+                SaveConfig();
+            }
+            
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Master intensity level for warning zone actions (applies to all devices)");
+                ImGui::EndTooltip();
+            }
+        } else {
+            // Individual device warning intensity sliders
+            ImGui::Text("Individual Device Warning Intensities:");
+            ImGui::Indent();
+            
+            for (int i = 0; i < 5; ++i) {
+                if (!config_.openshock_device_ids[i].empty()) {
+                    ImGui::PushID(i);
+                    
+                    std::string warning_label = "Device " + std::to_string(i) + " Warning Intensity";
+                    float individual_warning_intensity = config_.openshock_individual_warning_intensities[i];
+                    
+                    if (ImGui::SliderFloat(warning_label.c_str(), &individual_warning_intensity, 0.0f, 1.0f, "%.2f")) {
+                        config_.openshock_individual_warning_intensities[i] = individual_warning_intensity;
+                        SaveConfig();
+                    }
+                    
+                    ImGui::PopID();
+                }
+            }
+            
+            ImGui::Unindent();
         }
         
         float warning_duration = config_.openshock_warning_duration;
@@ -4822,10 +4967,10 @@ namespace StayPutVR {
             SaveConfig();
         }
         
-        // Intensity and Duration sliders
-        float disobedience_intensity = config_.openshock_disobedience_intensity;
-        if (ImGui::SliderFloat("Disobedience Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-            config_.openshock_disobedience_intensity = disobedience_intensity;
+        // Disobedience Intensity Settings
+        bool use_individual_disobedience = config_.openshock_use_individual_disobedience_intensities;
+        if (ImGui::Checkbox("Use Individual Device Disobedience Intensities", &use_individual_disobedience)) {
+            config_.openshock_use_individual_disobedience_intensities = use_individual_disobedience;
             SaveConfig();
         }
         
@@ -4833,10 +4978,49 @@ namespace StayPutVR {
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Intensity level for disobedience actions (0.0 = minimum, 1.0 = maximum)");
+            ImGui::TextUnformatted("Enable to set different disobedience intensity levels for each OpenShock device. When disabled, all devices use the master disobedience intensity.");
             ImGui::EndTooltip();
         }
         
+        if (!use_individual_disobedience) {
+            // Master disobedience intensity slider
+            float master_disobedience_intensity = config_.openshock_master_disobedience_intensity;
+            if (ImGui::SliderFloat("Disobedience Intensity", &master_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                config_.openshock_master_disobedience_intensity = master_disobedience_intensity;
+                SaveConfig();
+            }
+            
+            ImGui::SameLine();
+            ImGui::TextDisabled("(?)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::BeginTooltip();
+                ImGui::TextUnformatted("Master intensity level for disobedience actions (applies to all devices)");
+                ImGui::EndTooltip();
+            }
+        } else {
+            // Individual device disobedience intensity sliders
+            ImGui::Text("Individual Device Disobedience Intensities:");
+            ImGui::Indent();
+            
+            for (int i = 0; i < 5; ++i) {
+                if (!config_.openshock_device_ids[i].empty()) {
+                    ImGui::PushID(i + 100); // Different ID range to avoid conflicts
+                    
+                    std::string disobedience_label = "Device " + std::to_string(i) + " Disobedience Intensity";
+                    float individual_disobedience_intensity = config_.openshock_individual_disobedience_intensities[i];
+                    
+                    if (ImGui::SliderFloat(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                        config_.openshock_individual_disobedience_intensities[i] = individual_disobedience_intensity;
+                        SaveConfig();
+                    }
+                    
+                    ImGui::PopID();
+                }
+            }
+            
+            ImGui::Unindent();
+        }
+
         float disobedience_duration = config_.openshock_disobedience_duration;
         if (ImGui::SliderFloat("Disobedience Duration", &disobedience_duration, 0.0f, 1.0f, "%.2f")) {
             config_.openshock_disobedience_duration = disobedience_duration;

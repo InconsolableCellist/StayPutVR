@@ -54,6 +54,10 @@ namespace StayPutVR {
         void SendVibrate(int intensity, int duration, const std::string& reason = "", const std::string& device_serial = "");
         void SendShock(int intensity, int duration, const std::string& reason = "", const std::string& device_serial = "");
         
+        // Individual action methods with per-device intensity support
+        void SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience);
+        void SendVibrateWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience);
+        
         // Utility functions
         std::string GetConnectionStatus() const;
         std::string GetLastError() const { return last_error_; }
@@ -77,7 +81,7 @@ namespace StayPutVR {
         // Rate limiting
         mutable std::chrono::steady_clock::time_point last_action_time_;
         mutable std::mutex rate_limit_mutex_;
-        static constexpr int RATE_LIMIT_SECONDS = 2;
+        static constexpr int RATE_LIMIT_SECONDS = 1;
         
         // Error handling
         std::string last_error_;

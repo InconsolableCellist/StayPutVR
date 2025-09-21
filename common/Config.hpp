@@ -59,6 +59,10 @@ public:
     std::string osc_global_out_of_bounds_path = "/avatar/parameters/SPVR_Global_OutOfBounds";
     bool osc_global_out_of_bounds_enabled = true;
     
+    // Emergency stop stretch path and setting
+    std::string osc_estop_stretch_path = "/avatar/parameters/SPVR_EStop_Stretch";
+    bool osc_estop_stretch_enabled = true;
+    
     // PiShock Settings via VRCOSC
     bool pishock_enabled = false;
     int pishock_group = 0;
@@ -101,6 +105,16 @@ public:
     int openshock_disobedience_action = 0; // 0=none, 1=shock, 2=vibrate
     float openshock_disobedience_intensity = 0.1f;
     float openshock_disobedience_duration = 0.05f;
+    
+    // Master intensity settings for OpenShock
+    bool openshock_use_individual_warning_intensities = false; // false = use master, true = use individual for warning
+    bool openshock_use_individual_disobedience_intensities = false; // false = use master, true = use individual for disobedience
+    float openshock_master_warning_intensity = 0.25f;
+    float openshock_master_disobedience_intensity = 0.5f;
+    
+    // Individual device intensities for OpenShock (warning and disobedience for each of 5 devices)
+    std::array<float, 5> openshock_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+    std::array<float, 5> openshock_individual_disobedience_intensities = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
 
     // Twitch Integration Settings
     bool twitch_enabled = false;

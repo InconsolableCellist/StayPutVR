@@ -51,18 +51,19 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 
 ## ✨ Features
 
-- 🔐 Position locking for any and all VR tracked devices you select
-- 🎯 Configurable boundary radii:
-  - ✅ **Safe zone**: You're complying beautifully.
-  - ⚠️ **Warning zone**: You're straying too far--watch out!
-  - ❌ **Non-Compliance zone**: Now you've done it.
-  - 🛑 **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
-- 📡 Integration with VRChat, PiShock, OpenShock, and Twitch (experimental)
-- 🦷 Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
-- 🔊 Audio cues for warnings and boundary violations
-- ⏱️ Configurable timers for automatic unlocking
-- 💬 Twitch chat bot with real-time command processing
-- ⚡ **High Performance**: Optimized for ultra-low latency VR with sub-millisecond frame times
+- Position locking for any and all VR tracked devices you select
+- Configurable boundary radii:
+  - **Safe zone**: You're complying beautifully.
+  - **Warning zone**: You're straying too far--watch out!
+  - **Non-Compliance zone**: Now you've done it.
+  - **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
+- Integration with VRChat, PiShock, OpenShock, and Twitch (experimental)
+- Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
+- Audio cues for warnings and boundary violations
+- Configurable timers for automatic unlocking
+- Twitch chat bot with real-time command processing
+- Multi-shocker support (OpenShock)
+- Emergency stop mode (OSC message)
 
 ## 📚 Documentation
 
@@ -91,18 +92,21 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
-**1.0.3** - OpenShock Support (Beta)
+**1.1.0** - Multi-shocker support (9/13/2025)
+- Adds support for multiple shockers using OpenShock
+
+**1.0.3** - OpenShock Support (Beta) (8/25/2025)
 - **OpenShock Integration**: OpenShock support equivalent to PiShock
 - Fixed a bug where the default OSC receive port was 9005 instead of 9001 (VRChat default)
 
-**1.0.2** - BiteTech support
+**1.0.2** - BiteTech support (8/24/2025)
 - **BiteTech Support**: Added support for BiteTech devices, including bite detection and disobedience actions.
 
-**1.0.1** - Performance & Stability Release
+**1.0.1** - Performance & Stability Release (8/23/2025)
 - **VR Performance Improvements**: Eliminated potential blocking operations in VR driver main loop
 - **SteamVR Crash Fix**: Resolved `VRApplicationError_IPCFailed` crashes caused by IPC timeouts (after headset reconnects)
 
-1.0.0 - Initial release
+1.0.0 - Initial release (8/8/2025)
 
 ## ⚖️ License
 
