@@ -78,14 +78,14 @@ public:
     bool pishock_warning_shock = false;
     bool pishock_warning_vibrate = false;
     float pishock_warning_intensity = 0.25f;
-    float pishock_warning_duration = 0.25f;
+    float pishock_warning_duration = 1.0f;
     
     // Disobedience (Out of Bounds) PiShock Settings
     bool pishock_disobedience_beep = false;
     bool pishock_disobedience_shock = false;
     bool pishock_disobedience_vibrate = false;
     float pishock_disobedience_intensity = 0.5f;
-    float pishock_disobedience_duration = 0.5f;
+    float pishock_disobedience_duration = 1.0f; 
 
     // OpenShock Settings
     bool openshock_enabled = false;

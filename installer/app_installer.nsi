@@ -295,8 +295,8 @@ Section "Install"
     SetOutPath "$SteamVRPath\drivers\stayputvr"
     File "driver.vrdrivermanifest"
     
-    ; Driver is installed inside SteamVR\drivers\ so it will be auto-discovered
-    ; No need to register with vrpathreg
+    ; Register driver with SteamVR using vrpathreg from SteamVR's bin\win64 directory
+    ExecWait '"$SteamVRPath\bin\win64\vrpathreg.exe" adddriver "$SteamVRPath\drivers\stayputvr"'
     
     ; Create shortcuts
     CreateDirectory "$SMPROGRAMS\StayPutVR"
@@ -333,7 +333,8 @@ Section "Uninstall"
         StrCpy $SteamVRPath $1
     ${EndIf}
     
-    ; Driver was not registered with vrpathreg, no need to unregister
+    ; Unregister driver from SteamVR using vrpathreg from SteamVR's bin\win64 directory
+    ExecWait '"$SteamVRPath\bin\win64\vrpathreg.exe" removedriver "$SteamVRPath\drivers\stayputvr"'
     
     ; Remove driver files
     RMDir /r "$SteamVRPath\drivers\stayputvr"

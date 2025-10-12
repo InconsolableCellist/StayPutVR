@@ -190,8 +190,8 @@ namespace StayPutVR {
         return (std::max)(1, (std::min)(100, static_cast<int>(normalized_intensity * 100.0f)));
     }
 
-    int PiShockManager::ConvertDurationToAPI(float normalized_duration) {
-        return (std::max)(1, (std::min)(15, static_cast<int>(normalized_duration * 15.0f)));
+    int PiShockManager::ConvertDurationToAPI(float duration_seconds) {
+        return (std::max)(1, (std::min)(15, static_cast<int>(std::round(duration_seconds))));
     }
 
     void PiShockManager::SetError(const std::string& error) {

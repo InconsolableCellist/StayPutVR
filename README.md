@@ -95,6 +95,10 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
+**1.1.1** - Bug fixes (10/12/2025)
+- Fixed bug where StayPutVR driver wouldn't load when launching SteamVR via Steam Link
+- Fixed bug where PiShock warning and disobedience durations were show as 0.0-1.0 units instead of 1.0-15.0 seconds.
+
 **1.1.0** - Multi-shocker support (9/21/2025)
 - Adds support for multiple shockers using OpenShock
 - Adds emergency stop mode (OSC message)

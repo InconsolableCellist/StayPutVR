@@ -52,12 +52,12 @@ Config::Config()
     , pishock_warning_shock(false)
     , pishock_warning_vibrate(false)
     , pishock_warning_intensity(0.25f)
-    , pishock_warning_duration(0.25f)
+    , pishock_warning_duration(1.0f) 
     , pishock_disobedience_beep(false)
     , pishock_disobedience_shock(false)
     , pishock_disobedience_vibrate(false)
     , pishock_disobedience_intensity(0.5f)
-    , pishock_disobedience_duration(0.5f)
+    , pishock_disobedience_duration(1.0f) 
     , warning_threshold(0.1f)
     , bounds_threshold(0.2f)
     , disable_threshold(0.5f)
@@ -195,14 +195,22 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_warning_shock = j.value("pishock_warning_shock", false);
         pishock_warning_vibrate = j.value("pishock_warning_vibrate", false);
         pishock_warning_intensity = j.value("pishock_warning_intensity", 0.25f);
-        pishock_warning_duration = j.value("pishock_warning_duration", 0.25f);
+        pishock_warning_duration = j.value("pishock_warning_duration", 1.0f);
+        // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
+        if (pishock_warning_duration >= 0.0f && pishock_warning_duration <= 1.0f) {
+            pishock_warning_duration = (std::max)(1.0f, pishock_warning_duration * 15.0f);
+        }
         
         // Disobedience (Out of Bounds) PiShock Settings
         pishock_disobedience_beep = j.value("pishock_disobedience_beep", false);
         pishock_disobedience_shock = j.value("pishock_disobedience_shock", false);
         pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
         pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.5f);
-        pishock_disobedience_duration = j.value("pishock_disobedience_duration", 0.5f);
+        pishock_disobedience_duration = j.value("pishock_disobedience_duration", 1.0f);
+        // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
+        if (pishock_disobedience_duration >= 0.0f && pishock_disobedience_duration <= 1.0f) {
+            pishock_disobedience_duration = (std::max)(1.0f, pishock_disobedience_duration * 15.0f);
+        }
 
         // OpenShock Settings
         openshock_enabled = j.value("openshock_enabled", false);

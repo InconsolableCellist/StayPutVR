@@ -3517,7 +3517,9 @@ namespace StayPutVR {
         }
         
         float disobedience_duration = config_.pishock_disobedience_duration;
-        if (ImGui::SliderFloat("Out of Bounds Duration", &disobedience_duration, 0.0f, 1.0f, "%.2f")) {
+        if (ImGui::SliderFloat("Out of Bounds Duration", &disobedience_duration, 1.0f, 15.0f, "%.2f seconds")) {
+            // Clamp to valid range
+            disobedience_duration = (std::max)(1.0f, (std::min)(15.0f, disobedience_duration));
             config_.pishock_disobedience_duration = disobedience_duration;
             SaveConfig();
         }

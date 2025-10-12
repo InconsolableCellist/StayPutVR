@@ -64,7 +64,7 @@ namespace StayPutVR {
         
         // Configuration helpers
         static int ConvertIntensityToAPI(float normalized_intensity); // 0.0-1.0 -> 1-100
-        static int ConvertDurationToAPI(float normalized_duration);   // 0.0-1.0 -> 1-15
+        static int ConvertDurationToAPI(float duration_seconds);      // 1.0-15.0 seconds -> 1-15 integer
         
     private:
         // Configuration
