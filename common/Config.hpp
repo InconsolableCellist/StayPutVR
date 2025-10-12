@@ -173,6 +173,10 @@ public:
     float cooldown_seconds;
     bool countdown_enabled;
     float countdown_seconds;
+    
+    // Shock Cooldown Timer Settings
+    bool shock_cooldown_enabled = false;
+    float shock_cooldown_seconds = 10.0f;
 
     // Notification Settings
     bool audio_enabled;

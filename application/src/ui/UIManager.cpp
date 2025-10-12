@@ -1884,6 +1884,39 @@ namespace StayPutVR {
         
         ImGui::EndDisabled();
         
+        ImGui::Spacing();
+        ImGui::Separator();
+        
+        // Shock Cooldown Timer
+        ImGui::Text("Shock Cooldown Timer");
+        ImGui::Separator();
+        
+        bool shock_cooldown_enabled = config_.shock_cooldown_enabled;
+        if (ImGui::Checkbox("Enable Shock Cooldown", &shock_cooldown_enabled)) {
+            config_.shock_cooldown_enabled = shock_cooldown_enabled;
+            changed = true;
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Prevents shocks from being sent within the cooldown window for both PiShock and OpenShock");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::BeginDisabled(!config_.shock_cooldown_enabled);
+        
+        float shock_cooldown_seconds = config_.shock_cooldown_seconds;
+        if (ImGui::SliderFloat("Shock Cooldown Duration", &shock_cooldown_seconds, 1.0f, 60.0f, "%.0f seconds")) {
+            config_.shock_cooldown_seconds = shock_cooldown_seconds;
+            changed = true;
+        }
+        
+        ImGui::Text("Shocks will be blocked if sent within %.0f seconds of the last shock.", config_.shock_cooldown_seconds);
+        
+        ImGui::EndDisabled();
+        
         // Save changes if anything was modified
         if (changed) {
             SaveConfig();

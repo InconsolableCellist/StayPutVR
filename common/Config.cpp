@@ -65,6 +65,8 @@ Config::Config()
     , cooldown_seconds(5.0f)
     , countdown_enabled(false)
     , countdown_seconds(3.0f)
+    , shock_cooldown_enabled(false)
+    , shock_cooldown_seconds(5.0f)
     , audio_enabled(true)
     , audio_volume(0.8f)
     , warning_audio(true)
@@ -329,6 +331,8 @@ bool Config::LoadFromFile(const std::string& filename) {
         cooldown_seconds = j.value("cooldown_seconds", 5.0f);
         countdown_enabled = j.value("countdown_enabled", false);
         countdown_seconds = j.value("countdown_seconds", 3.0f);
+        shock_cooldown_enabled = j.value("shock_cooldown_enabled", false);
+        shock_cooldown_seconds = j.value("shock_cooldown_seconds", 5.0f);
         
         // Load notification settings
         audio_enabled = j.value("audio_enabled", true);
@@ -616,6 +620,8 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["cooldown_seconds"] = cooldown_seconds;
         j["countdown_enabled"] = countdown_enabled;
         j["countdown_seconds"] = countdown_seconds;
+        j["shock_cooldown_enabled"] = shock_cooldown_enabled;
+        j["shock_cooldown_seconds"] = shock_cooldown_seconds;
         
         // Notification settings
         j["audio_enabled"] = audio_enabled;

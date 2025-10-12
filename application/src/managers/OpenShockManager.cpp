@@ -10,6 +10,7 @@ namespace StayPutVR {
         , enabled_(false)
         , user_agreement_(false)
         , last_action_time_(std::chrono::steady_clock::now())
+        , last_shock_time_(std::chrono::steady_clock::now())
         , last_error_("")
         , action_callback_(nullptr)
     {
@@ -157,6 +158,18 @@ namespace StayPutVR {
 
         if (!CheckRateLimit()) {
             SetError("Rate limit exceeded");
+            return;
+        }
+
+        // Check shock cooldown
+        if (!CheckShockCooldown()) {
+            std::string cooldown_msg = "Shock cooldown active (waiting " + 
+                                      std::to_string((int)config_->shock_cooldown_seconds) + "s between shocks)";
+            Logger::Info(cooldown_msg);
+            SetError(cooldown_msg);
+            if (action_callback_) {
+                action_callback_("Shock", false, cooldown_msg);
+            }
             return;
         }
 
@@ -380,6 +393,18 @@ namespace StayPutVR {
             return;
         }
 
+        // Check shock cooldown
+        if (!CheckShockCooldown()) {
+            std::string cooldown_msg = "Shock cooldown active (waiting " + 
+                                      std::to_string((int)config_->shock_cooldown_seconds) + "s between shocks)";
+            Logger::Info(cooldown_msg);
+            SetError(cooldown_msg);
+            if (action_callback_) {
+                action_callback_("Shock", false, cooldown_msg);
+            }
+            return;
+        }
+
         OpenShockActionData action;
         action.type = OpenShockActionType::SHOCK;
         action.intensity = intensity;
@@ -436,6 +461,27 @@ namespace StayPutVR {
     void OpenShockManager::UpdateRateLimit() {
         std::lock_guard<std::mutex> lock(rate_limit_mutex_);
         last_action_time_ = std::chrono::steady_clock::now();
+    }
+
+    bool OpenShockManager::CheckShockCooldown() {
+        if (!config_ || !config_->shock_cooldown_enabled) {
+            return true; // Cooldown disabled, allow shock
+        }
+        
+        std::lock_guard<std::mutex> lock(shock_cooldown_mutex_);
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_shock_time_);
+        
+        if (elapsed.count() >= config_->shock_cooldown_seconds) {
+            last_shock_time_ = now;
+            return true;
+        }
+        return false;
+    }
+
+    void OpenShockManager::UpdateShockCooldown() {
+        std::lock_guard<std::mutex> lock(shock_cooldown_mutex_);
+        last_shock_time_ = std::chrono::steady_clock::now();
     }
 
     void OpenShockManager::ExecuteAction(const OpenShockActionData& action) {
