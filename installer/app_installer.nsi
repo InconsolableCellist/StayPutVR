@@ -9,7 +9,7 @@
 
 ; Define installer name and output file
 Name "StayPutVR"
-OutFile "StayPutVR v1.1.0 Setup.exe"
+OutFile "StayPutVR v1.1.1 Setup.exe"
 
 ; Default installation directory
 InstallDir "$PROGRAMFILES\StayPutVR"
@@ -295,8 +295,8 @@ Section "Install"
     SetOutPath "$SteamVRPath\drivers\stayputvr"
     File "driver.vrdrivermanifest"
     
-    ; Register driver with SteamVR using vrpathreg from SteamVR's bin\win64 directory
-    ExecWait '"$SteamVRPath\bin\win64\vrpathreg.exe" adddriver "$SteamVRPath\drivers\stayputvr"'
+    ; Driver is installed inside SteamVR\drivers\ so it will be auto-discovered
+    ; No need to register with vrpathreg
     
     ; Create shortcuts
     CreateDirectory "$SMPROGRAMS\StayPutVR"
@@ -315,7 +315,7 @@ Section "Install"
     WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\bin\stayputvr_app.exe,0"
     WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "StayPutVR Team"
-    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.1.0"
+    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.1.1"
     
     ; Get size of installation directory
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
@@ -333,8 +333,7 @@ Section "Uninstall"
         StrCpy $SteamVRPath $1
     ${EndIf}
     
-    ; Unregister driver from SteamVR using vrpathreg from SteamVR's bin\win64 directory
-    ExecWait '"$SteamVRPath\bin\win64\vrpathreg.exe" removedriver "$SteamVRPath\drivers\stayputvr"'
+    ; Driver was not registered with vrpathreg, no need to unregister
     
     ; Remove driver files
     RMDir /r "$SteamVRPath\drivers\stayputvr"

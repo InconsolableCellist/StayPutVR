@@ -1,5 +1,5 @@
 {
     "name": "StayPutVR",
-    "interface": "IVRDriverProvider_001",
-    "dll": "bin/win64/driver_stayputvr.dll"
+    "dll": "bin/win64/driver_stayputvr.dll",
+    "alwaysActivate": true
 }
