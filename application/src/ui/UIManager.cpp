@@ -3178,7 +3178,9 @@ namespace StayPutVR {
                 // Small buttons for shock device selection (1-5)
                 ImGui::Text("Shock IDs:");
                 for (int i = 0; i < 5; ++i) {
-                    if (!config_.openshock_device_ids[i].empty()) {
+                    // Show button if either OpenShock or PiShock device is configured
+                    bool has_device = !config_.openshock_device_ids[i].empty() || config_.pishock_shocker_ids[i] != 0;
+                    if (has_device) {
                         ImGui::PushID(i);
                         
                         // Color the button based on whether it's enabled
@@ -3209,7 +3211,8 @@ namespace StayPutVR {
                 ImGui::NewLine();
                 if (ImGui::Button("All", ImVec2(40, 20))) {
                     for (int i = 0; i < 5; ++i) {
-                        if (!config_.openshock_device_ids[i].empty()) {
+                        bool has_device = !config_.openshock_device_ids[i].empty() || config_.pishock_shocker_ids[i] != 0;
+                        if (has_device) {
                             device.shock_device_enabled[i] = true;
                         }
                     }
@@ -3618,17 +3621,34 @@ namespace StayPutVR {
                         SaveConfig();
                     }
                     
-                    ImGui::Text("Shocker ID:");
+                    ImGui::Text("Shocker IDs:");
                     ImGui::SameLine();
                     ImGui::TextDisabled("(?)");
                     if (ImGui::IsItemHovered()) {
                         ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("The unique numeric ID of the shocker device\nFound in PiShock device settings or API responses");
+                        ImGui::TextUnformatted("PiShock shocker device IDs. Device 0 is considered the master device.\nLeave unused slots at 0.");
                         ImGui::EndTooltip();
                     }
                     
-                    if (ImGui::InputInt("##WSShockerID", &config_.pishock_shocker_id)) {
-                        SaveConfig();
+                    static int shocker_id_buffers[5] = {0, 0, 0, 0, 0};
+                    
+                    for (int i = 0; i < 5; ++i) {
+                        // Sync buffers with config values
+                        if (config_.pishock_shocker_ids[i] != shocker_id_buffers[i]) {
+                            shocker_id_buffers[i] = config_.pishock_shocker_ids[i];
+                        }
+                        
+                        std::string label = std::to_string(i) + ": ";
+                        if (i == 0) {
+                            label += "(master)";
+                        }
+                        
+                        ImGui::PushID(i);
+                        if (ImGui::InputInt(label.c_str(), &shocker_id_buffers[i])) {
+                            config_.pishock_shocker_ids[i] = shocker_id_buffers[i];
+                            SaveConfig();
+                        }
+                        ImGui::PopID();
                     }
                     
                     ImGui::Spacing();
@@ -3654,10 +3674,19 @@ namespace StayPutVR {
                         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
                         
                         ImGui::SameLine();
+                        // Check if at least one shocker ID is configured
+                        bool has_shocker_id = false;
+                        for (const auto& id : config_.pishock_shocker_ids) {
+                            if (id != 0) {
+                                has_shocker_id = true;
+                                break;
+                            }
+                        }
+                        
                         bool can_connect = !config_.pishock_username.empty() && 
                                          !config_.pishock_api_key.empty() &&
                                          !config_.pishock_client_id.empty() &&
-                                         config_.pishock_shocker_id != 0;
+                                         has_shocker_id;
                         
                         ImGui::BeginDisabled(!can_connect);
                         if (ImGui::Button("Connect##WSConnect")) {
@@ -3730,10 +3759,50 @@ namespace StayPutVR {
                 
                 ImGui::Spacing();
                 
-                float disobedience_intensity = config_.pishock_disobedience_intensity;
-                if (ImGui::SliderFloat("Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-                    config_.pishock_disobedience_intensity = disobedience_intensity;
+                // Individual device disobedience intensity settings
+                bool use_individual_disobedience = config_.pishock_use_individual_disobedience_intensities;
+                if (ImGui::Checkbox("Use Individual Device Disobedience Intensities", &use_individual_disobedience)) {
+                    config_.pishock_use_individual_disobedience_intensities = use_individual_disobedience;
                     SaveConfig();
+                }
+                
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Enable to set different disobedience intensity levels for each PiShock device. When disabled, all devices use the master disobedience intensity.");
+                    ImGui::EndTooltip();
+                }
+                
+                if (!use_individual_disobedience) {
+                    // Master disobedience intensity slider
+                    float disobedience_intensity = config_.pishock_disobedience_intensity;
+                    if (ImGui::SliderFloat("Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                        config_.pishock_disobedience_intensity = disobedience_intensity;
+                        SaveConfig();
+                    }
+                } else {
+                    // Individual device disobedience intensity sliders
+                    ImGui::Text("Individual Device Disobedience Intensities:");
+                    ImGui::Indent();
+                    
+                    for (int i = 0; i < 5; ++i) {
+                        if (config_.pishock_shocker_ids[i] != 0) {
+                            ImGui::PushID(i + 200); // Different ID range to avoid conflicts
+                            
+                            std::string disobedience_label = "Device " + std::to_string(i) + " Intensity";
+                            float individual_disobedience_intensity = config_.pishock_individual_disobedience_intensities[i];
+                            
+                            if (ImGui::SliderFloat(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                                config_.pishock_individual_disobedience_intensities[i] = individual_disobedience_intensity;
+                                SaveConfig();
+                            }
+                            
+                            ImGui::PopID();
+                        }
+                    }
+                    
+                    ImGui::Unindent();
                 }
                 
                 float disobedience_duration = config_.pishock_disobedience_duration;

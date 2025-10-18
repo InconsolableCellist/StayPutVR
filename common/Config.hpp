@@ -81,7 +81,7 @@ public:
     int pishock_user_id = 0;         // WebSocket v2: Numeric User ID (for log metadata)
     std::string pishock_share_code;
     std::string pishock_client_id;   // WebSocket v2: Client ID for ops channel
-    int pishock_shocker_id = 0;      // WebSocket v2: The actual shocker device ID (numeric)
+    std::array<int, 5> pishock_shocker_ids; // WebSocket v2: The actual shocker device IDs (numeric), support up to 5 devices
     
     // Warning Zone PiShock Settings
     bool pishock_warning_beep = false;
@@ -95,7 +95,11 @@ public:
     bool pishock_disobedience_shock = false;
     bool pishock_disobedience_vibrate = false;
     float pishock_disobedience_intensity = 0.25f;
-    float pishock_disobedience_duration = 1.0f; 
+    float pishock_disobedience_duration = 1.0f;
+    
+    // Individual device intensities for PiShock WebSocket v2 (disobedience for each of 5 devices)
+    bool pishock_use_individual_disobedience_intensities = false;
+    std::array<float, 5> pishock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f}; 
 
     // OpenShock Settings
     bool openshock_enabled = false;

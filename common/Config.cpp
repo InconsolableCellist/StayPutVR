@@ -51,7 +51,7 @@ Config::Config()
     , pishock_user_id(0)
     , pishock_share_code("")
     , pishock_client_id("")
-    , pishock_shocker_id(0)
+    , pishock_shocker_ids({0, 0, 0, 0, 0})
     , pishock_warning_beep(false)
     , pishock_warning_shock(false)
     , pishock_warning_vibrate(false)
@@ -61,7 +61,9 @@ Config::Config()
     , pishock_disobedience_shock(false)
     , pishock_disobedience_vibrate(false)
     , pishock_disobedience_intensity(0.25f)
-    , pishock_disobedience_duration(1.0f) 
+    , pishock_disobedience_duration(1.0f)
+    , pishock_use_individual_disobedience_intensities(false)
+    , pishock_individual_disobedience_intensities({0.25f, 0.25f, 0.25f, 0.25f, 0.25f})
     , warning_threshold(0.1f)
     , bounds_threshold(0.2f)
     , disable_threshold(0.5f)
@@ -198,7 +200,19 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_user_id = j.value("pishock_user_id", 0);
         pishock_share_code = j.value("pishock_share_code", "");
         pishock_client_id = j.value("pishock_client_id", "");
-        pishock_shocker_id = j.value("pishock_shocker_id", 0);
+        
+        // Load multiple shocker IDs - support both old single ID and new array format
+        if (j.contains("pishock_shocker_ids") && j["pishock_shocker_ids"].is_array()) {
+            auto shocker_ids_json = j["pishock_shocker_ids"];
+            for (size_t i = 0; i < min(shocker_ids_json.size(), static_cast<size_t>(5)); ++i) {
+                if (shocker_ids_json[i].is_number_integer()) {
+                    pishock_shocker_ids[i] = shocker_ids_json[i];
+                }
+            }
+        } else if (j.contains("pishock_shocker_id") && j["pishock_shocker_id"].is_number_integer()) {
+            // Legacy single shocker ID - put it in slot 0
+            pishock_shocker_ids[0] = j["pishock_shocker_id"];
+        }
         
         // Warning Zone PiShock Settings
         pishock_warning_beep = j.value("pishock_warning_beep", false);
@@ -220,6 +234,18 @@ bool Config::LoadFromFile(const std::string& filename) {
         // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
         if (pishock_disobedience_duration >= 0.0f && pishock_disobedience_duration <= 1.0f) {
             pishock_disobedience_duration = (std::max)(1.0f, pishock_disobedience_duration * 15.0f);
+        }
+        
+        // Individual device intensities for PiShock
+        pishock_use_individual_disobedience_intensities = j.value("pishock_use_individual_disobedience_intensities", false);
+        
+        if (j.contains("pishock_individual_disobedience_intensities") && j["pishock_individual_disobedience_intensities"].is_array()) {
+            auto intensities_json = j["pishock_individual_disobedience_intensities"];
+            for (size_t i = 0; i < min(intensities_json.size(), static_cast<size_t>(5)); ++i) {
+                if (intensities_json[i].is_number()) {
+                    pishock_individual_disobedience_intensities[i] = intensities_json[i];
+                }
+            }
         }
 
         // OpenShock Settings
@@ -511,7 +537,13 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_user_id"] = pishock_user_id;
         j["pishock_share_code"] = pishock_share_code;
         j["pishock_client_id"] = pishock_client_id;
-        j["pishock_shocker_id"] = pishock_shocker_id;
+        
+        // Save shocker IDs array
+        nlohmann::json shocker_ids_json = nlohmann::json::array();
+        for (const auto& id : pishock_shocker_ids) {
+            shocker_ids_json.push_back(id);
+        }
+        j["pishock_shocker_ids"] = shocker_ids_json;
 
         // Warning Zone PiShock Settings
         j["pishock_warning_beep"] = pishock_warning_beep;
@@ -526,6 +558,15 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_disobedience_vibrate"] = pishock_disobedience_vibrate;
         j["pishock_disobedience_intensity"] = pishock_disobedience_intensity;
         j["pishock_disobedience_duration"] = pishock_disobedience_duration;
+        
+        // Individual device intensities for PiShock
+        j["pishock_use_individual_disobedience_intensities"] = pishock_use_individual_disobedience_intensities;
+        
+        nlohmann::json pishock_intensities_json = nlohmann::json::array();
+        for (const auto& intensity : pishock_individual_disobedience_intensities) {
+            pishock_intensities_json.push_back(intensity);
+        }
+        j["pishock_individual_disobedience_intensities"] = pishock_intensities_json;
 
         // OpenShock Settings
         j["openshock_enabled"] = openshock_enabled;
