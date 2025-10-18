@@ -83,7 +83,6 @@ namespace StayPutVR {
         mutable std::mutex rate_limit_mutex_;
         static constexpr int RATE_LIMIT_SECONDS = 1;
         
-        // Shock cooldown
         mutable std::chrono::steady_clock::time_point last_shock_time_;
         mutable std::mutex shock_cooldown_mutex_;
         

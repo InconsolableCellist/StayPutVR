@@ -12,6 +12,7 @@ set(HEADER_FILES
     IPCProtocol.hpp
     IVRDriver.hpp
     HttpClient.hpp
+    WebSocketClient.hpp
 )
 
 # Common library for shared code between driver and application
@@ -21,6 +22,7 @@ add_library(stayputvr_common STATIC
     Logger.cpp
     OSCManager.cpp
     HttpClient.cpp
+    WebSocketClient.cpp
     ${HEADER_FILES}
 )
 

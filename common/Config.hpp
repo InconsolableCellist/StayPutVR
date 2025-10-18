@@ -63,15 +63,25 @@ public:
     std::string osc_estop_stretch_path = "/avatar/parameters/SPVR_EStop_Stretch";
     bool osc_estop_stretch_enabled = true;
     
+    // PiShock Mode Selection
+    enum class PiShockMode {
+        LEGACY_API = 0,
+        WEBSOCKET_V2 = 1
+    };
+    
     // PiShock Settings via VRCOSC
     bool pishock_enabled = false;
     int pishock_group = 0;
     bool pishock_user_agreement = false;
+    PiShockMode pishock_mode = PiShockMode::LEGACY_API;
     
-    // PiShock Direct API Settings
+    // PiShock Direct API Settings (common to both modes)
     std::string pishock_api_key;
     std::string pishock_username;
+    int pishock_user_id = 0;         // WebSocket v2: Numeric User ID (for log metadata)
     std::string pishock_share_code;
+    std::string pishock_client_id;   // WebSocket v2: Client ID for ops channel
+    int pishock_shocker_id = 0;      // WebSocket v2: The actual shocker device ID (numeric)
     
     // Warning Zone PiShock Settings
     bool pishock_warning_beep = false;
@@ -84,7 +94,7 @@ public:
     bool pishock_disobedience_beep = false;
     bool pishock_disobedience_shock = false;
     bool pishock_disobedience_vibrate = false;
-    float pishock_disobedience_intensity = 0.5f;
+    float pishock_disobedience_intensity = 0.25f;
     float pishock_disobedience_duration = 1.0f; 
 
     // OpenShock Settings
@@ -110,11 +120,11 @@ public:
     bool openshock_use_individual_warning_intensities = false; // false = use master, true = use individual for warning
     bool openshock_use_individual_disobedience_intensities = false; // false = use master, true = use individual for disobedience
     float openshock_master_warning_intensity = 0.25f;
-    float openshock_master_disobedience_intensity = 0.5f;
+    float openshock_master_disobedience_intensity = 0.25f;
     
     // Individual device intensities for OpenShock (warning and disobedience for each of 5 devices)
     std::array<float, 5> openshock_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
-    std::array<float, 5> openshock_individual_disobedience_intensities = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+    std::array<float, 5> openshock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
     // Twitch Integration Settings
     bool twitch_enabled = false;

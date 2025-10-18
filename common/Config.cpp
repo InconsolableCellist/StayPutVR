@@ -45,9 +45,13 @@ Config::Config()
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
+    , pishock_mode(PiShockMode::LEGACY_API)
     , pishock_api_key("")
     , pishock_username("")
+    , pishock_user_id(0)
     , pishock_share_code("")
+    , pishock_client_id("")
+    , pishock_shocker_id(0)
     , pishock_warning_beep(false)
     , pishock_warning_shock(false)
     , pishock_warning_vibrate(false)
@@ -56,7 +60,7 @@ Config::Config()
     , pishock_disobedience_beep(false)
     , pishock_disobedience_shock(false)
     , pishock_disobedience_vibrate(false)
-    , pishock_disobedience_intensity(0.5f)
+    , pishock_disobedience_intensity(0.25f)
     , pishock_disobedience_duration(1.0f) 
     , warning_threshold(0.1f)
     , bounds_threshold(0.2f)
@@ -186,11 +190,15 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_enabled = j.value("pishock_enabled", false);
         pishock_group = j.value("pishock_group", 0);
         pishock_user_agreement = j.value("pishock_user_agreement", false);
+        pishock_mode = static_cast<PiShockMode>(j.value("pishock_mode", 0));
         
         // PiShock API settings
         pishock_api_key = j.value("pishock_api_key", "");
         pishock_username = j.value("pishock_username", "");
+        pishock_user_id = j.value("pishock_user_id", 0);
         pishock_share_code = j.value("pishock_share_code", "");
+        pishock_client_id = j.value("pishock_client_id", "");
+        pishock_shocker_id = j.value("pishock_shocker_id", 0);
         
         // Warning Zone PiShock Settings
         pishock_warning_beep = j.value("pishock_warning_beep", false);
@@ -207,7 +215,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_disobedience_beep = j.value("pishock_disobedience_beep", false);
         pishock_disobedience_shock = j.value("pishock_disobedience_shock", false);
         pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
-        pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.5f);
+        pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.25f);
         pishock_disobedience_duration = j.value("pishock_disobedience_duration", 1.0f);
         // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
         if (pishock_disobedience_duration >= 0.0f && pishock_disobedience_duration <= 1.0f) {
@@ -243,14 +251,14 @@ bool Config::LoadFromFile(const std::string& filename) {
         
         // Disobedience (Out of Bounds) OpenShock Settings
         openshock_disobedience_action = j.value("openshock_disobedience_action", 0);
-        openshock_disobedience_intensity = j.value("openshock_disobedience_intensity", 0.5f);
-        openshock_disobedience_duration = j.value("openshock_disobedience_duration", 0.5f);
+        openshock_disobedience_intensity = j.value("openshock_disobedience_intensity", 0.25f);
+        openshock_disobedience_duration = j.value("openshock_disobedience_duration", 0.25f);
         
         // Master intensity settings for OpenShock
         openshock_use_individual_warning_intensities = j.value("openshock_use_individual_warning_intensities", false);
         openshock_use_individual_disobedience_intensities = j.value("openshock_use_individual_disobedience_intensities", false);
         openshock_master_warning_intensity = j.value("openshock_master_warning_intensity", 0.25f);
-        openshock_master_disobedience_intensity = j.value("openshock_master_disobedience_intensity", 0.5f);
+        openshock_master_disobedience_intensity = j.value("openshock_master_disobedience_intensity", 0.25f);
         
         // Individual device intensities for OpenShock
         if (j.contains("openshock_individual_warning_intensities") && j["openshock_individual_warning_intensities"].is_array()) {
@@ -495,12 +503,16 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["pishock_enabled"] = pishock_enabled;
         j["pishock_group"] = pishock_group;
         j["pishock_user_agreement"] = pishock_user_agreement;
+        j["pishock_mode"] = static_cast<int>(pishock_mode);
         
         // PiShock API settings
         j["pishock_api_key"] = pishock_api_key;
         j["pishock_username"] = pishock_username;
+        j["pishock_user_id"] = pishock_user_id;
         j["pishock_share_code"] = pishock_share_code;
-        
+        j["pishock_client_id"] = pishock_client_id;
+        j["pishock_shocker_id"] = pishock_shocker_id;
+
         // Warning Zone PiShock Settings
         j["pishock_warning_beep"] = pishock_warning_beep;
         j["pishock_warning_shock"] = pishock_warning_shock;

@@ -163,7 +163,6 @@ namespace StayPutVR {
             return;
         }
 
-        // Check shock cooldown
         if (!CheckShockCooldown()) {
             std::string cooldown_msg = "Shock cooldown active (waiting " + 
                                       std::to_string((int)config_->shock_cooldown_seconds) + "s between shocks)";
@@ -232,7 +231,7 @@ namespace StayPutVR {
 
     bool PiShockManager::CheckShockCooldown() {
         if (!config_ || !config_->shock_cooldown_enabled) {
-            return true; // Cooldown disabled, allow shock
+            return true;
         }
         
         std::lock_guard<std::mutex> lock(shock_cooldown_mutex_);

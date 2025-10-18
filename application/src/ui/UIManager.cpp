@@ -270,6 +270,7 @@ namespace StayPutVR {
         
         InitializeTwitchManager();
         InitializePiShockManager();
+        InitializePiShockWebSocketManager();
         InitializeOpenShockManager();
         
         return true;
@@ -306,6 +307,11 @@ namespace StayPutVR {
         // Update Twitch manager
         if (twitch_manager_) {
             twitch_manager_->Update();
+        }
+        
+        // Update PiShock WebSocket manager
+        if (pishock_ws_manager_) {
+            pishock_ws_manager_->Update();
         }
         
         // Process Twitch unlock timer
@@ -356,7 +362,15 @@ namespace StayPutVR {
         // Save configuration before shutting down
         SaveConfig();
         
-        // Shutdown device manager and IPC connection first
+        // Shutdown managers
+        ShutdownTwitchManager();
+        ShutdownPiShockManager();
+        ShutdownOpenShockManager();
+        
+        // Give managers time to properly clean up (especially WebSocket connections)
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        
+        // Shutdown device manager and IPC connection
         if (device_manager_) {
             Logger::Info("UIManager: Shutting down device manager");
             try {
@@ -875,12 +889,10 @@ namespace StayPutVR {
                         }
                     }
                     
-                    if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-                        if (StayPutVR::Logger::IsInitialized()) {
-                            Logger::Info("Triggering initial PiShock disobedience actions for device " + device.serial);
-                        }
-                        pishock_manager_->TriggerDisobedienceActions(device.serial);
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        Logger::Info("Triggering initial PiShock disobedience actions for device " + device.serial);
                     }
+                    TriggerPiShockDisobedience(device.serial);
                     
                     if (openshock_manager_ && openshock_manager_->IsEnabled()) {
                         if (StayPutVR::Logger::IsInitialized()) {
@@ -890,14 +902,11 @@ namespace StayPutVR {
                     }
                 } 
                 // Continue triggering PiShock for devices that remain in out-of-bounds zone
-                else if (device.exceeds_threshold && pishock_manager_ && pishock_manager_->IsEnabled()) {
-                    // PiShockManager handles its own rate limiting
-                    if (pishock_manager_->CanTriggerAction()) {
-                        if (StayPutVR::Logger::IsInitialized()) {
-                            Logger::Info("Triggering continuous PiShock disobedience actions for device " + device.serial);
-                        }
-                        pishock_manager_->TriggerDisobedienceActions(device.serial);
+                else if (device.exceeds_threshold && CanTriggerPiShock()) {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        Logger::Info("Triggering continuous PiShock disobedience actions for device " + device.serial);
                     }
+                    TriggerPiShockDisobedience(device.serial);
                 }
                 
                 // Continue triggering OpenShock for devices that remain in out-of-bounds zone
@@ -1887,7 +1896,6 @@ namespace StayPutVR {
         ImGui::Spacing();
         ImGui::Separator();
         
-        // Shock Cooldown Timer
         ImGui::Text("Shock Cooldown Timer");
         ImGui::Separator();
         
@@ -3419,13 +3427,13 @@ namespace StayPutVR {
         ImGui::Text("PiShock Integration");
         ImGui::Separator();
         
-        // Safety warning (moved to the top)
+        // Safety warning (at the top)
         ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
         ImGui::Text("PiShock should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of PiShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
         ImGui::PopTextWrapPos();
         
-        // Add agreement checkbox right after the disclaimer
+        // Add agreement checkbox
         bool user_agreement = config_.pishock_user_agreement;
         if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
             config_.pishock_user_agreement = user_agreement;
@@ -3434,8 +3442,10 @@ namespace StayPutVR {
         
         ImGui::Separator();
         
-        // Main enable/disable checkbox for PiShock (disabled until agreement is checked)
+        // ===== COMMON SETTINGS (both modes) =====
         ImGui::BeginDisabled(!user_agreement);
+        
+        // Enable checkbox
         bool pishock_enabled = config_.pishock_enabled;
         if (ImGui::Checkbox("Enable PiShock Integration", &pishock_enabled)) {
             config_.pishock_enabled = pishock_enabled;
@@ -3450,20 +3460,10 @@ namespace StayPutVR {
             ImGui::EndTooltip();
         }
         
-        // PiShock API Credentials (NEW)
-        ImGui::Separator();
-        ImGui::Text("PiShock API Credentials:");
+        ImGui::Spacing();
         
-        static char username_buffer[128] = "";
-        if (strlen(username_buffer) == 0 && !config_.pishock_username.empty()) {
-            strcpy_s(username_buffer, sizeof(username_buffer), config_.pishock_username.c_str());
-        }
-        
-        if (ImGui::InputText("Username", username_buffer, sizeof(username_buffer))) {
-            config_.pishock_username = username_buffer;
-            SaveConfig();
-        }
-        
+        // Common username field
+        ImGui::Text("Username:");
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
@@ -3472,111 +3472,321 @@ namespace StayPutVR {
             ImGui::EndTooltip();
         }
         
-        static char apikey_buffer[128] = "";
-        if (strlen(apikey_buffer) == 0 && !config_.pishock_api_key.empty()) {
-            strcpy_s(apikey_buffer, sizeof(apikey_buffer), config_.pishock_api_key.c_str());
+        static char username_buffer[128] = "";
+        if (strlen(username_buffer) == 0 && !config_.pishock_username.empty()) {
+            strcpy_s(username_buffer, sizeof(username_buffer), config_.pishock_username.c_str());
         }
         
-        if (ImGui::InputText("API Key", apikey_buffer, sizeof(apikey_buffer), ImGuiInputTextFlags_Password)) {
-            config_.pishock_api_key = apikey_buffer;
+        if (ImGui::InputText("##Username", username_buffer, sizeof(username_buffer))) {
+            config_.pishock_username = username_buffer;
             SaveConfig();
         }
         
+        ImGui::Separator();
+        
+        // ===== MODE SELECTION =====
+        ImGui::Text("API Mode:");
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {
             ImGui::BeginTooltip();
-            ImGui::TextUnformatted("API Key generated on PiShock.com (found in Account section)");
+            ImGui::TextUnformatted("Legacy API: HTTP-based API (deprecated)\nWebSocket v2: Real-time persistent connection with lower latency and continuous shocking (recommended)");
             ImGui::EndTooltip();
         }
         
-        static char sharecode_buffer[128] = "";
-        if (strlen(sharecode_buffer) == 0 && !config_.pishock_share_code.empty()) {
-            strcpy_s(sharecode_buffer, sizeof(sharecode_buffer), config_.pishock_share_code.c_str());
-        }
-        
-        if (ImGui::InputText("Share Code", sharecode_buffer, sizeof(sharecode_buffer), ImGuiInputTextFlags_Password)) {
-            config_.pishock_share_code = sharecode_buffer;
+        const char* modes[] = { "Legacy HTTP API", "WebSocket v2" };
+        int current_mode = static_cast<int>(config_.pishock_mode);
+        if (ImGui::Combo("##PiShockMode", &current_mode, modes, 2)) {
+            auto old_mode = config_.pishock_mode;
+            config_.pishock_mode = static_cast<Config::PiShockMode>(current_mode);
             SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Share Code generated on PiShock.com for the device you want to control");
-            ImGui::EndTooltip();
-        }
-        
-        ImGui::Separator();
-        
-        if (!config_.pishock_enabled) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        }
-        
-        // Removed Warning Zone Actions section
-
-        // Out of Bounds (Disobedience) Actions
-        ImGui::Text("Out of Bounds Actions:");
-        ImGui::Separator();
-        
-        ImGui::BeginDisabled(!config_.pishock_enabled);
-        
-        ImGui::TextWrapped("PiShock will only be triggered when a device exceeds the out-of-bounds threshold. Warnings will only use audio cues.");
-        ImGui::Spacing();
-        
-        bool disobedience_beep = config_.pishock_disobedience_beep;
-        if (ImGui::Checkbox("Beep on Out of Bounds", &disobedience_beep)) {
-            config_.pishock_disobedience_beep = disobedience_beep;
-            SaveConfig();
-        }
-        
-        bool disobedience_vibrate = config_.pishock_disobedience_vibrate;
-        if (ImGui::Checkbox("Vibrate on Out of Bounds", &disobedience_vibrate)) {
-            config_.pishock_disobedience_vibrate = disobedience_vibrate;
-            SaveConfig();
-        }
-        
-        bool disobedience_shock = config_.pishock_disobedience_shock;
-        if (ImGui::Checkbox("Shock on Out of Bounds", &disobedience_shock)) {
-            config_.pishock_disobedience_shock = disobedience_shock;
-            SaveConfig();
-        }
-        
-        float disobedience_intensity = config_.pishock_disobedience_intensity;
-        if (ImGui::SliderFloat("Out of Bounds Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-            config_.pishock_disobedience_intensity = disobedience_intensity;
-            SaveConfig();
-        }
-        
-        float disobedience_duration = config_.pishock_disobedience_duration;
-        if (ImGui::SliderFloat("Out of Bounds Duration", &disobedience_duration, 1.0f, 15.0f, "%.2f seconds")) {
-            // Clamp to valid range
-            disobedience_duration = (std::max)(1.0f, (std::min)(15.0f, disobedience_duration));
-            config_.pishock_disobedience_duration = disobedience_duration;
-            SaveConfig();
-        }
-        
-        ImGui::EndDisabled();
-        
-        if (!config_.pishock_enabled) {
-            ImGui::PopStyleColor();
-        }
-        
-        ImGui::Separator();
-        
-        // Test buttons - Only keeping test for out of bounds
-        ImGui::Text("Test Buttons:");
-        ImGui::BeginDisabled(!config_.pishock_enabled || config_.pishock_username.empty() || 
-                             config_.pishock_api_key.empty() || config_.pishock_share_code.empty());
-        
-        if (ImGui::Button("Test Out of Bounds Actions")) {
-            if (pishock_manager_) {
-                pishock_manager_->TestActions();
+            
+            // Handle mode switching - disconnect old, prepare new
+            if (old_mode == Config::PiShockMode::WEBSOCKET_V2 && pishock_ws_manager_) {
+                pishock_ws_manager_->Disconnect();
             }
+            
+            Logger::Info("PiShock mode changed to: " + std::string(modes[current_mode]));
         }
         
-        ImGui::EndDisabled();
+        ImGui::Separator();
+        
+        // ===== MODE-SPECIFIC SUBTABS =====
+        if (ImGui::BeginTabBar("##PiShockSubTabs", ImGuiTabBarFlags_None)) {
+            
+            // Configuration Tab
+            if (ImGui::BeginTabItem("Configuration")) {
+                ImGui::Spacing();
+                
+                if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
+                    // ===== LEGACY API CONFIGURATION =====
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Legacy HTTP API Configuration");
+                    ImGui::Separator();
+                    
+                    ImGui::Text("API Key:");
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted("API Key generated on PiShock.com (found in Account section)");
+                        ImGui::EndTooltip();
+                    }
+                    
+                    static char apikey_buffer[128] = "";
+                    if (strlen(apikey_buffer) == 0 && !config_.pishock_api_key.empty()) {
+                        strcpy_s(apikey_buffer, sizeof(apikey_buffer), config_.pishock_api_key.c_str());
+                    }
+                    
+                    if (ImGui::InputText("##APIKey", apikey_buffer, sizeof(apikey_buffer), ImGuiInputTextFlags_Password)) {
+                        config_.pishock_api_key = apikey_buffer;
+                        SaveConfig();
+                    }
+                    
+                    ImGui::Text("Share Code:");
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted("Share Code generated on PiShock.com for the device you want to control");
+                        ImGui::EndTooltip();
+                    }
+                    
+                    static char sharecode_buffer[128] = "";
+                    if (strlen(sharecode_buffer) == 0 && !config_.pishock_share_code.empty()) {
+                        strcpy_s(sharecode_buffer, sizeof(sharecode_buffer), config_.pishock_share_code.c_str());
+                    }
+                    
+                    if (ImGui::InputText("##ShareCode", sharecode_buffer, sizeof(sharecode_buffer), ImGuiInputTextFlags_Password)) {
+                        config_.pishock_share_code = sharecode_buffer;
+                        SaveConfig();
+                    }
+                    
+                    // Status
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Text("Status:");
+                    if (pishock_manager_) {
+                        ImGui::SameLine();
+                        std::string status = pishock_manager_->GetConnectionStatus();
+                        if (status == "Ready") {
+                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
+                        } else {
+                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
+                        }
+                    }
+                    
+                } else {
+                    // ===== WEBSOCKET V2 CONFIGURATION =====
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "WebSocket v2 Configuration");
+                    ImGui::Separator();
+                    
+                    ImGui::Text("API Key:");
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted("API Key generated on PiShock.com (Account section)\nRequired for WebSocket authentication");
+                        ImGui::EndTooltip();
+                    }
+                    
+                    static char ws_apikey_buffer[128] = "";
+                    if (strlen(ws_apikey_buffer) == 0 && !config_.pishock_api_key.empty()) {
+                        strcpy_s(ws_apikey_buffer, sizeof(ws_apikey_buffer), config_.pishock_api_key.c_str());
+                    }
+                    
+                    if (ImGui::InputText("##WSAPIKey", ws_apikey_buffer, sizeof(ws_apikey_buffer), ImGuiInputTextFlags_Password)) {
+                        config_.pishock_api_key = ws_apikey_buffer;
+                        SaveConfig();
+                    }
+                    
+                    ImGui::Text("Client ID:");
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted("Your PiShock Client ID (hub ID)\nUsed to identify the device that your shockers connect to");
+                        ImGui::EndTooltip();
+                    }
+                    
+                    static char ws_clientid_buffer[128] = "";
+                    if (strlen(ws_clientid_buffer) == 0 && !config_.pishock_client_id.empty()) {
+                        strcpy_s(ws_clientid_buffer, sizeof(ws_clientid_buffer), config_.pishock_client_id.c_str());
+                    }
+                    
+                    if (ImGui::InputText("##WSClientID", ws_clientid_buffer, sizeof(ws_clientid_buffer))) {
+                        config_.pishock_client_id = ws_clientid_buffer;
+                        SaveConfig();
+                    }
+                    
+                    ImGui::Text("Shocker ID:");
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("(?)");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::BeginTooltip();
+                        ImGui::TextUnformatted("The unique numeric ID of the shocker device\nFound in PiShock device settings or API responses");
+                        ImGui::EndTooltip();
+                    }
+                    
+                    if (ImGui::InputInt("##WSShockerID", &config_.pishock_shocker_id)) {
+                        SaveConfig();
+                    }
+                    
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    
+                    // Connection controls
+                    ImGui::Text("Connection:");
+                    
+                    bool is_connected = pishock_ws_manager_ && pishock_ws_manager_->IsConnected();
+                    
+                    if (is_connected) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
+                        
+                        ImGui::SameLine();
+                        if (ImGui::Button("Disconnect##WSDisconnect")) {
+                            if (pishock_ws_manager_) {
+                                pishock_ws_manager_->Disconnect();
+                            }
+                        }
+                    } else {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
+                        
+                        ImGui::SameLine();
+                        bool can_connect = !config_.pishock_username.empty() && 
+                                         !config_.pishock_api_key.empty() &&
+                                         !config_.pishock_client_id.empty() &&
+                                         config_.pishock_shocker_id != 0;
+                        
+                        ImGui::BeginDisabled(!can_connect);
+                        if (ImGui::Button("Connect##WSConnect")) {
+                            if (pishock_ws_manager_) {
+                                if (!pishock_ws_manager_->Connect()) {
+                                    Logger::Error("Failed to connect to PiShock WebSocket: " + 
+                                                pishock_ws_manager_->GetLastError());
+                                }
+                            }
+                        }
+                        ImGui::EndDisabled();
+                    }
+                    
+                    // Status
+                    ImGui::Spacing();
+                    ImGui::Text("Status:");
+                    if (pishock_ws_manager_) {
+                        ImGui::SameLine();
+                        std::string status = pishock_ws_manager_->GetConnectionStatus();
+                        if (status == "Connected") {
+                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
+                        } else if (status == "Disconnected") {
+                            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", status.c_str());
+                        } else {
+                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
+                        }
+                        
+                        std::string last_error = pishock_ws_manager_->GetLastError();
+                        if (!last_error.empty()) {
+                            ImGui::Text("Last Error:");
+                            ImGui::SameLine();
+                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", last_error.c_str());
+                        }
+                    }
+                }
+                
+                ImGui::EndTabItem();
+            }
+            
+            // Actions Tab
+            if (ImGui::BeginTabItem("Actions")) {
+                ImGui::Spacing();
+                
+                ImGui::TextWrapped("PiShock will only be triggered when a device exceeds the out-of-bounds threshold. Warnings will only use audio cues.");
+                ImGui::Spacing();
+                ImGui::Separator();
+                
+                ImGui::BeginDisabled(!config_.pishock_enabled);
+                
+                // Out of Bounds Actions
+                ImGui::Text("Out of Bounds Actions:");
+                
+                bool disobedience_beep = config_.pishock_disobedience_beep;
+                if (ImGui::Checkbox("Beep on Out of Bounds", &disobedience_beep)) {
+                    config_.pishock_disobedience_beep = disobedience_beep;
+                    SaveConfig();
+                }
+                
+                bool disobedience_vibrate = config_.pishock_disobedience_vibrate;
+                if (ImGui::Checkbox("Vibrate on Out of Bounds", &disobedience_vibrate)) {
+                    config_.pishock_disobedience_vibrate = disobedience_vibrate;
+                    SaveConfig();
+                }
+                
+                bool disobedience_shock = config_.pishock_disobedience_shock;
+                if (ImGui::Checkbox("Shock on Out of Bounds", &disobedience_shock)) {
+                    config_.pishock_disobedience_shock = disobedience_shock;
+                    SaveConfig();
+                }
+                
+                ImGui::Spacing();
+                
+                float disobedience_intensity = config_.pishock_disobedience_intensity;
+                if (ImGui::SliderFloat("Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                    config_.pishock_disobedience_intensity = disobedience_intensity;
+                    SaveConfig();
+                }
+                
+                float disobedience_duration = config_.pishock_disobedience_duration;
+                if (ImGui::SliderFloat("Duration", &disobedience_duration, 1.0f, 15.0f, "%.2f seconds")) {
+                    disobedience_duration = (std::max)(1.0f, (std::min)(15.0f, disobedience_duration));
+                    config_.pishock_disobedience_duration = disobedience_duration;
+                    SaveConfig();
+                }
+                
+                ImGui::Spacing();
+                ImGui::Separator();
+                
+                // Test buttons
+                ImGui::Text("Test:");
+                
+                bool can_test = config_.pishock_enabled;
+                
+                // Mode-specific validation
+                if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
+                    // Legacy API needs username, API key, and share code
+                    can_test = can_test && 
+                              !config_.pishock_username.empty() && 
+                              !config_.pishock_api_key.empty() && 
+                              !config_.pishock_share_code.empty();
+                } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
+                    // WebSocket v2 needs to be connected
+                    can_test = can_test && pishock_ws_manager_ && pishock_ws_manager_->IsConnected();
+                }
+                
+                ImGui::BeginDisabled(!can_test);
+                
+                if (ImGui::Button("Test Out of Bounds Actions")) {
+                    if (config_.pishock_mode == Config::PiShockMode::LEGACY_API && pishock_manager_) {
+                        pishock_manager_->TestActions();
+                    } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2 && pishock_ws_manager_) {
+                        pishock_ws_manager_->TestActions();
+                    }
+                }
+                
+                ImGui::EndDisabled();
+                
+                if (!can_test && config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Connect to WebSocket first");
+                }
+                
+                ImGui::EndDisabled(); // End pishock_enabled disabled
+                
+                ImGui::EndTabItem();
+            }
+            
+            ImGui::EndTabBar();
+        }
+        
         ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
 
@@ -3605,6 +3815,43 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::InitializePiShockWebSocketManager() {
+        pishock_ws_manager_ = std::make_unique<PiShockWebSocketManager>();
+        
+        if (pishock_ws_manager_->Initialize(&config_)) {
+            // Set up callback for PiShock WebSocket action results
+            pishock_ws_manager_->SetActionCallback(
+                [this](const std::string& action_type, bool success, const std::string& message) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Info("PiShock WebSocket " + action_type + " " + (success ? "succeeded" : "failed") + 
+                                   (message.empty() ? "" : ": " + message));
+                    }
+                }
+            );
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("PiShockWebSocketManager initialized successfully");
+            }
+            
+            // Auto-connect if WebSocket v2 is selected and fully configured
+            if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2 && 
+                config_.pishock_enabled &&
+                pishock_ws_manager_->IsFullyConfigured()) {
+                Logger::Info("Auto-connecting to PiShock WebSocket v2...");
+                if (pishock_ws_manager_->Connect()) {
+                    Logger::Info("Auto-connected to PiShock WebSocket v2");
+                } else {
+                    Logger::Warning("Failed to auto-connect to PiShock WebSocket v2: " + 
+                                  pishock_ws_manager_->GetLastError());
+                }
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to initialize PiShockWebSocketManager");
+            }
+        }
+    }
+
     void UIManager::ShutdownPiShockManager() {
         if (pishock_manager_) {
             pishock_manager_->Shutdown();
@@ -3614,6 +3861,48 @@ namespace StayPutVR {
                 Logger::Info("PiShockManager shut down");
             }
         }
+        
+        if (pishock_ws_manager_) {
+            pishock_ws_manager_->Shutdown();
+            pishock_ws_manager_.reset();
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("PiShockWebSocketManager shut down");
+            }
+        }
+    }
+
+    void UIManager::TriggerPiShockDisobedience(const std::string& device_serial) {
+        if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
+            if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+                pishock_manager_->TriggerDisobedienceActions(device_serial);
+            }
+        } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
+            if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
+                pishock_ws_manager_->TriggerDisobedienceActions(device_serial);
+            }
+        }
+    }
+
+    void UIManager::TriggerPiShockWarning(const std::string& device_serial) {
+        if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
+            if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+                pishock_manager_->TriggerWarningActions(device_serial);
+            }
+        } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
+            if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
+                pishock_ws_manager_->TriggerWarningActions(device_serial);
+            }
+        }
+    }
+
+    bool UIManager::CanTriggerPiShock() const {
+        if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
+            return pishock_manager_ && pishock_manager_->IsEnabled() && pishock_manager_->CanTriggerAction();
+        } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
+            return pishock_ws_manager_ && pishock_ws_manager_->IsEnabled() && pishock_ws_manager_->CanTriggerAction();
+        }
+        return false;
     }
 
     void UIManager::VerifyOSCCallbacks() {
@@ -4549,12 +4838,10 @@ namespace StayPutVR {
         }
         
         // Trigger PiShock disobedience actions if enabled
-        if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-            if (Logger::IsInitialized()) {
-                Logger::Info("Triggering PiShock disobedience actions for global out-of-bounds");
-            }
-            pishock_manager_->TriggerDisobedienceActions("GLOBAL");
+        if (Logger::IsInitialized()) {
+            Logger::Info("Triggering PiShock disobedience actions for global out-of-bounds");
         }
+        TriggerPiShockDisobedience("GLOBAL");
         
         // Trigger OpenShock disobedience actions if enabled
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
@@ -4590,12 +4877,10 @@ namespace StayPutVR {
         }
         
         // Trigger PiShock disobedience actions if enabled
-        if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-            if (Logger::IsInitialized()) {
-                Logger::Info("Triggering PiShock disobedience actions for bite");
-            }
-            pishock_manager_->TriggerDisobedienceActions("BITE");
+        if (Logger::IsInitialized()) {
+            Logger::Info("Triggering PiShock disobedience actions for bite");
         }
+        TriggerPiShockDisobedience("BITE");
         
         // Trigger OpenShock disobedience actions if enabled
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {

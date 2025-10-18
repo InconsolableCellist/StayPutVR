@@ -30,6 +30,7 @@
 #include "../../../common/OSCManager.hpp"
 #include "../managers/TwitchManager.hpp"
 #include "../managers/PiShockManager.hpp"
+#include "../managers/PiShockWebSocketManager.hpp"
 #include "../managers/OpenShockManager.hpp"
 
 namespace StayPutVR {
@@ -192,6 +193,7 @@ namespace StayPutVR {
         std::unique_ptr<TwitchManager> twitch_manager_;
         
         std::unique_ptr<PiShockManager> pishock_manager_;
+        std::unique_ptr<PiShockWebSocketManager> pishock_ws_manager_;
         
         std::unique_ptr<OpenShockManager> openshock_manager_;
         
@@ -223,7 +225,11 @@ namespace StayPutVR {
         OSCDeviceType DeviceRoleToOSCDeviceType(DeviceRole role) const;
         
         void InitializePiShockManager();
+        void InitializePiShockWebSocketManager();
         void ShutdownPiShockManager();
+        void TriggerPiShockDisobedience(const std::string& device_serial);
+        void TriggerPiShockWarning(const std::string& device_serial);
+        bool CanTriggerPiShock() const;
         
         void InitializeOpenShockManager();
         void ShutdownOpenShockManager();
