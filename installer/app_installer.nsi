@@ -9,7 +9,7 @@
 
 ; Define installer name and output file
 Name "StayPutVR"
-OutFile "StayPutVR v1.1.1 Setup.exe"
+OutFile "StayPutVR v1.2.0 Setup.exe"
 
 ; Default installation directory
 InstallDir "$PROGRAMFILES\StayPutVR"
@@ -315,7 +315,7 @@ Section "Install"
     WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\bin\stayputvr_app.exe,0"
     WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "StayPutVR Team"
-    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.1.1"
+    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.2.0"
     
     ; Get size of installation directory
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2

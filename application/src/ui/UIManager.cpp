@@ -856,7 +856,7 @@ namespace StayPutVR {
                 
                 // Check for newly triggered PiShock events
                 if (!was_warning && device.in_warning_zone) {
-                    // Newly entered warning zone
+                    // Newly entered warning zone from safe zone
                     if (StayPutVR::Logger::IsInitialized()) {
                         StayPutVR::Logger::Debug("Device " + device.serial + " entered warning zone, position deviation: " + 
                                                 std::to_string(device.position_deviation));
@@ -865,8 +865,37 @@ namespace StayPutVR {
                     // Remove PiShock warning call - only use audio warnings for this zone
                     // Audio warning will still be handled by the existing code below
                     
-                    // Send OSC status update for warning zone entry - but skip for now per user request
-                    // UpdateDeviceStatus will be called for safe/disobedience only
+                    // Send OSC status update for warning zone entry
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::LockedWarning);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Sent OSC status LockedWarning for device " + device.serial + 
+                                                   " (role: " + OSCManager::GetInstance().GetRoleString(device.role) + ")");
+                        }
+                    }
+                }
+                
+                // Check for transition from out of bounds back to warning zone
+                if (was_exceeding && !device.exceeds_threshold && device.in_warning_zone) {
+                    // Device moved back from out of bounds to warning zone
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Debug("Device " + device.serial + " returned to warning zone from out of bounds, position deviation: " + 
+                                                std::to_string(device.position_deviation));
+                    }
+                    
+                    // Send OSC status update for warning zone
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::LockedWarning);
+                        
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            StayPutVR::Logger::Debug("Sent OSC status LockedWarning for device " + device.serial + 
+                                                   " returning from out of bounds (role: " + 
+                                                   OSCManager::GetInstance().GetRoleString(device.role) + ")");
+                        }
+                    }
                 }
                 
                 if (!was_exceeding && device.exceeds_threshold) {
@@ -2646,7 +2675,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.1.1");
+        ImGui::Text("Version: 1.2.0");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         

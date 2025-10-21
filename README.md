@@ -98,6 +98,7 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 **1.2.0** - PiShock WebSocket v2 support (10/17/2025)
 - Added PiShock WebSocket v2 support (faster response times, future multi-device support)
 - Added support for multiple shockers using PiShock WebSocket v2
+- Fixed a bug where warning OSC messages ("Locked Warning", enum 3) weren't being sent
 
 **1.1.1** - Bug fixes (10/12/2025)
 - Fixed bug where StayPutVR driver wouldn't load when launching SteamVR via SteamLink or Pico Connect
