@@ -1,12 +1,11 @@
-- [🔒 StayPutVR](#-stayputvr)
-  - [💖 Support Development](#-support-development)
-  - [📥 Quickstart](#-quickstart)
-  - [✨ Features](#-features)
-  - [🗺️ Roadmap](#-roadmap)
-  - [💾 Building From Source](#-building-from-source)
-  - [📅 Version History](#-version-history)
-  - [⚖️ License](#-license)
-  - [🙏 Acknowledgments](#-acknowledgments)
+- [StayPutVR](#-stayputvr)
+  - [Quickstart](#-quickstart)
+  - [Features](#-features)
+  - [️Roadmap](#-roadmap)
+  - [Building From Source](#-building-from-source)
+  - [Version History](#-version-history)
+  - [️License](#-license)
+  - [Acknowledgments](#-acknowledgments)
 
 # 🔒 StayPutVR
 
@@ -19,13 +18,6 @@ You can be locked via clicking a button locally, or locked remotely via OSC inte
 Cooldown timers, audio warnings, and PiShock intensity are all configurable, and the control remains completely and totally on your own computer, with you choosing who can control your avatar via VRChat's avatar interaction system.
 
 **Compatible prefab: [foxipso.gumroad.com/l/stayputvr](https://foxipso.gumroad.com/l/stayputvr)**
-
-
-## 💖 Support Development
-
-If you enjoy using StayPutVR and want to support me, consider making a donation! Your contributions help me create content for VRChat!
-
-[![](https://www.paypalobjects.com/en_US/i/btn/btn_donateCC_LG.gif)](https://www.paypal.com/donate/?hosted_button_id=YRN6YJ5XU8Z8E)
 
 ## 📥 Quickstart
 
@@ -95,7 +87,7 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
-**1.2.0** - PiShock WebSocket v2 support (10/17/2025)
+**1.2.0** - PiShock WebSocket v2 support (10/21/2025)
 - Added PiShock WebSocket v2 support (faster response times, future multi-device support)
 - Added support for multiple shockers using PiShock WebSocket v2
 - Fixed a bug where warning OSC messages ("Locked Warning", enum 3) weren't being sent
