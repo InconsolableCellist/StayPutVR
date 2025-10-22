@@ -17,7 +17,13 @@ You can be locked via clicking a button locally, or locked remotely via OSC inte
 
 Cooldown timers, audio warnings, and PiShock intensity are all configurable, and the control remains completely and totally on your own computer, with you choosing who can control your avatar via VRChat's avatar interaction system.
 
-**Compatible prefab: [foxipso.gumroad.com/l/stayputvr](https://foxipso.gumroad.com/l/stayputvr)**
+**Compatible prefabs:**
+
+Gumroad: **[foxipso.gumroad.com/l/stayputvr](https://foxipso.gumroad.com/l/stayputvr)**
+
+Jinxxy: **[jinxy.com/foxipso/StayPutVR](https://jinxxy.com/foxipso/StayPutVR)**
+
+Use code `github` for 10% off!
 
 ## 📥 Quickstart
 
@@ -66,10 +72,14 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 🗺️ Roadmap 
 
-* OpenShock integration
+* ~~OpenShock integration~~ Done!
+* ~~Multiple shockers (OpenShock)~~ Done!
+* ~~Multiple shockers (PiShock)~~ Done!
+* ~~PiShock WebSocket v2 support~~ Done!
+* ~~Emergency stop support~~ Done!
 * ButtplugIO integration
 * DG-Lab integration
-* Placement spheres/hints (attempt #2)
+* ~~Placement spheres/hints (attempt #2)~~ Done!
 * In-world audio emitters (attempt #2)
 
 ## 💾 Building From Source
@@ -87,7 +97,7 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
-**1.2.0** - PiShock WebSocket v2 support (10/21/2025)
+**1.2.0** - PiShock WebSocket v2 support (10/27/2025)
 - Added PiShock WebSocket v2 support (faster response times, future multi-device support)
 - Added support for multiple shockers using PiShock WebSocket v2
 - Fixed a bug where warning OSC messages ("Locked Warning", enum 3) weren't being sent
