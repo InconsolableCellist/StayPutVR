@@ -58,9 +58,10 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 - Integration with VRChat, PiShock, OpenShock, and Twitch (experimental)
 - Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
 - Audio cues for warnings and boundary violations
-- Configurable timers for automatic unlocking
-- Twitch chat bot with real-time command processing
-- Multi-shocker support (OpenShock)
+- Configurable timers for automatic unlocking and shock cooldown
+- Multi-shocker support (OpenShock & PiShock)
+- Supports placement spheres in the prefab
+- Can stop your locomotion in VRChat when locked (recommended with placement spheres)
 - Emergency stop mode
   - Immediately unlocks all devices and prevents any further shocking 
   - Requires a button push in the UI to go back to normal operation
