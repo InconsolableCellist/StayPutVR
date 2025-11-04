@@ -55,7 +55,7 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
   - **Warning zone**: You're straying too far--watch out!
   - **Non-Compliance zone**: Now you've done it.
   - **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
-- Integration with VRChat, PiShock, OpenShock, and Twitch (experimental)
+- Integration with VRChat, PiShock, OpenShock, ButtplugIO and Twitch (experimental)
 - Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
 - Audio cues for warnings and boundary violations
 - Configurable timers for automatic unlocking and shock cooldown
@@ -78,7 +78,7 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 * ~~Multiple shockers (PiShock)~~ Done!
 * ~~PiShock WebSocket v2 support~~ Done!
 * ~~Emergency stop support~~ Done!
-* ButtplugIO integration
+* ~~ButtplugIO integration~~ Done!
 * DG-Lab integration
 * ~~Placement spheres/hints (attempt #2)~~ Done!
 * In-world audio emitters (attempt #2)
@@ -97,6 +97,9 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 5. Install with `cmake --build build --target install --config Release`
 
 ## 📅 Version History
+
+**1.3.0** - ButtplugIO integration (11/3/2025)
+- Added ButtplugIO integration (experimental)
 
 **1.2.0** - PiShock WebSocket v2 support (10/27/2025)
 - Added PiShock WebSocket v2 support (faster response times, future multi-device support)

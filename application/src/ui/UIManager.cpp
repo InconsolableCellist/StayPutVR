@@ -54,6 +54,7 @@ namespace StayPutVR {
         ShutdownTwitchManager();
         ShutdownPiShockManager();
         ShutdownOpenShockManager();
+        ShutdownButtplugManager();
         
         if (device_manager_) {
             delete device_manager_;
@@ -272,6 +273,7 @@ namespace StayPutVR {
         InitializePiShockManager();
         InitializePiShockWebSocketManager();
         InitializeOpenShockManager();
+        InitializeButtplugManager();
         
         return true;
     }
@@ -304,45 +306,39 @@ namespace StayPutVR {
             }
         }
         
-        // Update Twitch manager
         if (twitch_manager_) {
             twitch_manager_->Update();
         }
         
-        // Update PiShock WebSocket manager
         if (pishock_ws_manager_) {
             pishock_ws_manager_->Update();
         }
         
-        // Process Twitch unlock timer
+        if (buttplug_manager_) {
+            buttplug_manager_->Update();
+        }
+        
         ProcessTwitchUnlockTimer();
         
-        // Process global out-of-bounds timer
         ProcessGlobalOutOfBoundsTimer();
         ProcessBiteTimer();
         
-        // Start the Dear ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         
-        // Update device manager
         if (device_manager_) {
             device_manager_->Update();
             
-            // Get updated device positions
             const auto& devices = device_manager_->GetDevices();
             
-            // Process device positions for UI
             UpdateDevicePositions(devices);
         }
     }
 
     void UIManager::Render() {
-        // Render the UI
         RenderMainWindow();
         
-        // Rendering
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window_, &display_w, &display_h);
@@ -366,6 +362,7 @@ namespace StayPutVR {
         ShutdownTwitchManager();
         ShutdownPiShockManager();
         ShutdownOpenShockManager();
+        ShutdownButtplugManager();
         
         // Give managers time to properly clean up (especially WebSocket connections)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -383,7 +380,6 @@ namespace StayPutVR {
             }
         }
         
-        // Shutdown audio system
         AudioManager::Shutdown();
         
         if (window_ != nullptr) {
@@ -645,6 +641,22 @@ namespace StayPutVR {
                 device_positions_[index].position_deviation = 0.0f;
                 device_positions_[index].exceeds_threshold = false;
                 device_positions_[index].in_warning_zone = false;
+                
+                // Trigger Buttplug safe zone actions for newly locked device
+                if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        Logger::Info("Triggering Buttplug safe zone actions for individually locked device " + serial);
+                    }
+                    buttplug_manager_->TriggerSafeZoneActions(serial);
+                }
+            } else {
+                // Clear Buttplug zone state for unlocked device
+                if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        Logger::Info("Clearing Buttplug zone state for individually unlocked device " + serial);
+                    }
+                    buttplug_manager_->ClearZoneState(serial);
+                }
             }
             
             // Send OSC status update for individual device lock/unlock
@@ -731,6 +743,14 @@ namespace StayPutVR {
                                                    OSCManager::GetInstance().GetRoleString(device.role) + ")");
                         }
                     }
+                    
+                    // Trigger Buttplug safe zone actions if enabled (device starts in safe zone when locked)
+                    if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering Buttplug safe zone actions for newly locked device " + device.serial);
+                        }
+                        buttplug_manager_->TriggerSafeZoneActions(device.serial);
+                    }
                 }
             }
             
@@ -754,6 +774,14 @@ namespace StayPutVR {
                         }
                     }
                 }
+            }
+            
+            // Clear all Buttplug zone states when unlocking
+            if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                if (StayPutVR::Logger::IsInitialized()) {
+                    Logger::Info("Clearing Buttplug zone states for unlocked devices");
+                }
+                buttplug_manager_->ClearZoneState("ALL");
             }
             
             // Play unlock sound if enabled
@@ -851,6 +879,14 @@ namespace StayPutVR {
                         }
                     }
                     
+                    // Trigger Buttplug safe zone actions when returning to safe zone
+                    if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering Buttplug safe zone actions for device " + device.serial + " returning to safe zone");
+                        }
+                        buttplug_manager_->TriggerSafeZoneActions(device.serial);
+                    }
+                    
                     success_triggered = true;
                 }
                 
@@ -862,9 +898,6 @@ namespace StayPutVR {
                                                 std::to_string(device.position_deviation));
                     }
                     
-                    // Remove PiShock warning call - only use audio warnings for this zone
-                    // Audio warning will still be handled by the existing code below
-                    
                     // Send OSC status update for warning zone entry
                     if (device.role != DeviceRole::None) {
                         OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
@@ -874,6 +907,14 @@ namespace StayPutVR {
                             StayPutVR::Logger::Debug("Sent OSC status LockedWarning for device " + device.serial + 
                                                    " (role: " + OSCManager::GetInstance().GetRoleString(device.role) + ")");
                         }
+                    }
+                    
+                    // Trigger Buttplug warning zone actions when entering warning zone
+                    if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering Buttplug warning zone actions for device " + device.serial + " entering warning zone");
+                        }
+                        buttplug_manager_->TriggerWarningActions(device.serial);
                     }
                 }
                 
@@ -895,6 +936,14 @@ namespace StayPutVR {
                                                    " returning from out of bounds (role: " + 
                                                    OSCManager::GetInstance().GetRoleString(device.role) + ")");
                         }
+                    }
+                    
+                    // Trigger Buttplug warning zone actions when returning to warning zone from out of bounds
+                    if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering Buttplug warning zone actions for device " + device.serial + " returning to warning from out of bounds");
+                        }
+                        buttplug_manager_->TriggerWarningActions(device.serial);
                     }
                 }
                 
@@ -1220,12 +1269,10 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderMainWindow() {
-        // Create main window that fills the entire viewport
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);
         ImGui::SetNextWindowSize(viewport->WorkSize);
         
-        // Set window flags to ensure scrolling is available if content doesn't fit
         ImGui::Begin("StayPutVR Control Panel", nullptr, 
             ImGuiWindowFlags_NoDecoration | 
             ImGuiWindowFlags_NoMove | 
@@ -1233,14 +1280,11 @@ namespace StayPutVR {
             ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysVerticalScrollbar);
         
-        // Title bar
         ImGui::Text("StayPutVR Control Panel");
         ImGui::Separator();
         
-        // Render tab bar
         RenderTabBar();
         
-        // Render content based on current tab
         switch (current_tab_) {
             case TabType::MAIN:
                 RenderMainTab();
@@ -1265,6 +1309,9 @@ namespace StayPutVR {
                 break;
             case TabType::OPENSHOCK:
                 RenderOpenShockTab();
+                break;
+            case TabType::BUTTPLUG:
+                RenderButtplugTab();
                 break;
             case TabType::TWITCH:
                 RenderTwitchTab();
@@ -1314,6 +1361,11 @@ namespace StayPutVR {
                 ImGui::EndTabItem();
             }
             
+            if (ImGui::BeginTabItem("ButtplugIO")) {
+                current_tab_ = TabType::BUTTPLUG;
+                ImGui::EndTabItem();
+            }
+            
             if (ImGui::BeginTabItem("Twitch")) {
                 current_tab_ = TabType::TWITCH;
                 ImGui::EndTabItem();
@@ -1345,7 +1397,6 @@ namespace StayPutVR {
             
             if (ImGui::Button("Retry Connection")) {
                 if (device_manager_) {
-                    // Use the new thread-safe manual reconnection method
                     if (device_manager_->ManualReconnect()) {
                         if (StayPutVR::Logger::IsInitialized()) {
                             StayPutVR::Logger::Info("Successfully reconnected to driver");
@@ -2675,7 +2726,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.2.0");
+        ImGui::Text("Version: 1.3.0");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
@@ -2872,13 +2923,14 @@ namespace StayPutVR {
         ImGui::Text("Connected Devices: %zu", device_positions_.size());
         ImGui::Separator();
         
-        if (ImGui::BeginTable("DevicesTable", 6, ImGuiTableFlags_Borders)) {
+        if (ImGui::BeginTable("DevicesTable", 7, ImGuiTableFlags_Borders)) {
             ImGui::TableSetupColumn("Device Info");
             ImGui::TableSetupColumn("Role");
             ImGui::TableSetupColumn("Position & Rotation");
             ImGui::TableSetupColumn("Status");
             ImGui::TableSetupColumn("Lock Controls");
             ImGui::TableSetupColumn("Shock Devices");
+            ImGui::TableSetupColumn("Vibration Devices");
             ImGui::TableHeadersRow();
             
             for (auto& device : device_positions_) {
@@ -3254,6 +3306,78 @@ namespace StayPutVR {
                         device.shock_device_enabled[i] = false;
                     }
                     config_.device_shock_ids[device.serial] = device.shock_device_enabled;
+                    SaveConfig();
+                }
+                
+                ImGui::PopID();
+                
+                // Vibration Devices column - for Buttplug integration
+                ImGui::TableNextColumn();
+                ImGui::PushID(("vibrationDevices" + device.serial).c_str());
+                
+                // Load device vibration settings from config
+                auto vibration_it = config_.device_vibration_ids.find(device.serial);
+                if (vibration_it != config_.device_vibration_ids.end()) {
+                    device.vibration_device_enabled = vibration_it->second;
+                }
+                
+                // Small buttons for vibration device selection (1-5)
+                ImGui::Text("Vibration IDs:");
+                ImGui::SameLine();
+                ImGui::TextDisabled("(?)");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::TextUnformatted("Button 1 = Device Index 0, Button 2 = Device Index 1, etc.");
+                    ImGui::EndTooltip();
+                }
+                for (int i = 0; i < 5; ++i) {
+                    // Show button if Buttplug device is configured (-1 means not configured)
+                    bool has_device = config_.buttplug_device_indices[i] >= 0;
+                    if (has_device) {
+                        ImGui::PushID(i);
+                        
+                        // Color the button based on whether it's enabled
+                        if (device.vibration_device_enabled[i]) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.8f, 1.0f));  // Purple for vibration
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.9f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.7f, 1.0f));
+                        } else {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                        }
+                        
+                        if (ImGui::Button(std::to_string(i + 1).c_str(), ImVec2(25, 25))) {
+                            device.vibration_device_enabled[i] = !device.vibration_device_enabled[i];
+                            config_.device_vibration_ids[device.serial] = device.vibration_device_enabled;
+                            SaveConfig();
+                        }
+                        
+                        ImGui::PopStyleColor(3);
+                        ImGui::PopID();
+                        
+                        if (i < 4) ImGui::SameLine();
+                    }
+                }
+                
+                // All/None buttons
+                ImGui::NewLine();
+                if (ImGui::Button("All##Vibration", ImVec2(40, 20))) {
+                    for (int i = 0; i < 5; ++i) {
+                        bool has_device = config_.buttplug_device_indices[i] >= 0;  // -1 means not configured
+                        if (has_device) {
+                            device.vibration_device_enabled[i] = true;
+                        }
+                    }
+                    config_.device_vibration_ids[device.serial] = device.vibration_device_enabled;
+                    SaveConfig();
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("None##Vibration", ImVec2(40, 20))) {
+                    for (int i = 0; i < 5; ++i) {
+                        device.vibration_device_enabled[i] = false;
+                    }
+                    config_.device_vibration_ids[device.serial] = device.vibration_device_enabled;
                     SaveConfig();
                 }
                 
@@ -3980,6 +4104,11 @@ namespace StayPutVR {
                 pishock_ws_manager_->TriggerDisobedienceActions(device_serial);
             }
         }
+        
+        // Also trigger Buttplug disobedience actions if enabled
+        if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+            buttplug_manager_->TriggerDisobedienceActions(device_serial);
+        }
     }
 
     void UIManager::TriggerPiShockWarning(const std::string& device_serial) {
@@ -3991,6 +4120,11 @@ namespace StayPutVR {
             if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
                 pishock_ws_manager_->TriggerWarningActions(device_serial);
             }
+        }
+        
+        // Also trigger Buttplug warning actions if enabled
+        if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+            buttplug_manager_->TriggerWarningActions(device_serial);
         }
     }
 
@@ -4192,6 +4326,344 @@ namespace StayPutVR {
             case DeviceRole::Hip: return OSCDeviceType::Hip;
             default: return OSCDeviceType::HMD; // Default fallback, though this shouldn't be used for None role
         }
+    }
+
+    void UIManager::RenderButtplugTab() {
+        ImGui::Text("Buttplug/Intiface Integration");
+        ImGui::Separator();
+        
+        // Safety warning
+        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
+        ImGui::Text("Buttplug/Intiface devices should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of these devices, even if you use them in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
+        ImGui::PopTextWrapPos();
+        
+        bool user_agreement = config_.buttplug_user_agreement;
+        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
+            config_.buttplug_user_agreement = user_agreement;
+            SaveConfig();
+        }
+        
+        ImGui::Separator();
+        
+        ImGui::BeginDisabled(!user_agreement);
+        bool buttplug_enabled = config_.buttplug_enabled;
+        if (ImGui::Checkbox("Enable Buttplug/Intiface Integration", &buttplug_enabled)) {
+            config_.buttplug_enabled = buttplug_enabled;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Enable integration with Buttplug/Intiface for vibration feedback");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::Separator();
+        
+        ImGui::Text("Buttplug Server Connection:");
+        
+        static char server_address_buffer[256] = "";
+        if (config_.buttplug_server_address != server_address_buffer) {
+            strcpy_s(server_address_buffer, sizeof(server_address_buffer), config_.buttplug_server_address.c_str());
+        }
+        
+        if (ImGui::InputText("Server Address", server_address_buffer, sizeof(server_address_buffer))) {
+            config_.buttplug_server_address = server_address_buffer;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Address of the Buttplug/Intiface server (default: localhost)");
+            ImGui::EndTooltip();
+        }
+        
+        int server_port = config_.buttplug_server_port;
+        if (ImGui::InputInt("Server Port", &server_port)) {
+            if (server_port > 0 && server_port < 65536) {
+                config_.buttplug_server_port = server_port;
+                SaveConfig();
+            }
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Port of the Buttplug/Intiface server (default: 12345)");
+            ImGui::EndTooltip();
+        }
+        
+        ImGui::Spacing();
+        ImGui::Text("Status: ");
+        ImGui::SameLine();
+        
+        if (buttplug_manager_ && buttplug_manager_->IsConnected()) {
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), buttplug_manager_->GetConnectionStatus().c_str());
+            
+            ImGui::SameLine();
+            if (ImGui::Button("Disconnect##ButtplugDisconnect")) {
+                buttplug_manager_->Disconnect();
+            }
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
+            
+            ImGui::SameLine();
+            bool can_connect = !config_.buttplug_server_address.empty() && 
+                             config_.buttplug_server_port > 0;
+            
+            ImGui::BeginDisabled(!can_connect);
+            if (ImGui::Button("Connect##ButtplugConnect")) {
+                if (buttplug_manager_) {
+                    if (!buttplug_manager_->Connect()) {
+                        Logger::Error("Failed to connect to Buttplug: " + 
+                                    buttplug_manager_->GetLastError());
+                    }
+                }
+            }
+            ImGui::EndDisabled();
+        }
+        
+        ImGui::Separator();
+        
+        // Device Indices Configuration
+        ImGui::Text("Device Indices:");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Device indices from Intiface (0 is the first device).\nUse -1 for unused slots.\nDevice 0 is considered the master device.");
+            ImGui::EndTooltip();
+        }
+        
+        for (int i = 0; i < 5; ++i) {
+            int device_index = config_.buttplug_device_indices[i];
+            
+            std::string label = std::to_string(i) + ": ";
+            if (i == 0) {
+                label += "(master)";
+            }
+            
+            ImGui::PushID(i);
+            if (ImGui::InputInt(label.c_str(), &device_index)) {
+                if (device_index >= -1) {  // Allow -1 (not configured) or 0+ (valid device indices)
+                    config_.buttplug_device_indices[i] = device_index;
+                    SaveConfig();
+                }
+            }
+            ImGui::PopID();
+        }
+        
+        ImGui::Separator();
+        
+        // Zone Activation Settings
+        ImGui::Text("Zone Activation:");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Choose which zones trigger vibration");
+            ImGui::EndTooltip();
+        }
+        
+        bool safe_zone = config_.buttplug_safe_zone_enabled;
+        if (ImGui::Checkbox("Vibrate in Safe Zone", &safe_zone)) {
+            config_.buttplug_safe_zone_enabled = safe_zone;
+            SaveConfig();
+        }
+        
+        bool warning_zone = config_.buttplug_warning_zone_enabled;
+        if (ImGui::Checkbox("Vibrate in Warning Zone", &warning_zone)) {
+            config_.buttplug_warning_zone_enabled = warning_zone;
+            SaveConfig();
+        }
+        
+        bool disobedience_zone = config_.buttplug_disobedience_zone_enabled;
+        if (ImGui::Checkbox("Vibrate when Disobeying (Out of Bounds)", &disobedience_zone)) {
+            config_.buttplug_disobedience_zone_enabled = disobedience_zone;
+            SaveConfig();
+        }
+        
+        ImGui::Separator();
+        
+        if (!config_.buttplug_enabled) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        }
+        
+        // Safe Zone Settings
+        ImGui::Text("Safe Zone Settings:");
+        ImGui::Separator();
+        
+        // Safe Zone Intensity Settings
+        bool use_individual_safe = config_.buttplug_use_individual_safe_intensities;
+        if (ImGui::Checkbox("Use Individual Device Safe Intensities", &use_individual_safe)) {
+            config_.buttplug_use_individual_safe_intensities = use_individual_safe;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Enable to set different safe zone intensity levels for each device. When disabled, all devices use the master safe intensity.");
+            ImGui::EndTooltip();
+        }
+        
+        if (!use_individual_safe) {
+            // Master safe intensity slider
+            float master_safe_intensity = config_.buttplug_master_safe_intensity;
+            if (ImGui::SliderFloat("Master Safe Intensity", &master_safe_intensity, 0.0f, 1.0f, "%.2f")) {
+                config_.buttplug_master_safe_intensity = master_safe_intensity;
+                SaveConfig();
+            }
+        } else {
+            // Individual safe intensity sliders
+            ImGui::Text("Individual Safe Intensities:");
+            for (int i = 0; i < 5; ++i) {
+                if (config_.buttplug_device_indices[i] >= 0) {  // -1 means not configured
+                    float intensity = config_.buttplug_individual_safe_intensities[i];
+                    std::string label = "Device " + std::to_string(i);
+                    ImGui::PushID(200 + i);  // Different ID range to avoid conflicts
+                    if (ImGui::SliderFloat(label.c_str(), &intensity, 0.0f, 1.0f, "%.2f")) {
+                        config_.buttplug_individual_safe_intensities[i] = intensity;
+                        SaveConfig();
+                    }
+                    ImGui::PopID();
+                }
+            }
+        }
+        
+        ImGui::Separator();
+        
+        // Warning Zone Settings
+        ImGui::Text("Warning Zone Settings:");
+        ImGui::Separator();
+        
+        // Warning Intensity Settings
+        bool use_individual_warning = config_.buttplug_use_individual_warning_intensities;
+        if (ImGui::Checkbox("Use Individual Device Warning Intensities", &use_individual_warning)) {
+            config_.buttplug_use_individual_warning_intensities = use_individual_warning;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Enable to set different warning intensity levels for each device. When disabled, all devices use the master warning intensity.");
+            ImGui::EndTooltip();
+        }
+        
+        if (!use_individual_warning) {
+            float master_warning_intensity = config_.buttplug_master_warning_intensity;
+            if (ImGui::SliderFloat("Master Warning Intensity", &master_warning_intensity, 0.0f, 1.0f, "%.2f")) {
+                config_.buttplug_master_warning_intensity = master_warning_intensity;
+                SaveConfig();
+            }
+        } else {
+            ImGui::Text("Individual Warning Intensities:");
+            for (int i = 0; i < 5; ++i) {
+                if (config_.buttplug_device_indices[i] >= 0) {  // -1 means not configured
+                    float intensity = config_.buttplug_individual_warning_intensities[i];
+                    std::string label = "Device " + std::to_string(i);
+                    ImGui::PushID(i);
+                    if (ImGui::SliderFloat(label.c_str(), &intensity, 0.0f, 1.0f, "%.2f")) {
+                        config_.buttplug_individual_warning_intensities[i] = intensity;
+                        SaveConfig();
+                    }
+                    ImGui::PopID();
+                }
+            }
+        }
+        
+        ImGui::Separator();
+        
+        ImGui::Text("Disobedience (Out of Bounds) Settings:");
+        ImGui::Separator();
+        
+        // Disobedience Intensity Settings
+        bool use_individual_disobedience = config_.buttplug_use_individual_disobedience_intensities;
+        if (ImGui::Checkbox("Use Individual Device Disobedience Intensities", &use_individual_disobedience)) {
+            config_.buttplug_use_individual_disobedience_intensities = use_individual_disobedience;
+            SaveConfig();
+        }
+        
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::BeginTooltip();
+            ImGui::TextUnformatted("Enable to set different disobedience intensity levels for each device. When disabled, all devices use the master disobedience intensity.");
+            ImGui::EndTooltip();
+        }
+        
+        if (!use_individual_disobedience) {
+            // Master disobedience intensity slider
+            float master_disobedience_intensity = config_.buttplug_master_disobedience_intensity;
+            if (ImGui::SliderFloat("Master Disobedience Intensity", &master_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                config_.buttplug_master_disobedience_intensity = master_disobedience_intensity;
+                SaveConfig();
+            }
+        } else {
+            // Individual disobedience intensity sliders
+            ImGui::Text("Individual Disobedience Intensities:");
+            for (int i = 0; i < 5; ++i) {
+                if (config_.buttplug_device_indices[i] >= 0) {  // -1 means not configured
+                    float intensity = config_.buttplug_individual_disobedience_intensities[i];
+                    std::string label = "Device " + std::to_string(i);
+                    ImGui::PushID(100 + i);  // Different ID range to avoid conflicts
+                    if (ImGui::SliderFloat(label.c_str(), &intensity, 0.0f, 1.0f, "%.2f")) {
+                        config_.buttplug_individual_disobedience_intensities[i] = intensity;
+                        SaveConfig();
+                    }
+                    ImGui::PopID();
+                }
+            }
+        }
+        
+        if (!config_.buttplug_enabled) {
+            ImGui::PopStyleColor();
+        }
+        
+        ImGui::Separator();
+        
+        // Test buttons
+        ImGui::BeginDisabled(!buttplug_enabled);
+        
+        bool can_test = buttplug_manager_ && buttplug_manager_->IsConnected();
+        
+        ImGui::BeginDisabled(!can_test);
+        
+        if (ImGui::Button("Start Test (Continuous Vibration)")) {
+            if (buttplug_manager_) {
+                buttplug_manager_->TestActions();
+            }
+        }
+        
+        ImGui::SameLine();
+        
+        if (ImGui::Button("Stop Test")) {
+            if (buttplug_manager_) {
+                buttplug_manager_->StopAllDevices();
+            }
+        }
+        
+        ImGui::EndDisabled();
+        
+        if (!can_test && buttplug_enabled) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Connect to Buttplug server first");
+        }
+        
+        if (can_test) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Note: Vibration is continuous - use Stop Test to turn it off");
+        }
+        
+        ImGui::EndDisabled(); // End buttplug_enabled disabled
+        ImGui::EndDisabled(); // End user_agreement disabled
     }
 
     void UIManager::RenderTwitchTab() {
@@ -5153,6 +5625,56 @@ namespace StayPutVR {
             
             if (Logger::IsInitialized()) {
                 Logger::Info("OpenShockManager shut down");
+            }
+        }
+    }
+
+    void UIManager::InitializeButtplugManager() {
+        buttplug_manager_ = std::make_unique<ButtplugManager>();
+        
+        if (buttplug_manager_->Initialize(&config_)) {
+            // Set up callback for Buttplug action results
+            buttplug_manager_->SetActionCallback(
+                [this](const std::string& action_type, bool success, const std::string& message) {
+                    if (Logger::IsInitialized()) {
+                        if (success) {
+                            Logger::Info("Buttplug action completed: " + action_type + " - " + message);
+                        } else {
+                            Logger::Error("Buttplug action failed: " + action_type + " - " + message);
+                        }
+                    }
+                }
+            );
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("ButtplugManager initialized successfully");
+            }
+            
+            // Auto-connect if enabled and user agreement is checked
+            if (config_.buttplug_enabled && config_.buttplug_user_agreement) {
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Auto-connecting to Buttplug/Intiface on startup");
+                }
+                if (!buttplug_manager_->Connect()) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Warning("Failed to auto-connect to Buttplug: " + buttplug_manager_->GetLastError());
+                    }
+                }
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to initialize ButtplugManager");
+            }
+        }
+    }
+
+    void UIManager::ShutdownButtplugManager() {
+        if (buttplug_manager_) {
+            buttplug_manager_->Shutdown();
+            buttplug_manager_.reset();
+            
+            if (Logger::IsInitialized()) {
+                Logger::Info("ButtplugManager shut down");
             }
         }
     }

@@ -32,6 +32,7 @@
 #include "../managers/PiShockManager.hpp"
 #include "../managers/PiShockWebSocketManager.hpp"
 #include "../managers/OpenShockManager.hpp"
+#include "../managers/ButtplugManager.hpp"
 
 namespace StayPutVR {
 
@@ -46,6 +47,7 @@ namespace StayPutVR {
         SETTINGS,
         PISHOCK,
         OPENSHOCK,
+        BUTTPLUG,
         TWITCH
     };
 
@@ -77,8 +79,11 @@ namespace StayPutVR {
         bool exceeds_threshold = false;
         bool in_warning_zone = false;
         
-        // OpenShock device selection - which shock IDs should be used for this device
+        // OpenShock/PiShock device selection - which shock IDs should be used for this device
         std::array<bool, 5> shock_device_enabled = {false, false, false, false, false};
+        
+        // Buttplug device selection - which vibration IDs should be used for this device
+        std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
     struct SimpleDevicePosition {
@@ -163,6 +168,7 @@ namespace StayPutVR {
         void RenderSettingsTab();
         void RenderPiShockTab();
         void RenderOpenShockTab();
+        void RenderButtplugTab();
         void RenderTwitchTab();
         
         // Original UI elements (to be migrated to tabs)
@@ -196,6 +202,8 @@ namespace StayPutVR {
         std::unique_ptr<PiShockWebSocketManager> pishock_ws_manager_;
         
         std::unique_ptr<OpenShockManager> openshock_manager_;
+        
+        std::unique_ptr<ButtplugManager> buttplug_manager_;
         
         // Countdown timer variables
         bool countdown_active_ = false;
@@ -233,6 +241,9 @@ namespace StayPutVR {
         
         void InitializeOpenShockManager();
         void ShutdownOpenShockManager();
+        
+        void InitializeButtplugManager();
+        void ShutdownButtplugManager();
         
         // Twitch helper functions
         void InitializeTwitchManager();

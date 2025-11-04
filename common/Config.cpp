@@ -305,6 +305,77 @@ bool Config::LoadFromFile(const std::string& filename) {
             }
         }
 
+        // Buttplug/Intiface Settings
+        buttplug_enabled = j.value("buttplug_enabled", false);
+        buttplug_user_agreement = j.value("buttplug_user_agreement", false);
+        
+        // Buttplug Server Settings
+        buttplug_server_address = j.value("buttplug_server_address", "localhost");
+        buttplug_server_port = j.value("buttplug_server_port", 12345);
+        
+        // Load multiple device indices
+        if (j.contains("buttplug_device_indices") && j["buttplug_device_indices"].is_array()) {
+            auto device_indices_json = j["buttplug_device_indices"];
+            for (size_t i = 0; i < min(device_indices_json.size(), static_cast<size_t>(5)); ++i) {
+                if (device_indices_json[i].is_number_integer()) {
+                    buttplug_device_indices[i] = device_indices_json[i];
+                }
+            }
+        }
+        
+        // Zone activation settings
+        buttplug_safe_zone_enabled = j.value("buttplug_safe_zone_enabled", false);
+        buttplug_warning_zone_enabled = j.value("buttplug_warning_zone_enabled", true);
+        buttplug_disobedience_zone_enabled = j.value("buttplug_disobedience_zone_enabled", true);
+        
+        // Safe Zone Buttplug Settings
+        buttplug_safe_intensity = j.value("buttplug_safe_intensity", 0.15f);
+        buttplug_safe_duration = j.value("buttplug_safe_duration", 1.0f);
+        
+        // Warning Zone Buttplug Settings
+        buttplug_warning_intensity = j.value("buttplug_warning_intensity", 0.25f);
+        buttplug_warning_duration = j.value("buttplug_warning_duration", 1.0f);
+        
+        // Disobedience (Out of Bounds) Buttplug Settings
+        buttplug_disobedience_intensity = j.value("buttplug_disobedience_intensity", 0.5f);
+        buttplug_disobedience_duration = j.value("buttplug_disobedience_duration", 2.0f);
+        
+        // Master intensity settings for Buttplug
+        buttplug_use_individual_safe_intensities = j.value("buttplug_use_individual_safe_intensities", false);
+        buttplug_use_individual_warning_intensities = j.value("buttplug_use_individual_warning_intensities", false);
+        buttplug_use_individual_disobedience_intensities = j.value("buttplug_use_individual_disobedience_intensities", false);
+        buttplug_master_safe_intensity = j.value("buttplug_master_safe_intensity", 0.15f);
+        buttplug_master_warning_intensity = j.value("buttplug_master_warning_intensity", 0.25f);
+        buttplug_master_disobedience_intensity = j.value("buttplug_master_disobedience_intensity", 0.5f);
+        
+        // Individual device intensities for Buttplug
+        if (j.contains("buttplug_individual_safe_intensities") && j["buttplug_individual_safe_intensities"].is_array()) {
+            auto safe_intensities = j["buttplug_individual_safe_intensities"];
+            for (size_t i = 0; i < min(safe_intensities.size(), static_cast<size_t>(5)); ++i) {
+                if (safe_intensities[i].is_number()) {
+                    buttplug_individual_safe_intensities[i] = safe_intensities[i];
+                }
+            }
+        }
+        
+        if (j.contains("buttplug_individual_warning_intensities") && j["buttplug_individual_warning_intensities"].is_array()) {
+            auto warning_intensities = j["buttplug_individual_warning_intensities"];
+            for (size_t i = 0; i < min(warning_intensities.size(), static_cast<size_t>(5)); ++i) {
+                if (warning_intensities[i].is_number()) {
+                    buttplug_individual_warning_intensities[i] = warning_intensities[i];
+                }
+            }
+        }
+        
+        if (j.contains("buttplug_individual_disobedience_intensities") && j["buttplug_individual_disobedience_intensities"].is_array()) {
+            auto disobedience_intensities = j["buttplug_individual_disobedience_intensities"];
+            for (size_t i = 0; i < min(disobedience_intensities.size(), static_cast<size_t>(5)); ++i) {
+                if (disobedience_intensities[i].is_number()) {
+                    buttplug_individual_disobedience_intensities[i] = disobedience_intensities[i];
+                }
+            }
+        }
+
         // Twitch Integration Settings
         twitch_enabled = j.value("twitch_enabled", false);
         twitch_user_agreement = j.value("twitch_user_agreement", false);
@@ -388,6 +459,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         device_settings.clear();
         device_roles.clear();
         device_shock_ids.clear();
+        device_vibration_ids.clear();
         
         // Load device names, settings, and roles from new format (direct properties)
         if (j.contains("device_names") && j["device_names"].is_object()) {
@@ -429,6 +501,21 @@ bool Config::LoadFromFile(const std::string& filename) {
                     device_shock_ids[serial] = shock_ids;
                     if (Logger::IsInitialized()) {
                         Logger::Debug("Loaded device shock IDs for " + serial);
+                    }
+                }
+            }
+        }
+        
+        if (j.contains("device_vibration_ids") && j["device_vibration_ids"].is_object()) {
+            for (auto& [serial, vibration_ids_json] : j["device_vibration_ids"].items()) {
+                if (vibration_ids_json.is_array() && vibration_ids_json.size() >= 5) {
+                    std::array<bool, 5> vibration_ids;
+                    for (size_t i = 0; i < 5; ++i) {
+                        vibration_ids[i] = vibration_ids_json[i].get<bool>();
+                    }
+                    device_vibration_ids[serial] = vibration_ids;
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("Loaded device vibration IDs for " + serial);
                     }
                 }
             }
@@ -613,6 +700,65 @@ bool Config::SaveToFile(const std::string& filename) const {
         }
         j["openshock_individual_disobedience_intensities"] = disobedience_intensities_json;
 
+        // Buttplug/Intiface Settings
+        j["buttplug_enabled"] = buttplug_enabled;
+        j["buttplug_user_agreement"] = buttplug_user_agreement;
+        
+        // Buttplug Server Settings
+        j["buttplug_server_address"] = buttplug_server_address;
+        j["buttplug_server_port"] = buttplug_server_port;
+        
+        // Save device indices array
+        nlohmann::json buttplug_device_indices_json = nlohmann::json::array();
+        for (const auto& idx : buttplug_device_indices) {
+            buttplug_device_indices_json.push_back(idx);
+        }
+        j["buttplug_device_indices"] = buttplug_device_indices_json;
+        
+        // Zone activation settings
+        j["buttplug_safe_zone_enabled"] = buttplug_safe_zone_enabled;
+        j["buttplug_warning_zone_enabled"] = buttplug_warning_zone_enabled;
+        j["buttplug_disobedience_zone_enabled"] = buttplug_disobedience_zone_enabled;
+        
+        // Safe Zone Buttplug Settings
+        j["buttplug_safe_intensity"] = buttplug_safe_intensity;
+        j["buttplug_safe_duration"] = buttplug_safe_duration;
+        
+        // Warning Zone Buttplug Settings
+        j["buttplug_warning_intensity"] = buttplug_warning_intensity;
+        j["buttplug_warning_duration"] = buttplug_warning_duration;
+        
+        // Disobedience (Out of Bounds) Buttplug Settings
+        j["buttplug_disobedience_intensity"] = buttplug_disobedience_intensity;
+        j["buttplug_disobedience_duration"] = buttplug_disobedience_duration;
+        
+        // Master intensity settings for Buttplug
+        j["buttplug_use_individual_safe_intensities"] = buttplug_use_individual_safe_intensities;
+        j["buttplug_use_individual_warning_intensities"] = buttplug_use_individual_warning_intensities;
+        j["buttplug_use_individual_disobedience_intensities"] = buttplug_use_individual_disobedience_intensities;
+        j["buttplug_master_safe_intensity"] = buttplug_master_safe_intensity;
+        j["buttplug_master_warning_intensity"] = buttplug_master_warning_intensity;
+        j["buttplug_master_disobedience_intensity"] = buttplug_master_disobedience_intensity;
+        
+        // Individual device intensities for Buttplug
+        nlohmann::json buttplug_safe_intensities_json = nlohmann::json::array();
+        for (const auto& intensity : buttplug_individual_safe_intensities) {
+            buttplug_safe_intensities_json.push_back(intensity);
+        }
+        j["buttplug_individual_safe_intensities"] = buttplug_safe_intensities_json;
+        
+        nlohmann::json buttplug_warning_intensities_json = nlohmann::json::array();
+        for (const auto& intensity : buttplug_individual_warning_intensities) {
+            buttplug_warning_intensities_json.push_back(intensity);
+        }
+        j["buttplug_individual_warning_intensities"] = buttplug_warning_intensities_json;
+        
+        nlohmann::json buttplug_disobedience_intensities_json = nlohmann::json::array();
+        for (const auto& intensity : buttplug_individual_disobedience_intensities) {
+            buttplug_disobedience_intensities_json.push_back(intensity);
+        }
+        j["buttplug_individual_disobedience_intensities"] = buttplug_disobedience_intensities_json;
+
         // Twitch Integration Settings
         j["twitch_enabled"] = twitch_enabled;
         j["twitch_user_agreement"] = twitch_user_agreement;
@@ -697,6 +843,7 @@ bool Config::SaveToFile(const std::string& filename) const {
         nlohmann::json device_settings_json = nlohmann::json::object();
         nlohmann::json device_names_json = nlohmann::json::object();
         nlohmann::json device_shock_ids_json = nlohmann::json::object();
+        nlohmann::json device_vibration_ids_json = nlohmann::json::object();
         
         // Populate device roles
         for (const auto& [serial, role] : device_roles) {
@@ -726,6 +873,16 @@ bool Config::SaveToFile(const std::string& filename) const {
         }
         j["device_shock_ids"] = device_shock_ids_json;
         
+        // Populate device vibration IDs
+        for (const auto& [serial, vibration_ids] : device_vibration_ids) {
+            nlohmann::json vibration_ids_array = nlohmann::json::array();
+            for (bool enabled : vibration_ids) {
+                vibration_ids_array.push_back(enabled);
+            }
+            device_vibration_ids_json[serial] = vibration_ids_array;
+        }
+        j["device_vibration_ids"] = device_vibration_ids_json;
+        
         // Populate the devices array for backward compatibility
         nlohmann::json devices = nlohmann::json::array();
         // Create a set of all serials across all device maps
@@ -734,6 +891,7 @@ bool Config::SaveToFile(const std::string& filename) const {
         for (const auto& [serial, _] : device_settings) all_serials.insert(serial);
         for (const auto& [serial, _] : device_roles) all_serials.insert(serial);
         for (const auto& [serial, _] : device_shock_ids) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_vibration_ids) all_serials.insert(serial);
         
         // Create device objects
         for (const auto& serial : all_serials) {
