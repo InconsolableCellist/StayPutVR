@@ -130,6 +130,45 @@ public:
     std::array<float, 5> openshock_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
     std::array<float, 5> openshock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
+    // Buttplug/Intiface Settings
+    bool buttplug_enabled = false;
+    bool buttplug_user_agreement = false;
+    
+    // Buttplug Server Settings
+    std::string buttplug_server_address = "localhost";
+    int buttplug_server_port = 12345;
+    std::array<int, 5> buttplug_device_indices = {-1, -1, -1, -1, -1}; // Support up to 5 device indices, -1 means not configured
+    
+    // Zone activation settings for Buttplug (which zones trigger vibration)
+    bool buttplug_safe_zone_enabled = false;         // Vibrate when in safe zone
+    bool buttplug_warning_zone_enabled = false;      // Vibrate when in warning zone
+    bool buttplug_disobedience_zone_enabled = true;  // Vibrate when disobeying (out of bounds)
+    
+    // Safe Zone Buttplug Settings
+    float buttplug_safe_intensity = 0.15f;
+    float buttplug_safe_duration = 1.0f;
+    
+    // Warning Zone Buttplug Settings
+    float buttplug_warning_intensity = 0.25f;
+    float buttplug_warning_duration = 1.0f;
+    
+    // Disobedience (Out of Bounds) Buttplug Settings
+    float buttplug_disobedience_intensity = 0.5f;
+    float buttplug_disobedience_duration = 2.0f;
+    
+    // Master intensity settings for Buttplug
+    bool buttplug_use_individual_safe_intensities = false;
+    bool buttplug_use_individual_warning_intensities = false;
+    bool buttplug_use_individual_disobedience_intensities = false;
+    float buttplug_master_safe_intensity = 0.15f;
+    float buttplug_master_warning_intensity = 0.25f;
+    float buttplug_master_disobedience_intensity = 0.5f;
+    
+    // Individual device intensities for Buttplug (safe, warning and disobedience for each of 5 devices)
+    std::array<float, 5> buttplug_individual_safe_intensities = {0.15f, 0.15f, 0.15f, 0.15f, 0.15f};
+    std::array<float, 5> buttplug_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+    std::array<float, 5> buttplug_individual_disobedience_intensities = {0.5f, 0.5f, 0.5f, 0.5f, 0.5f};
+
     // Twitch Integration Settings
     bool twitch_enabled = false;
     bool twitch_user_agreement = false;
@@ -211,7 +250,8 @@ public:
     std::unordered_map<std::string, std::string> device_names; // serial -> name
     std::unordered_map<std::string, bool> device_settings; // serial -> include_in_locking
     std::unordered_map<std::string, int> device_roles; // serial -> role (stored as int)
-    std::unordered_map<std::string, std::array<bool, 5>> device_shock_ids; // serial -> which shock IDs to use
+    std::unordered_map<std::string, std::array<bool, 5>> device_shock_ids; // serial -> which shock IDs to use (for PiShock/OpenShock)
+    std::unordered_map<std::string, std::array<bool, 5>> device_vibration_ids; // serial -> which vibration IDs to use (for Buttplug)
 };
 
 } // namespace StayPutVR 
