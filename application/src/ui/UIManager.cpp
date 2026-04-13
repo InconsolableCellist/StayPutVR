@@ -1,4 +1,5 @@
 #include "UIManager.hpp"
+#include "ImGuiHelpers.hpp"
 #include <iostream>
 #include <string>
 #include <format>
@@ -274,7 +275,18 @@ namespace StayPutVR {
         InitializePiShockWebSocketManager();
         InitializeOpenShockManager();
         InitializeButtplugManager();
-        
+
+        // Create UI panels
+        pishock_panel_ = std::make_unique<PiShockPanel>(
+            config_, pishock_manager_, pishock_ws_manager_,
+            [this]() { SaveConfig(); });
+        openshock_panel_ = std::make_unique<OpenShockPanel>(
+            config_, openshock_manager_,
+            [this]() { SaveConfig(); });
+        buttplug_panel_ = std::make_unique<ButtplugPanel>(
+            config_, buttplug_manager_,
+            [this]() { SaveConfig(); });
+
         return true;
     }
 
@@ -679,7 +691,7 @@ namespace StayPutVR {
         if (activate && config_.countdown_enabled) {
             // Start countdown by playing countdown.wav once
             // The countdown.wav is a 3-second sound
-            if (config_.audio_enabled) {
+            if (config_.audio.enabled) {
                 std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\countdown.wav";
                 if (std::filesystem::exists(filePath)) {
                     // Set timeout for the lock activation
@@ -692,7 +704,7 @@ namespace StayPutVR {
                     }
                     
                     // Play the countdown sound once
-                    AudioManager::PlaySound("countdown.wav", config_.audio_volume);
+                    AudioManager::PlaySound("countdown.wav", config_.audio.volume);
                 } else {
                     // If countdown.wav doesn't exist, activate lock immediately
                     if (StayPutVR::Logger::IsInitialized()) {
@@ -755,8 +767,8 @@ namespace StayPutVR {
             }
             
             // Play lock sound if enabled
-            if (config_.audio_enabled && config_.lock_audio) {
-                AudioManager::PlayLockSound(config_.audio_volume);
+            if (config_.audio.enabled && config_.audio.lock) {
+                AudioManager::PlayLockSound(config_.audio.volume);
             }
         } else {
             // Send OSC status updates for global unlock
@@ -785,8 +797,8 @@ namespace StayPutVR {
             }
             
             // Play unlock sound if enabled
-            if (config_.audio_enabled && config_.unlock_audio) {
-                AudioManager::PlayUnlockSound(config_.audio_volume);
+            if (config_.audio.enabled && config_.audio.unlock) {
+                AudioManager::PlayUnlockSound(config_.audio.volume);
             }
         }
     }
@@ -1013,7 +1025,7 @@ namespace StayPutVR {
         const float sound_cooldown_seconds = 1.0f;
         
         // Play sounds if needed and if audio is enabled in config
-        if (config_.audio_enabled) {
+        if (config_.audio.enabled) {
             // Special case for success sound: Always play immediately when triggered, 
             // regardless of cooldown or other playing sounds
             if (success_triggered) {
@@ -1025,7 +1037,7 @@ namespace StayPutVR {
                     // Stop any currently playing sound first
                     AudioManager::StopSound();
                     // Play the success sound with the current volume setting
-                    AudioManager::PlaySound("success.wav", config_.audio_volume);
+                    AudioManager::PlaySound("success.wav", config_.audio.volume);
                     // Reset the cooldown timer
                     last_sound_time_ = current_time;
                     return; // Skip other sounds this frame
@@ -1044,13 +1056,13 @@ namespace StayPutVR {
                 bool played_sound = false;
                 
                 // Out of bounds sound (disobedience.wav)
-                if (out_of_bounds_triggered && config_.out_of_bounds_audio) {
+                if (out_of_bounds_triggered && config_.audio.out_of_bounds) {
                     std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
                     if (std::filesystem::exists(filePath)) {
                         if (StayPutVR::Logger::IsInitialized()) {
                             StayPutVR::Logger::Debug("Playing disobedience.wav for out of bounds");
                         }
-                        AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+                        AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
                         played_sound = true;
                     } else {
                         if (StayPutVR::Logger::IsInitialized()) {
@@ -1059,8 +1071,8 @@ namespace StayPutVR {
                     }
                 }
                 // Warning sound
-                else if (warning_triggered && config_.warning_audio) {
-                    AudioManager::PlayWarningSound(config_.audio_volume);
+                else if (warning_triggered && config_.audio.warning) {
+                    AudioManager::PlayWarningSound(config_.audio.volume);
                     played_sound = true;
                 }
                 
@@ -1524,12 +1536,7 @@ namespace StayPutVR {
             changed = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Distance at which warning feedback begins");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Distance at which warning feedback begins");
         
         // Out of bounds distance
         ImGui::Text("Warning Zone Radius:");
@@ -1538,12 +1545,7 @@ namespace StayPutVR {
             changed = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Distance at which the device is considered out of bounds");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Distance at which the device is considered out of bounds");
         
         // Disable threshold
         ImGui::Text("Disable Distance:");
@@ -1552,12 +1554,7 @@ namespace StayPutVR {
             changed = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Distance at which locking is automatically disabled (safety feature)");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Distance at which locking is automatically disabled (safety feature)");
         
         // Save changes if needed
         if (changed) {
@@ -1729,41 +1726,41 @@ namespace StayPutVR {
         ImGui::Text("Audio Notifications");
         ImGui::Separator();
         
-        bool enable_audio = config_.audio_enabled;
+        bool enable_audio = config_.audio.enabled;
         if (ImGui::Checkbox("Enable Audio Notifications", &enable_audio)) {
-            config_.audio_enabled = enable_audio;
+            config_.audio.enabled = enable_audio;
             changed = true;
         }
         
         // Audio volume
-        float audio_volume = config_.audio_volume;
+        float audio_volume = config_.audio.volume;
         if (ImGui::SliderFloat("Audio Volume", &audio_volume, 0.0f, 1.0f, "%.1f")) {
-            config_.audio_volume = audio_volume;
+            config_.audio.volume = audio_volume;
             changed = true;
         }
         
         // Audio cue types
-        bool warning_audio = config_.warning_audio;
+        bool warning_audio = config_.audio.warning;
         if (ImGui::Checkbox("Warning Sound", &warning_audio)) {
-            config_.warning_audio = warning_audio;
+            config_.audio.warning = warning_audio;
             changed = true;
         }
         
-        bool out_of_bounds_audio = config_.out_of_bounds_audio;
+        bool out_of_bounds_audio = config_.audio.out_of_bounds;
         if (ImGui::Checkbox("Out of Bounds Sound", &out_of_bounds_audio)) {
-            config_.out_of_bounds_audio = out_of_bounds_audio;
+            config_.audio.out_of_bounds = out_of_bounds_audio;
             changed = true;
         }
         
-        bool lock_audio = config_.lock_audio;
+        bool lock_audio = config_.audio.lock;
         if (ImGui::Checkbox("Lock Sound", &lock_audio)) {
-            config_.lock_audio = lock_audio;
+            config_.audio.lock = lock_audio;
             changed = true;
         }
         
-        bool unlock_audio = config_.unlock_audio;
+        bool unlock_audio = config_.audio.unlock;
         if (ImGui::Checkbox("Unlock Sound", &unlock_audio)) {
-            config_.unlock_audio = unlock_audio;
+            config_.audio.unlock = unlock_audio;
             changed = true;
         }
         
@@ -1773,7 +1770,7 @@ namespace StayPutVR {
         
         // First row of buttons
         if (ImGui::Button("Test Warning Sound")) {
-            AudioManager::PlayWarningSound(config_.audio_volume);
+            AudioManager::PlayWarningSound(config_.audio.volume);
         }
         
         ImGui::SameLine();
@@ -1781,7 +1778,7 @@ namespace StayPutVR {
         if (ImGui::Button("Test Disobedience Sound")) {
             std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
             if (std::filesystem::exists(filePath)) {
-                AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+                AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
             } else {
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Warning("disobedience.wav not found, please add it to the resources folder");
@@ -1796,7 +1793,7 @@ namespace StayPutVR {
         if (ImGui::Button("Test Success Sound")) {
             std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\success.wav";
             if (std::filesystem::exists(filePath)) {
-                AudioManager::PlaySound("success.wav", config_.audio_volume);
+                AudioManager::PlaySound("success.wav", config_.audio.volume);
             } else {
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Warning("success.wav not found, please add it to the resources folder");
@@ -1808,13 +1805,13 @@ namespace StayPutVR {
         
         // Second row of buttons
         if (ImGui::Button("Test Lock Sound")) {
-            AudioManager::PlayLockSound(config_.audio_volume);
+            AudioManager::PlayLockSound(config_.audio.volume);
         }
         
         ImGui::SameLine();
         
         if (ImGui::Button("Test Unlock Sound")) {
-            AudioManager::PlayUnlockSound(config_.audio_volume);
+            AudioManager::PlayUnlockSound(config_.audio.volume);
         }
         
         ImGui::SameLine();
@@ -1822,7 +1819,7 @@ namespace StayPutVR {
         if (ImGui::Button("Test Countdown Sound")) {
             std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\countdown.wav";
             if (std::filesystem::exists(filePath)) {
-                AudioManager::PlaySound("countdown.wav", config_.audio_volume);
+                AudioManager::PlaySound("countdown.wav", config_.audio.volume);
             } else {
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Warning("countdown.wav not found, please add it to the resources folder");
@@ -1877,12 +1874,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("After unlocking, disables being locked again for this amount of time");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("After unlocking, disables being locked again for this amount of time");
         
         float cooldown_seconds = config_.cooldown_seconds;
         if (ImGui::SliderFloat("Cooldown Duration", &cooldown_seconds, 1.0f, 60.0f, "%.1f seconds")) {
@@ -1901,12 +1893,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When enabled, a 3-second countdown sound will play before locking devices");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("When enabled, a 3-second countdown sound will play before locking devices");
         
         ImGui::Text("Countdown plays a 3-second countdown sound before locking devices.");
         
@@ -1924,12 +1911,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Automatically unlock devices after a specified duration (useful for Twitch integrations)");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Automatically unlock devices after a specified duration (useful for Twitch integrations)");
         
         ImGui::BeginDisabled(!config_.unlock_timer_enabled);
         
@@ -1952,12 +1934,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Play audio warnings at 60s, 30s, and 10s remaining");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Play audio warnings at 60s, 30s, and 10s remaining");
         
         // Show current unlock timer status if active
         if (twitch_unlock_timer_active_) {
@@ -1986,12 +1963,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Prevents shocks from being sent within the cooldown window for both PiShock and OpenShock");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Prevents shocks from being sent within the cooldown window for both PiShock and OpenShock");
         
         ImGui::BeginDisabled(!config_.shock_cooldown_enabled);
         
@@ -2069,24 +2041,14 @@ namespace StayPutVR {
             changed = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Port used to send locking status to VRChat");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Port used to send locking status to VRChat");
         
         if (ImGui::InputInt("OSC Receive Port", &osc_receive_port)) {
             config_.osc_receive_port = osc_receive_port;
             changed = true;
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Port used to receive interaction data from VRChat, such as locking and unlocking");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Port used to receive interaction data from VRChat, such as locking and unlocking");
         
         // OSC Device Lock Paths
         ImGui::Separator();
@@ -2259,12 +2221,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When enabled, receiving the /avatar/parameters/SPVR_Global_OutOfBounds parameter will trigger out-of-bounds actions");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_Global_OutOfBounds parameter will trigger out-of-bounds actions");
         
         // Global out-of-bounds path input
         static char global_out_of_bounds_path[128];
@@ -2287,12 +2244,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When enabled, receiving the /avatar/parameters/SPVR_Bite parameter will trigger disobedience actions");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_Bite parameter will trigger disobedience actions");
         
         // Bite path input
         static char bite_path[128];
@@ -2315,12 +2267,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When enabled, receiving the /avatar/parameters/SPVR_EStop_Stretch parameter with value >= 0.5 will immediately unlock all devices (emergency stop)");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_EStop_Stretch parameter with value >= 0.5 will immediately unlock all devices (emergency stop)");
         
         // Emergency stop stretch path input
         static char estop_stretch_path[128];
@@ -2343,12 +2290,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When a device is locked via OSC, all devices will be locked");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("When a device is locked via OSC, all devices will be locked");
         
         // Reset to defaults button
         ImGui::Separator();
@@ -2510,11 +2452,11 @@ namespace StayPutVR {
             }
             
             // Play appropriate sound effect
-            if (config_.audio_enabled) {
-                if (locked && config_.lock_audio) {
-                    AudioManager::PlayLockSound(config_.audio_volume);
-                } else if (!locked && config_.unlock_audio) {
-                    AudioManager::PlayUnlockSound(config_.audio_volume);
+            if (config_.audio.enabled) {
+                if (locked && config_.audio.lock) {
+                    AudioManager::PlayLockSound(config_.audio.volume);
+                } else if (!locked && config_.audio.unlock) {
+                    AudioManager::PlayUnlockSound(config_.audio.volume);
                 }
             }
             
@@ -2726,7 +2668,7 @@ namespace StayPutVR {
         ImGui::Separator();
         
         ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.3.0");
+        ImGui::Text("Version: 1.3.1");
         ImGui::Text("© 2025 Foxipso");
         ImGui::Text("foxipso.com");
         
@@ -3215,8 +3157,8 @@ namespace StayPutVR {
                         }
                         
                         // Play unlock sound if enabled
-                        if (config_.audio_enabled && config_.unlock_audio) {
-                            AudioManager::PlayUnlockSound(config_.audio_volume);
+                        if (config_.audio.enabled && config_.audio.unlock) {
+                            AudioManager::PlayUnlockSound(config_.audio.volume);
                         }
                     }
                     
@@ -3236,8 +3178,8 @@ namespace StayPutVR {
                         }
                         
                         // Play lock sound if enabled
-                        if (config_.audio_enabled && config_.lock_audio) {
-                            AudioManager::PlayLockSound(config_.audio_volume);
+                        if (config_.audio.enabled && config_.audio.lock) {
+                            AudioManager::PlayLockSound(config_.audio.volume);
                         }
                     }
                     
@@ -3324,12 +3266,7 @@ namespace StayPutVR {
                 // Small buttons for vibration device selection (1-5)
                 ImGui::Text("Vibration IDs:");
                 ImGui::SameLine();
-                ImGui::TextDisabled("(?)");
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted("Button 1 = Device Index 0, Button 2 = Device Index 1, etc.");
-                    ImGui::EndTooltip();
-                }
+                ImGuiHelpers::HelpTooltip("Button 1 = Device Index 0, Button 2 = Device Index 1, etc.");
                 for (int i = 0; i < 5; ++i) {
                     // Show button if Buttplug device is configured (-1 means not configured)
                     bool has_device = config_.buttplug_device_indices[i] >= 0;
@@ -3580,437 +3517,11 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderPiShockTab() {
-        ImGui::Text("PiShock Integration");
-        ImGui::Separator();
-        
-        // Safety warning (at the top)
-        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
-        ImGui::Text("PiShock should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of PiShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
-        ImGui::PopTextWrapPos();
-        
-        // Add agreement checkbox
-        bool user_agreement = config_.pishock_user_agreement;
-        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
-            config_.pishock_user_agreement = user_agreement;
-            SaveConfig();
+        if (pishock_panel_) {
+            pishock_panel_->Render();
         }
-        
-        ImGui::Separator();
-        
-        // ===== COMMON SETTINGS (both modes) =====
-        ImGui::BeginDisabled(!user_agreement);
-        
-        // Enable checkbox
-        bool pishock_enabled = config_.pishock_enabled;
-        if (ImGui::Checkbox("Enable PiShock Integration", &pishock_enabled)) {
-            config_.pishock_enabled = pishock_enabled;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable direct integration with PiShock API for out-of-bounds enforcement");
-            ImGui::EndTooltip();
-        }
-        
-        ImGui::Spacing();
-        
-        // Common username field
-        ImGui::Text("Username:");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Username you use to log into PiShock.com");
-            ImGui::EndTooltip();
-        }
-        
-        static char username_buffer[128] = "";
-        if (strlen(username_buffer) == 0 && !config_.pishock_username.empty()) {
-            strcpy_s(username_buffer, sizeof(username_buffer), config_.pishock_username.c_str());
-        }
-        
-        if (ImGui::InputText("##Username", username_buffer, sizeof(username_buffer))) {
-            config_.pishock_username = username_buffer;
-            SaveConfig();
-        }
-        
-        ImGui::Separator();
-        
-        // ===== MODE SELECTION =====
-        ImGui::Text("API Mode:");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Legacy API: HTTP-based API (deprecated)\nWebSocket v2: Real-time persistent connection with lower latency and continuous shocking (recommended)");
-            ImGui::EndTooltip();
-        }
-        
-        const char* modes[] = { "Legacy HTTP API", "WebSocket v2" };
-        int current_mode = static_cast<int>(config_.pishock_mode);
-        if (ImGui::Combo("##PiShockMode", &current_mode, modes, 2)) {
-            auto old_mode = config_.pishock_mode;
-            config_.pishock_mode = static_cast<Config::PiShockMode>(current_mode);
-            SaveConfig();
-            
-            // Handle mode switching - disconnect old, prepare new
-            if (old_mode == Config::PiShockMode::WEBSOCKET_V2 && pishock_ws_manager_) {
-                pishock_ws_manager_->Disconnect();
-            }
-            
-            Logger::Info("PiShock mode changed to: " + std::string(modes[current_mode]));
-        }
-        
-        ImGui::Separator();
-        
-        // ===== MODE-SPECIFIC SUBTABS =====
-        if (ImGui::BeginTabBar("##PiShockSubTabs", ImGuiTabBarFlags_None)) {
-            
-            // Configuration Tab
-            if (ImGui::BeginTabItem("Configuration")) {
-                ImGui::Spacing();
-                
-                if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
-                    // ===== LEGACY API CONFIGURATION =====
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Legacy HTTP API Configuration");
-                    ImGui::Separator();
-                    
-                    ImGui::Text("API Key:");
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(?)");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("API Key generated on PiShock.com (found in Account section)");
-                        ImGui::EndTooltip();
-                    }
-                    
-                    static char apikey_buffer[128] = "";
-                    if (strlen(apikey_buffer) == 0 && !config_.pishock_api_key.empty()) {
-                        strcpy_s(apikey_buffer, sizeof(apikey_buffer), config_.pishock_api_key.c_str());
-                    }
-                    
-                    if (ImGui::InputText("##APIKey", apikey_buffer, sizeof(apikey_buffer), ImGuiInputTextFlags_Password)) {
-                        config_.pishock_api_key = apikey_buffer;
-                        SaveConfig();
-                    }
-                    
-                    ImGui::Text("Share Code:");
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(?)");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("Share Code generated on PiShock.com for the device you want to control");
-                        ImGui::EndTooltip();
-                    }
-                    
-                    static char sharecode_buffer[128] = "";
-                    if (strlen(sharecode_buffer) == 0 && !config_.pishock_share_code.empty()) {
-                        strcpy_s(sharecode_buffer, sizeof(sharecode_buffer), config_.pishock_share_code.c_str());
-                    }
-                    
-                    if (ImGui::InputText("##ShareCode", sharecode_buffer, sizeof(sharecode_buffer), ImGuiInputTextFlags_Password)) {
-                        config_.pishock_share_code = sharecode_buffer;
-                        SaveConfig();
-                    }
-                    
-                    // Status
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    ImGui::Text("Status:");
-                    if (pishock_manager_) {
-                        ImGui::SameLine();
-                        std::string status = pishock_manager_->GetConnectionStatus();
-                        if (status == "Ready") {
-                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
-                        } else {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
-                        }
-                    }
-                    
-                } else {
-                    // ===== WEBSOCKET V2 CONFIGURATION =====
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "WebSocket v2 Configuration");
-                    ImGui::Separator();
-                    
-                    ImGui::Text("API Key:");
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(?)");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("API Key generated on PiShock.com (Account section)\nRequired for WebSocket authentication");
-                        ImGui::EndTooltip();
-                    }
-                    
-                    static char ws_apikey_buffer[128] = "";
-                    if (strlen(ws_apikey_buffer) == 0 && !config_.pishock_api_key.empty()) {
-                        strcpy_s(ws_apikey_buffer, sizeof(ws_apikey_buffer), config_.pishock_api_key.c_str());
-                    }
-                    
-                    if (ImGui::InputText("##WSAPIKey", ws_apikey_buffer, sizeof(ws_apikey_buffer), ImGuiInputTextFlags_Password)) {
-                        config_.pishock_api_key = ws_apikey_buffer;
-                        SaveConfig();
-                    }
-                    
-                    ImGui::Text("Client ID:");
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(?)");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("Your PiShock Client ID (hub ID)\nUsed to identify the device that your shockers connect to");
-                        ImGui::EndTooltip();
-                    }
-                    
-                    static char ws_clientid_buffer[128] = "";
-                    if (strlen(ws_clientid_buffer) == 0 && !config_.pishock_client_id.empty()) {
-                        strcpy_s(ws_clientid_buffer, sizeof(ws_clientid_buffer), config_.pishock_client_id.c_str());
-                    }
-                    
-                    if (ImGui::InputText("##WSClientID", ws_clientid_buffer, sizeof(ws_clientid_buffer))) {
-                        config_.pishock_client_id = ws_clientid_buffer;
-                        SaveConfig();
-                    }
-                    
-                    ImGui::Text("Shocker IDs:");
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(?)");
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::BeginTooltip();
-                        ImGui::TextUnformatted("PiShock shocker device IDs. Device 0 is considered the master device.\nLeave unused slots at 0.");
-                        ImGui::EndTooltip();
-                    }
-                    
-                    static int shocker_id_buffers[5] = {0, 0, 0, 0, 0};
-                    
-                    for (int i = 0; i < 5; ++i) {
-                        // Sync buffers with config values
-                        if (config_.pishock_shocker_ids[i] != shocker_id_buffers[i]) {
-                            shocker_id_buffers[i] = config_.pishock_shocker_ids[i];
-                        }
-                        
-                        std::string label = std::to_string(i) + ": ";
-                        if (i == 0) {
-                            label += "(master)";
-                        }
-                        
-                        ImGui::PushID(i);
-                        if (ImGui::InputInt(label.c_str(), &shocker_id_buffers[i])) {
-                            config_.pishock_shocker_ids[i] = shocker_id_buffers[i];
-                            SaveConfig();
-                        }
-                        ImGui::PopID();
-                    }
-                    
-                    ImGui::Spacing();
-                    ImGui::Separator();
-                    
-                    // Connection controls
-                    ImGui::Text("Connection:");
-                    
-                    bool is_connected = pishock_ws_manager_ && pishock_ws_manager_->IsConnected();
-                    
-                    if (is_connected) {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected");
-                        
-                        ImGui::SameLine();
-                        if (ImGui::Button("Disconnect##WSDisconnect")) {
-                            if (pishock_ws_manager_) {
-                                pishock_ws_manager_->Disconnect();
-                            }
-                        }
-                    } else {
-                        ImGui::SameLine();
-                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
-                        
-                        ImGui::SameLine();
-                        // Check if at least one shocker ID is configured
-                        bool has_shocker_id = false;
-                        for (const auto& id : config_.pishock_shocker_ids) {
-                            if (id != 0) {
-                                has_shocker_id = true;
-                                break;
-                            }
-                        }
-                        
-                        bool can_connect = !config_.pishock_username.empty() && 
-                                         !config_.pishock_api_key.empty() &&
-                                         !config_.pishock_client_id.empty() &&
-                                         has_shocker_id;
-                        
-                        ImGui::BeginDisabled(!can_connect);
-                        if (ImGui::Button("Connect##WSConnect")) {
-                            if (pishock_ws_manager_) {
-                                if (!pishock_ws_manager_->Connect()) {
-                                    Logger::Error("Failed to connect to PiShock WebSocket: " + 
-                                                pishock_ws_manager_->GetLastError());
-                                }
-                            }
-                        }
-                        ImGui::EndDisabled();
-                    }
-                    
-                    // Status
-                    ImGui::Spacing();
-                    ImGui::Text("Status:");
-                    if (pishock_ws_manager_) {
-                        ImGui::SameLine();
-                        std::string status = pishock_ws_manager_->GetConnectionStatus();
-                        if (status == "Connected") {
-                            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
-                        } else if (status == "Disconnected") {
-                            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "%s", status.c_str());
-                        } else {
-                            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "%s", status.c_str());
-                        }
-                        
-                        std::string last_error = pishock_ws_manager_->GetLastError();
-                        if (!last_error.empty()) {
-                            ImGui::Text("Last Error:");
-                            ImGui::SameLine();
-                            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", last_error.c_str());
-                        }
-                    }
-                }
-                
-                ImGui::EndTabItem();
-            }
-            
-            // Actions Tab
-            if (ImGui::BeginTabItem("Actions")) {
-                ImGui::Spacing();
-                
-                ImGui::TextWrapped("PiShock will only be triggered when a device exceeds the out-of-bounds threshold. Warnings will only use audio cues.");
-                ImGui::Spacing();
-                ImGui::Separator();
-                
-                ImGui::BeginDisabled(!config_.pishock_enabled);
-                
-                // Out of Bounds Actions
-                ImGui::Text("Out of Bounds Actions:");
-                
-                bool disobedience_beep = config_.pishock_disobedience_beep;
-                if (ImGui::Checkbox("Beep on Out of Bounds", &disobedience_beep)) {
-                    config_.pishock_disobedience_beep = disobedience_beep;
-                    SaveConfig();
-                }
-                
-                bool disobedience_vibrate = config_.pishock_disobedience_vibrate;
-                if (ImGui::Checkbox("Vibrate on Out of Bounds", &disobedience_vibrate)) {
-                    config_.pishock_disobedience_vibrate = disobedience_vibrate;
-                    SaveConfig();
-                }
-                
-                bool disobedience_shock = config_.pishock_disobedience_shock;
-                if (ImGui::Checkbox("Shock on Out of Bounds", &disobedience_shock)) {
-                    config_.pishock_disobedience_shock = disobedience_shock;
-                    SaveConfig();
-                }
-                
-                ImGui::Spacing();
-                
-                // Individual device disobedience intensity settings
-                bool use_individual_disobedience = config_.pishock_use_individual_disobedience_intensities;
-                if (ImGui::Checkbox("Use Individual Device Disobedience Intensities", &use_individual_disobedience)) {
-                    config_.pishock_use_individual_disobedience_intensities = use_individual_disobedience;
-                    SaveConfig();
-                }
-                
-                ImGui::SameLine();
-                ImGui::TextDisabled("(?)");
-                if (ImGui::IsItemHovered()) {
-                    ImGui::BeginTooltip();
-                    ImGui::TextUnformatted("Enable to set different disobedience intensity levels for each PiShock device. When disabled, all devices use the master disobedience intensity.");
-                    ImGui::EndTooltip();
-                }
-                
-                if (!use_individual_disobedience) {
-                    // Master disobedience intensity slider
-                    float disobedience_intensity = config_.pishock_disobedience_intensity;
-                    if (ImGui::SliderFloat("Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-                        config_.pishock_disobedience_intensity = disobedience_intensity;
-                        SaveConfig();
-                    }
-                } else {
-                    // Individual device disobedience intensity sliders
-                    ImGui::Text("Individual Device Disobedience Intensities:");
-                    ImGui::Indent();
-                    
-                    for (int i = 0; i < 5; ++i) {
-                        if (config_.pishock_shocker_ids[i] != 0) {
-                            ImGui::PushID(i + 200); // Different ID range to avoid conflicts
-                            
-                            std::string disobedience_label = "Device " + std::to_string(i) + " Intensity";
-                            float individual_disobedience_intensity = config_.pishock_individual_disobedience_intensities[i];
-                            
-                            if (ImGui::SliderFloat(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-                                config_.pishock_individual_disobedience_intensities[i] = individual_disobedience_intensity;
-                                SaveConfig();
-                            }
-                            
-                            ImGui::PopID();
-                        }
-                    }
-                    
-                    ImGui::Unindent();
-                }
-                
-                float disobedience_duration = config_.pishock_disobedience_duration;
-                if (ImGui::SliderFloat("Duration", &disobedience_duration, 1.0f, 15.0f, "%.2f seconds")) {
-                    disobedience_duration = (std::max)(1.0f, (std::min)(15.0f, disobedience_duration));
-                    config_.pishock_disobedience_duration = disobedience_duration;
-                    SaveConfig();
-                }
-                
-                ImGui::Spacing();
-                ImGui::Separator();
-                
-                // Test buttons
-                ImGui::Text("Test:");
-                
-                bool can_test = config_.pishock_enabled;
-                
-                // Mode-specific validation
-                if (config_.pishock_mode == Config::PiShockMode::LEGACY_API) {
-                    // Legacy API needs username, API key, and share code
-                    can_test = can_test && 
-                              !config_.pishock_username.empty() && 
-                              !config_.pishock_api_key.empty() && 
-                              !config_.pishock_share_code.empty();
-                } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
-                    // WebSocket v2 needs to be connected
-                    can_test = can_test && pishock_ws_manager_ && pishock_ws_manager_->IsConnected();
-                }
-                
-                ImGui::BeginDisabled(!can_test);
-                
-                if (ImGui::Button("Test Out of Bounds Actions")) {
-                    if (config_.pishock_mode == Config::PiShockMode::LEGACY_API && pishock_manager_) {
-                        pishock_manager_->TestActions();
-                    } else if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2 && pishock_ws_manager_) {
-                        pishock_ws_manager_->TestActions();
-                    }
-                }
-                
-                ImGui::EndDisabled();
-                
-                if (!can_test && config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Connect to WebSocket first");
-                }
-                
-                ImGui::EndDisabled(); // End pishock_enabled disabled
-                
-                ImGui::EndTabItem();
-            }
-            
-            ImGui::EndTabBar();
-        }
-        
-        ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
+
 
     // PiShock Helper Methods Implementation
     void UIManager::InitializePiShockManager() {
@@ -4329,361 +3840,23 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderButtplugTab() {
-        ImGui::Text("Buttplug/Intiface Integration");
-        ImGui::Separator();
-        
-        // Safety warning
-        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
-        ImGui::Text("Buttplug/Intiface devices should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of these devices, even if you use them in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
-        ImGui::PopTextWrapPos();
-        
-        bool user_agreement = config_.buttplug_user_agreement;
-        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
-            config_.buttplug_user_agreement = user_agreement;
-            SaveConfig();
+        if (buttplug_panel_) {
+            buttplug_panel_->Render();
         }
-        
-        ImGui::Separator();
-        
-        ImGui::BeginDisabled(!user_agreement);
-        bool buttplug_enabled = config_.buttplug_enabled;
-        if (ImGui::Checkbox("Enable Buttplug/Intiface Integration", &buttplug_enabled)) {
-            config_.buttplug_enabled = buttplug_enabled;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable integration with Buttplug/Intiface for vibration feedback");
-            ImGui::EndTooltip();
-        }
-        
-        ImGui::Separator();
-        
-        ImGui::Text("Buttplug Server Connection:");
-        
-        static char server_address_buffer[256] = "";
-        if (config_.buttplug_server_address != server_address_buffer) {
-            strcpy_s(server_address_buffer, sizeof(server_address_buffer), config_.buttplug_server_address.c_str());
-        }
-        
-        if (ImGui::InputText("Server Address", server_address_buffer, sizeof(server_address_buffer))) {
-            config_.buttplug_server_address = server_address_buffer;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Address of the Buttplug/Intiface server (default: localhost)");
-            ImGui::EndTooltip();
-        }
-        
-        int server_port = config_.buttplug_server_port;
-        if (ImGui::InputInt("Server Port", &server_port)) {
-            if (server_port > 0 && server_port < 65536) {
-                config_.buttplug_server_port = server_port;
-                SaveConfig();
-            }
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Port of the Buttplug/Intiface server (default: 12345)");
-            ImGui::EndTooltip();
-        }
-        
-        ImGui::Spacing();
-        ImGui::Text("Status: ");
-        ImGui::SameLine();
-        
-        if (buttplug_manager_ && buttplug_manager_->IsConnected()) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), buttplug_manager_->GetConnectionStatus().c_str());
-            
-            ImGui::SameLine();
-            if (ImGui::Button("Disconnect##ButtplugDisconnect")) {
-                buttplug_manager_->Disconnect();
-            }
-        } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Disconnected");
-            
-            ImGui::SameLine();
-            bool can_connect = !config_.buttplug_server_address.empty() && 
-                             config_.buttplug_server_port > 0;
-            
-            ImGui::BeginDisabled(!can_connect);
-            if (ImGui::Button("Connect##ButtplugConnect")) {
-                if (buttplug_manager_) {
-                    if (!buttplug_manager_->Connect()) {
-                        Logger::Error("Failed to connect to Buttplug: " + 
-                                    buttplug_manager_->GetLastError());
-                    }
-                }
-            }
-            ImGui::EndDisabled();
-        }
-        
-        ImGui::Separator();
-        
-        // Device Indices Configuration
-        ImGui::Text("Device Indices:");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Device indices from Intiface (0 is the first device).\nUse -1 for unused slots.\nDevice 0 is considered the master device.");
-            ImGui::EndTooltip();
-        }
-        
-        for (int i = 0; i < 5; ++i) {
-            int device_index = config_.buttplug_device_indices[i];
-            
-            std::string label = std::to_string(i) + ": ";
-            if (i == 0) {
-                label += "(master)";
-            }
-            
-            ImGui::PushID(i);
-            if (ImGui::InputInt(label.c_str(), &device_index)) {
-                if (device_index >= -1) {  // Allow -1 (not configured) or 0+ (valid device indices)
-                    config_.buttplug_device_indices[i] = device_index;
-                    SaveConfig();
-                }
-            }
-            ImGui::PopID();
-        }
-        
-        ImGui::Separator();
-        
-        // Zone Activation Settings
-        ImGui::Text("Zone Activation:");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Choose which zones trigger vibration");
-            ImGui::EndTooltip();
-        }
-        
-        bool safe_zone = config_.buttplug_safe_zone_enabled;
-        if (ImGui::Checkbox("Vibrate in Safe Zone", &safe_zone)) {
-            config_.buttplug_safe_zone_enabled = safe_zone;
-            SaveConfig();
-        }
-        
-        bool warning_zone = config_.buttplug_warning_zone_enabled;
-        if (ImGui::Checkbox("Vibrate in Warning Zone", &warning_zone)) {
-            config_.buttplug_warning_zone_enabled = warning_zone;
-            SaveConfig();
-        }
-        
-        bool disobedience_zone = config_.buttplug_disobedience_zone_enabled;
-        if (ImGui::Checkbox("Vibrate when Disobeying (Out of Bounds)", &disobedience_zone)) {
-            config_.buttplug_disobedience_zone_enabled = disobedience_zone;
-            SaveConfig();
-        }
-        
-        ImGui::Separator();
-        
-        if (!config_.buttplug_enabled) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        }
-        
-        // Safe Zone Settings
-        ImGui::Text("Safe Zone Settings:");
-        ImGui::Separator();
-        
-        // Safe Zone Intensity Settings
-        bool use_individual_safe = config_.buttplug_use_individual_safe_intensities;
-        if (ImGui::Checkbox("Use Individual Device Safe Intensities", &use_individual_safe)) {
-            config_.buttplug_use_individual_safe_intensities = use_individual_safe;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable to set different safe zone intensity levels for each device. When disabled, all devices use the master safe intensity.");
-            ImGui::EndTooltip();
-        }
-        
-        if (!use_individual_safe) {
-            // Master safe intensity slider
-            float master_safe_intensity = config_.buttplug_master_safe_intensity;
-            if (ImGui::SliderFloat("Master Safe Intensity", &master_safe_intensity, 0.0f, 1.0f, "%.2f")) {
-                config_.buttplug_master_safe_intensity = master_safe_intensity;
-                SaveConfig();
-            }
-        } else {
-            // Individual safe intensity sliders
-            ImGui::Text("Individual Safe Intensities:");
-            for (int i = 0; i < 5; ++i) {
-                if (config_.buttplug_device_indices[i] >= 0) {  // -1 means not configured
-                    float intensity = config_.buttplug_individual_safe_intensities[i];
-                    std::string label = "Device " + std::to_string(i);
-                    ImGui::PushID(200 + i);  // Different ID range to avoid conflicts
-                    if (ImGui::SliderFloat(label.c_str(), &intensity, 0.0f, 1.0f, "%.2f")) {
-                        config_.buttplug_individual_safe_intensities[i] = intensity;
-                        SaveConfig();
-                    }
-                    ImGui::PopID();
-                }
-            }
-        }
-        
-        ImGui::Separator();
-        
-        // Warning Zone Settings
-        ImGui::Text("Warning Zone Settings:");
-        ImGui::Separator();
-        
-        // Warning Intensity Settings
-        bool use_individual_warning = config_.buttplug_use_individual_warning_intensities;
-        if (ImGui::Checkbox("Use Individual Device Warning Intensities", &use_individual_warning)) {
-            config_.buttplug_use_individual_warning_intensities = use_individual_warning;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable to set different warning intensity levels for each device. When disabled, all devices use the master warning intensity.");
-            ImGui::EndTooltip();
-        }
-        
-        if (!use_individual_warning) {
-            float master_warning_intensity = config_.buttplug_master_warning_intensity;
-            if (ImGui::SliderFloat("Master Warning Intensity", &master_warning_intensity, 0.0f, 1.0f, "%.2f")) {
-                config_.buttplug_master_warning_intensity = master_warning_intensity;
-                SaveConfig();
-            }
-        } else {
-            ImGui::Text("Individual Warning Intensities:");
-            for (int i = 0; i < 5; ++i) {
-                if (config_.buttplug_device_indices[i] >= 0) {  // -1 means not configured
-                    float intensity = config_.buttplug_individual_warning_intensities[i];
-                    std::string label = "Device " + std::to_string(i);
-                    ImGui::PushID(i);
-                    if (ImGui::SliderFloat(label.c_str(), &intensity, 0.0f, 1.0f, "%.2f")) {
-                        config_.buttplug_individual_warning_intensities[i] = intensity;
-                        SaveConfig();
-                    }
-                    ImGui::PopID();
-                }
-            }
-        }
-        
-        ImGui::Separator();
-        
-        ImGui::Text("Disobedience (Out of Bounds) Settings:");
-        ImGui::Separator();
-        
-        // Disobedience Intensity Settings
-        bool use_individual_disobedience = config_.buttplug_use_individual_disobedience_intensities;
-        if (ImGui::Checkbox("Use Individual Device Disobedience Intensities", &use_individual_disobedience)) {
-            config_.buttplug_use_individual_disobedience_intensities = use_individual_disobedience;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable to set different disobedience intensity levels for each device. When disabled, all devices use the master disobedience intensity.");
-            ImGui::EndTooltip();
-        }
-        
-        if (!use_individual_disobedience) {
-            // Master disobedience intensity slider
-            float master_disobedience_intensity = config_.buttplug_master_disobedience_intensity;
-            if (ImGui::SliderFloat("Master Disobedience Intensity", &master_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-                config_.buttplug_master_disobedience_intensity = master_disobedience_intensity;
-                SaveConfig();
-            }
-        } else {
-            // Individual disobedience intensity sliders
-            ImGui::Text("Individual Disobedience Intensities:");
-            for (int i = 0; i < 5; ++i) {
-                if (config_.buttplug_device_indices[i] >= 0) {  // -1 means not configured
-                    float intensity = config_.buttplug_individual_disobedience_intensities[i];
-                    std::string label = "Device " + std::to_string(i);
-                    ImGui::PushID(100 + i);  // Different ID range to avoid conflicts
-                    if (ImGui::SliderFloat(label.c_str(), &intensity, 0.0f, 1.0f, "%.2f")) {
-                        config_.buttplug_individual_disobedience_intensities[i] = intensity;
-                        SaveConfig();
-                    }
-                    ImGui::PopID();
-                }
-            }
-        }
-        
-        if (!config_.buttplug_enabled) {
-            ImGui::PopStyleColor();
-        }
-        
-        ImGui::Separator();
-        
-        // Test buttons
-        ImGui::BeginDisabled(!buttplug_enabled);
-        
-        bool can_test = buttplug_manager_ && buttplug_manager_->IsConnected();
-        
-        ImGui::BeginDisabled(!can_test);
-        
-        if (ImGui::Button("Start Test (Continuous Vibration)")) {
-            if (buttplug_manager_) {
-                buttplug_manager_->TestActions();
-            }
-        }
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Stop Test")) {
-            if (buttplug_manager_) {
-                buttplug_manager_->StopAllDevices();
-            }
-        }
-        
-        ImGui::EndDisabled();
-        
-        if (!can_test && buttplug_enabled) {
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Connect to Buttplug server first");
-        }
-        
-        if (can_test) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Note: Vibration is continuous - use Stop Test to turn it off");
-        }
-        
-        ImGui::EndDisabled(); // End buttplug_enabled disabled
-        ImGui::EndDisabled(); // End user_agreement disabled
     }
 
     void UIManager::RenderTwitchTab() {
         ImGui::Text("Twitch Integration");
         ImGui::Separator();
         
-        // Safety warning (similar to PiShock)
-        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
-        ImGui::Text("Twitch integration allows viewers to trigger device locking through donations/bits/subscriptions. This should only be used with people you trust and in safe environments. The makers of StayPutVR accept no liability for misuse of this feature. Always have a safety mechanism to quickly disconnect devices if needed. Test all features thoroughly before use with live viewers.");
-        ImGui::PopTextWrapPos();
-        
-        // User agreement checkbox
-        bool user_agreement = config_.twitch_user_agreement;
-        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
+        // Safety warning + agreement
+        bool user_agreement = ImGuiHelpers::SafetyAgreementBlock(
+            "Twitch integration allows viewers to trigger device locking through donations/bits/subscriptions. This should only be used with people you trust and in safe environments. The makers of StayPutVR accept no liability for misuse of this feature. Always have a safety mechanism to quickly disconnect devices if needed. Test all features thoroughly before use with live viewers.",
+            config_.twitch_user_agreement);
+        if (user_agreement != config_.twitch_user_agreement) {
             config_.twitch_user_agreement = user_agreement;
             SaveConfig();
         }
-        
-        ImGui::Separator();
         
         // Main enable/disable checkbox (disabled until agreement is checked)
         ImGui::BeginDisabled(!user_agreement);
@@ -4694,12 +3867,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable Twitch API integration for chat bot and donation triggers");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("Enable Twitch API integration for chat bot and donation triggers");
         
         // Connection status
         if (config_.twitch_enabled && twitch_manager_) {
@@ -4896,12 +4064,7 @@ namespace StayPutVR {
         }
         
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("When enabled, lock duration scales with donation amount");
-            ImGui::EndTooltip();
-        }
+        ImGuiHelpers::HelpTooltip("When enabled, lock duration scales with donation amount");
         
         ImGui::BeginDisabled(!config_.twitch_lock_duration_enabled);
         
@@ -5260,8 +4423,8 @@ namespace StayPutVR {
                 (twitch_unlock_timer_remaining_ <= 10.0f && twitch_unlock_timer_remaining_ > 9.0f)) {
                 
                 // Play warning sound (using existing audio system)
-                if (config_.audio_enabled) {
-                    AudioManager::PlayWarningSound(config_.audio_volume);
+                if (config_.audio.enabled) {
+                    AudioManager::PlayWarningSound(config_.audio.volume);
                 }
                 
                 // Send chat message if enabled
@@ -5393,13 +4556,13 @@ namespace StayPutVR {
         global_out_of_bounds_timer_start_ = std::chrono::steady_clock::now();
         
         // Play out-of-bounds audio if enabled
-        if (config_.out_of_bounds_audio) {
+        if (config_.audio.out_of_bounds) {
             std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
             if (std::filesystem::exists(filePath)) {
                 if (Logger::IsInitialized()) {
                     Logger::Debug("Playing disobedience.wav for global out-of-bounds trigger");
                 }
-                AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+                AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
             } else {
                 if (Logger::IsInitialized()) {
                     Logger::Warning("disobedience.wav not found, cannot play out-of-bounds sound");
@@ -5432,13 +4595,13 @@ namespace StayPutVR {
         bite_timer_start_ = std::chrono::steady_clock::now();
         
         // Play out-of-bounds audio if enabled
-        if (config_.out_of_bounds_audio) {
+        if (config_.audio.out_of_bounds) {
             std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
             if (std::filesystem::exists(filePath)) {
                 if (Logger::IsInitialized()) {
                     Logger::Debug("Playing disobedience.wav for bite trigger");
                 }
-                AudioManager::PlaySound("disobedience.wav", config_.audio_volume);
+                AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
             } else {
                 if (Logger::IsInitialized()) {
                     Logger::Warning("disobedience.wav not found, cannot play bite sound");
@@ -5680,347 +4843,9 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderOpenShockTab() {
-        ImGui::Text("OpenShock Integration");
-        ImGui::Separator();
-        
-        // Safety warning (moved to the top)
-        ImGui::PushTextWrapPos(ImGui::GetWindowWidth() - 20);
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "WARNING: Safety Information");
-        ImGui::Text("OpenShock should only be used in accordance with their safety instructions. The makers of StayPutVR accept and assume no liability for your usage of OpenShock, even if you use it in a manner you deem to be safe. This is for entertainment purposes only. When in doubt, use a low intensity and double-check all safety information, including safe placement of the device. The makers are not liable for any and all coding defects that may cause this feature to operate improperly. There is no express or implied guarantee that this feature will work properly.");
-        ImGui::PopTextWrapPos();
-        
-        // Add agreement checkbox right after the disclaimer
-        bool user_agreement = config_.openshock_user_agreement;
-        if (ImGui::Checkbox("I understand and agree to the safety information above", &user_agreement)) {
-            config_.openshock_user_agreement = user_agreement;
-            SaveConfig();
+        if (openshock_panel_) {
+            openshock_panel_->Render();
         }
-        
-        ImGui::Separator();
-        
-        // Main enable/disable checkbox for OpenShock (disabled until agreement is checked)
-        ImGui::BeginDisabled(!user_agreement);
-        bool openshock_enabled = config_.openshock_enabled;
-        if (ImGui::Checkbox("Enable OpenShock Integration", &openshock_enabled)) {
-            config_.openshock_enabled = openshock_enabled;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable direct integration with OpenShock API for out-of-bounds enforcement");
-            ImGui::EndTooltip();
-        }
-        
-        // OpenShock API Credentials
-        ImGui::Separator();
-        ImGui::Text("OpenShock API Credentials:");
-        
-        static char api_token_buffer[256] = "";
-        // Always sync the buffer with the current config value
-        if (config_.openshock_api_token != api_token_buffer) {
-            strcpy_s(api_token_buffer, sizeof(api_token_buffer), config_.openshock_api_token.c_str());
-        }
-        
-        if (ImGui::InputText("API Token", api_token_buffer, sizeof(api_token_buffer), ImGuiInputTextFlags_Password)) {
-            config_.openshock_api_token = api_token_buffer;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("API Token from your OpenShock account (found in Account settings)");
-            ImGui::EndTooltip();
-        }
-        
-        // Device IDs section
-        ImGui::Text("Device IDs:");
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("OpenShock device IDs. Device 0 is considered the master device.\nLeave unused slots empty.");
-            ImGui::EndTooltip();
-        }
-        
-        static char device_id_buffers[5][128] = {"", "", "", "", ""};
-        
-        for (int i = 0; i < 5; ++i) {
-            // Sync buffers with config values
-            if (config_.openshock_device_ids[i] != device_id_buffers[i]) {
-                strcpy_s(device_id_buffers[i], sizeof(device_id_buffers[i]), config_.openshock_device_ids[i].c_str());
-            }
-            
-            std::string label = std::to_string(i) + ": ";
-            if (i == 0) {
-                label += "(master)";
-            }
-            
-            ImGui::PushID(i);
-            if (ImGui::InputText(label.c_str(), device_id_buffers[i], sizeof(device_id_buffers[i]))) {
-                config_.openshock_device_ids[i] = device_id_buffers[i];
-                SaveConfig();
-            }
-            ImGui::PopID();
-        }
-        
-        static char server_url_buffer[256] = "";
-        // Always sync the buffer with the current config value
-        if (config_.openshock_server_url != server_url_buffer) {
-            strcpy_s(server_url_buffer, sizeof(server_url_buffer), config_.openshock_server_url.c_str());
-        }
-        
-        if (ImGui::InputText("Server URL", server_url_buffer, sizeof(server_url_buffer))) {
-            config_.openshock_server_url = server_url_buffer;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("OpenShock server URL (default: https://api.openshock.app)");
-            ImGui::EndTooltip();
-        }
-        
-        ImGui::Separator();
-        
-        if (!config_.openshock_enabled) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
-        }
-        
-        // Warning Zone Actions
-        ImGui::Text("Warning Zone Actions:");
-        ImGui::Separator();
-        
-        ImGui::Text("Action Type:");
-        int warning_action = config_.openshock_warning_action;
-        
-        if (ImGui::RadioButton("None##Warning", warning_action == 0)) {
-            config_.openshock_warning_action = 0;
-            SaveConfig();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Shock##Warning", warning_action == 1)) {
-            config_.openshock_warning_action = 1;
-            SaveConfig();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Vibrate##Warning", warning_action == 2)) {
-            config_.openshock_warning_action = 2;
-            SaveConfig();
-        }
-        
-        // Warning Intensity Settings
-        bool use_individual_warning = config_.openshock_use_individual_warning_intensities;
-        if (ImGui::Checkbox("Use Individual Device Warning Intensities", &use_individual_warning)) {
-            config_.openshock_use_individual_warning_intensities = use_individual_warning;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable to set different warning intensity levels for each OpenShock device. When disabled, all devices use the master warning intensity.");
-            ImGui::EndTooltip();
-        }
-        
-        if (!use_individual_warning) {
-            // Master warning intensity slider
-            float master_warning_intensity = config_.openshock_master_warning_intensity;
-            if (ImGui::SliderFloat("Warning Intensity", &master_warning_intensity, 0.0f, 1.0f, "%.2f")) {
-                config_.openshock_master_warning_intensity = master_warning_intensity;
-                SaveConfig();
-            }
-            
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Master intensity level for warning zone actions (applies to all devices)");
-                ImGui::EndTooltip();
-            }
-        } else {
-            // Individual device warning intensity sliders
-            ImGui::Text("Individual Device Warning Intensities:");
-            ImGui::Indent();
-            
-            for (int i = 0; i < 5; ++i) {
-                if (!config_.openshock_device_ids[i].empty()) {
-                    ImGui::PushID(i);
-                    
-                    std::string warning_label = "Device " + std::to_string(i) + " Warning Intensity";
-                    float individual_warning_intensity = config_.openshock_individual_warning_intensities[i];
-                    
-                    if (ImGui::SliderFloat(warning_label.c_str(), &individual_warning_intensity, 0.0f, 1.0f, "%.2f")) {
-                        config_.openshock_individual_warning_intensities[i] = individual_warning_intensity;
-                        SaveConfig();
-                    }
-                    
-                    ImGui::PopID();
-                }
-            }
-            
-            ImGui::Unindent();
-        }
-        
-        float warning_duration = config_.openshock_warning_duration;
-        if (ImGui::SliderFloat("Warning Duration", &warning_duration, 0.0f, 1.0f, "%.2f")) {
-            config_.openshock_warning_duration = warning_duration;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Duration for warning zone actions (0.0 = shortest, 1.0 = longest)");
-            ImGui::EndTooltip();
-        }
-        
-        ImGui::Separator();
-        
-        // Disobedience (Out of Bounds) Actions
-        ImGui::Text("Disobedience (Out of Bounds) Actions:");
-        ImGui::Separator();
-        
-        ImGui::Text("Action Type:");
-        int disobedience_action = config_.openshock_disobedience_action;
-        
-        if (ImGui::RadioButton("None", disobedience_action == 0)) {
-            config_.openshock_disobedience_action = 0;
-            SaveConfig();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Shock", disobedience_action == 1)) {
-            config_.openshock_disobedience_action = 1;
-            SaveConfig();
-        }
-        ImGui::SameLine();
-        if (ImGui::RadioButton("Vibrate", disobedience_action == 2)) {
-            config_.openshock_disobedience_action = 2;
-            SaveConfig();
-        }
-        
-        // Disobedience Intensity Settings
-        bool use_individual_disobedience = config_.openshock_use_individual_disobedience_intensities;
-        if (ImGui::Checkbox("Use Individual Device Disobedience Intensities", &use_individual_disobedience)) {
-            config_.openshock_use_individual_disobedience_intensities = use_individual_disobedience;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Enable to set different disobedience intensity levels for each OpenShock device. When disabled, all devices use the master disobedience intensity.");
-            ImGui::EndTooltip();
-        }
-        
-        if (!use_individual_disobedience) {
-            // Master disobedience intensity slider
-            float master_disobedience_intensity = config_.openshock_master_disobedience_intensity;
-            if (ImGui::SliderFloat("Disobedience Intensity", &master_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-                config_.openshock_master_disobedience_intensity = master_disobedience_intensity;
-                SaveConfig();
-            }
-            
-            ImGui::SameLine();
-            ImGui::TextDisabled("(?)");
-            if (ImGui::IsItemHovered()) {
-                ImGui::BeginTooltip();
-                ImGui::TextUnformatted("Master intensity level for disobedience actions (applies to all devices)");
-                ImGui::EndTooltip();
-            }
-        } else {
-            // Individual device disobedience intensity sliders
-            ImGui::Text("Individual Device Disobedience Intensities:");
-            ImGui::Indent();
-            
-            for (int i = 0; i < 5; ++i) {
-                if (!config_.openshock_device_ids[i].empty()) {
-                    ImGui::PushID(i + 100); // Different ID range to avoid conflicts
-                    
-                    std::string disobedience_label = "Device " + std::to_string(i) + " Disobedience Intensity";
-                    float individual_disobedience_intensity = config_.openshock_individual_disobedience_intensities[i];
-                    
-                    if (ImGui::SliderFloat(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
-                        config_.openshock_individual_disobedience_intensities[i] = individual_disobedience_intensity;
-                        SaveConfig();
-                    }
-                    
-                    ImGui::PopID();
-                }
-            }
-            
-            ImGui::Unindent();
-        }
-
-        float disobedience_duration = config_.openshock_disobedience_duration;
-        if (ImGui::SliderFloat("Disobedience Duration", &disobedience_duration, 0.0f, 1.0f, "%.2f")) {
-            config_.openshock_disobedience_duration = disobedience_duration;
-            SaveConfig();
-        }
-        
-        ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::TextUnformatted("Duration for disobedience actions (0.0 = shortest, 1.0 = longest)");
-            ImGui::EndTooltip();
-        }
-        
-        if (!config_.openshock_enabled) {
-            ImGui::PopStyleColor();
-        }
-        
-        // Status and Test Section
-        ImGui::Separator();
-        ImGui::Text("Status:");
-        
-        if (openshock_manager_) {
-            std::string status = openshock_manager_->GetConnectionStatus();
-            
-            if (status == "Ready") {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Status: %s", status.c_str());
-            } else if (status == "Disabled") {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Status: %s", status.c_str());
-            } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Status: %s", status.c_str());
-            }
-            
-            std::string last_error = openshock_manager_->GetLastError();
-            if (!last_error.empty()) {
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Last Error: %s", last_error.c_str());
-            }
-        }
-        
-        // Test button
-        ImGui::Separator();
-        
-        bool can_test = config_.openshock_enabled && 
-                       openshock_manager_ && 
-                       openshock_manager_->IsFullyConfigured();
-        
-        ImGui::BeginDisabled(!can_test);
-        if (ImGui::Button("Test OpenShock Actions", ImVec2(200, 30))) {
-            if (openshock_manager_) {
-                openshock_manager_->TestActions();
-            }
-        }
-        ImGui::EndDisabled();
-        
-        if (!can_test) {
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Configure OpenShock settings to enable testing");
-        }
-        
-        ImGui::EndDisabled(); // End of the user_agreement disabled block
     }
 
 } // namespace StayPutVR 

@@ -10,6 +10,7 @@
 #include <array>
 #include <thread>
 #include <atomic>
+#include <mutex>
 #include "DeviceTypes.hpp"
 #include "Config.hpp"
 
@@ -64,23 +65,25 @@ public:
     // Send device status updates
     void SendDeviceStatus(OSCDeviceType device, DeviceStatus status);
     
-    // Set callback for when a device should be locked/unlocked
-    void SetLockCallback(std::function<void(OSCDeviceType, bool)> callback) { lock_callback_ = callback; }
-    
+    // Set callback for when a device should be locked/unlocked.
+    // All setters are guarded by callback_mutex_ so the receive thread
+    // never sees a half-written std::function.
+    void SetLockCallback(std::function<void(OSCDeviceType, bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); lock_callback_ = std::move(callback); }
+
     // Set callback for device include/exclude in locking
-    void SetIncludeCallback(std::function<void(OSCDeviceType, bool)> callback) { include_callback_ = callback; }
-    
+    void SetIncludeCallback(std::function<void(OSCDeviceType, bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); include_callback_ = std::move(callback); }
+
     // Set callback for global lock/unlock
-    void SetGlobalLockCallback(std::function<void(bool)> callback) { global_lock_callback_ = callback; }
-    
+    void SetGlobalLockCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); global_lock_callback_ = std::move(callback); }
+
     // Set callback for global out-of-bounds
-    void SetGlobalOutOfBoundsCallback(std::function<void(bool)> callback) { global_out_of_bounds_callback_ = callback; }
-    
+    void SetGlobalOutOfBoundsCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); global_out_of_bounds_callback_ = std::move(callback); }
+
     // Set callback for bite actions
-    void SetBiteCallback(std::function<void(bool)> callback) { bite_callback_ = callback; }
-    
+    void SetBiteCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); bite_callback_ = std::move(callback); }
+
     // Set callback for emergency stop stretch actions
-    void SetEStopStretchCallback(std::function<void(float)> callback) { estop_stretch_callback_ = callback; }
+    void SetEStopStretchCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); estop_stretch_callback_ = std::move(callback); }
     
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
@@ -151,6 +154,10 @@ private:
     bool SendOSCMessage(const std::string& path, float value);
     bool SendOSCMessage(const std::string& path, bool value);
     
+    // Mutex protecting all callback members below. The receive thread
+    // holds this while dispatching; Set*Callback() holds it while writing.
+    mutable std::mutex callback_mutex_;
+
     // Callback for lock/unlock events
     std::function<void(OSCDeviceType, bool)> lock_callback_;
     

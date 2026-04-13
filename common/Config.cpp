@@ -73,14 +73,7 @@ Config::Config()
     , countdown_seconds(3.0f)
     , shock_cooldown_enabled(false)
     , shock_cooldown_seconds(5.0f)
-    , audio_enabled(true)
-    , audio_volume(0.8f)
-    , warning_audio(true)
-    , out_of_bounds_audio(true)
-    , lock_audio(true)
-    , unlock_audio(true)
-    , haptic_enabled(true)
-    , haptic_intensity(0.5f)
+    , audio{}
     , start_with_steamvr(true)
     , minimize_to_tray(false)
     , show_notifications(true)
@@ -135,6 +128,7 @@ bool Config::CreateDefaultConfigFile(const std::string& filename) {
 
 bool Config::LoadFromFile(const std::string& filename) {
     try {
+        auto lock = WriteLock();
         std::ifstream file(filename);
         if (!file.is_open()) {
             if (Logger::IsInitialized()) {
@@ -440,14 +434,15 @@ bool Config::LoadFromFile(const std::string& filename) {
         shock_cooldown_seconds = j.value("shock_cooldown_seconds", 5.0f);
         
         // Load notification settings
-        audio_enabled = j.value("audio_enabled", true);
-        audio_volume = j.value("audio_volume", 0.8f);
-        warning_audio = j.value("warning_audio", true);
-        out_of_bounds_audio = j.value("out_of_bounds_audio", true);
-        lock_audio = j.value("lock_audio", true);
-        unlock_audio = j.value("unlock_audio", true);
-        haptic_enabled = j.value("haptic_enabled", true);
-        haptic_intensity = j.value("haptic_intensity", 0.5f);
+        // Audio settings — read flat keys for backward compatibility with pre-1.3 configs
+        audio.enabled = j.value("audio_enabled", true);
+        audio.volume = j.value("audio_volume", 0.8f);
+        audio.warning = j.value("warning_audio", true);
+        audio.out_of_bounds = j.value("out_of_bounds_audio", true);
+        audio.lock = j.value("lock_audio", true);
+        audio.unlock = j.value("unlock_audio", true);
+        audio.haptic_enabled = j.value("haptic_enabled", true);
+        audio.haptic_intensity = j.value("haptic_intensity", 0.5f);
         
         // Load application settings
         start_with_steamvr = j.value("start_with_steamvr", true);
@@ -577,6 +572,7 @@ bool Config::LoadFromFile(const std::string& filename) {
 
 bool Config::SaveToFile(const std::string& filename) const {
     try {
+        auto lock = ReadLock();
         nlohmann::json j;
 
         // OSC settings
@@ -823,14 +819,14 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["shock_cooldown_seconds"] = shock_cooldown_seconds;
         
         // Notification settings
-        j["audio_enabled"] = audio_enabled;
-        j["audio_volume"] = audio_volume;
-        j["warning_audio"] = warning_audio;
-        j["out_of_bounds_audio"] = out_of_bounds_audio;
-        j["lock_audio"] = lock_audio;
-        j["unlock_audio"] = unlock_audio;
-        j["haptic_enabled"] = haptic_enabled;
-        j["haptic_intensity"] = haptic_intensity;
+        j["audio_enabled"] = audio.enabled;
+        j["audio_volume"] = audio.volume;
+        j["warning_audio"] = audio.warning;
+        j["out_of_bounds_audio"] = audio.out_of_bounds;
+        j["lock_audio"] = audio.lock;
+        j["unlock_audio"] = audio.unlock;
+        j["haptic_enabled"] = audio.haptic_enabled;
+        j["haptic_intensity"] = audio.haptic_intensity;
         
         // Application settings
         j["start_with_steamvr"] = start_with_steamvr;

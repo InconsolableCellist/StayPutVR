@@ -11,6 +11,7 @@
 #include "../../../common/Logger.hpp"
 #include "../../../common/WebSocketClient.hpp"
 #include "../../../common/HttpClient.hpp"
+#include "../../../common/AsyncWorkQueue.hpp"
 #include <nlohmann/json.hpp>
 
 namespace StayPutVR {
@@ -104,7 +105,10 @@ namespace StayPutVR {
         
         // Event callback
         PiShockWSActionCallback action_callback_;
-        
+
+        // Bounded async work queue (replaces detached threads)
+        AsyncWorkQueue work_queue_;
+
         // WebSocket callbacks
         void OnWebSocketConnected();
         void OnWebSocketDisconnected(const std::string& reason);

@@ -4,14 +4,33 @@
 #include <unordered_map>
 #include <vector>
 #include <array>
+#include <shared_mutex>
 #include <nlohmann/json.hpp>
 
 namespace StayPutVR {
+
+// Thread-safety contract:
+// - Manager lifetime must be a subset of Config lifetime. UIManager enforces
+//   this by shutting down all managers before its own destructor destroys
+//   config_ (the Config is a direct member of UIManager).
+// - Worker threads that read config fields must hold a shared lock via
+//   ReadLock(). The UI thread must hold a unique lock via WriteLock() when
+//   mutating config fields that worker threads may concurrently read.
+// - ImGui render callbacks bind directly to config fields on the UI thread;
+//   these do not need locks because they run single-threaded. Only batch
+//   operations (Load/Save) and fields read by worker threads require locking.
 
 class Config {
 public:
     Config();
     ~Config() = default;
+
+    // Lock helpers for cross-thread access. Workers call ReadLock();
+    // the UI thread calls WriteLock() around batch mutations.
+    [[nodiscard]] std::shared_lock<std::shared_mutex> ReadLock() const { return std::shared_lock(mutex_); }
+    [[nodiscard]] std::unique_lock<std::shared_mutex> WriteLock() { return std::unique_lock(mutex_); }
+
+    mutable std::shared_mutex mutex_;
 
     // These methods expect just the filename (e.g., "config.ini"), not a full path.
     // The path will be constructed internally using GetAppDataPath() + "\\config\\" + filename
@@ -231,15 +250,18 @@ public:
     bool shock_cooldown_enabled = false;
     float shock_cooldown_seconds = 10.0f;
 
-    // Notification Settings
-    bool audio_enabled;
-    float audio_volume;
-    bool warning_audio;
-    bool out_of_bounds_audio;
-    bool lock_audio;
-    bool unlock_audio;
-    bool haptic_enabled;
-    float haptic_intensity;
+    // Notification / Audio Settings (grouped as AudioConfig)
+    struct AudioConfig {
+        bool enabled = true;
+        float volume = 0.8f;
+        bool warning = true;
+        bool out_of_bounds = true;
+        bool lock = true;
+        bool unlock = true;
+        bool haptic_enabled = true;
+        float haptic_intensity = 0.5f;
+    };
+    AudioConfig audio;
 
     // Application Settings
     bool start_with_steamvr;

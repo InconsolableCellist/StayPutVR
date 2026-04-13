@@ -13,6 +13,9 @@ set(HEADER_FILES
     IVRDriver.hpp
     HttpClient.hpp
     WebSocketClient.hpp
+    IShockDeviceManager.hpp
+    ShockDeviceBase.hpp
+    AsyncWorkQueue.hpp
 )
 
 # Common library for shared code between driver and application
@@ -23,6 +26,7 @@ add_library(stayputvr_common STATIC
     OSCManager.cpp
     HttpClient.cpp
     WebSocketClient.cpp
+    ShockDeviceBase.cpp
     ${HEADER_FILES}
 )
 

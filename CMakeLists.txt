@@ -1,5 +1,5 @@
 ﻿cmake_minimum_required(VERSION 3.15)
-project(StayPutVR VERSION 1.3.0)
+project(StayPutVR VERSION 1.3.1)
 
 # Specify C++ standard
 set(CMAKE_CXX_STANDARD 20)
@@ -22,8 +22,8 @@ endif()
 set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/local_install" CACHE PATH "Installation directory")
 
 # Set paths
-set(OPENVR_SDK_PATH "C:/apps/programming/openvr-2.5.1" CACHE PATH "Path to OpenVR SDK")
-set(STEAM_PATH "C:/games/online/Steam" CACHE PATH "Path to Steam installation")
+set(OPENVR_SDK_PATH "C:/apps/programming/openvr-2.15.6" CACHE PATH "Path to OpenVR SDK")
+set(STEAM_PATH "C:/games/Steam" CACHE PATH "Path to Steam installation")
 set(STEAMVR_PATH "${STEAM_PATH}/steamapps/common/SteamVR" CACHE PATH "Path to SteamVR installation")
 
 # Verify OpenVR SDK exists

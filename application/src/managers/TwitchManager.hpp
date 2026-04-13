@@ -11,6 +11,7 @@
 #include "../../../common/Config.hpp"
 #include "../../../common/Logger.hpp"
 #include "../../../common/HttpClient.hpp"
+#include "twitch/TwitchOAuthCallbackServer.hpp"
 
 namespace StayPutVR {
 
@@ -143,10 +144,7 @@ namespace StayPutVR {
         std::string ReceiveWebSocketMessage();
         
         // OAuth callback server
-        std::atomic<bool> oauth_server_running_;
-        std::unique_ptr<std::thread> oauth_server_thread_;
-        std::string received_oauth_code_;
-        std::mutex oauth_code_mutex_;
+        TwitchOAuthCallbackServer oauth_server_;
         
         // Internal methods
         void SetError(const std::string& error);

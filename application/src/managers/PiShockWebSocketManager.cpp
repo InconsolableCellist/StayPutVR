@@ -41,11 +41,13 @@ namespace StayPutVR {
         ws_client_->SetOnMessageCallback([this](const std::string& message) { OnWebSocketMessage(message); });
         ws_client_->SetOnErrorCallback([this](const std::string& error) { OnWebSocketError(error); });
 
+        work_queue_.Start();
         Logger::Info("PiShockWebSocketManager initialized");
         return true;
     }
 
     void PiShockWebSocketManager::Shutdown() {
+        work_queue_.Shutdown();
         Disconnect();
         enabled_ = false;
         user_agreement_ = false;
@@ -331,15 +333,23 @@ namespace StayPutVR {
     }
 
     bool PiShockWebSocketManager::CheckShockCooldown() {
-        if (!config_ || !config_->shock_cooldown_enabled) {
-            return true;
+        if (!config_) return true;
+
+        bool cooldown_enabled;
+        float cooldown_seconds;
+        {
+            auto cfg_lock = config_->ReadLock();
+            cooldown_enabled = config_->shock_cooldown_enabled;
+            cooldown_seconds = config_->shock_cooldown_seconds;
         }
-        
+
+        if (!cooldown_enabled) return true;
+
         std::lock_guard<std::mutex> lock(shock_cooldown_mutex_);
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_shock_time_);
-        
-        if (elapsed.count() >= config_->shock_cooldown_seconds) {
+
+        if (elapsed.count() >= cooldown_seconds) {
             last_shock_time_ = now;
             return true;
         }
@@ -408,15 +418,15 @@ namespace StayPutVR {
     }
 
     void PiShockWebSocketManager::ExecuteActionAsync(const PiShockWSActionData& action) {
-        // Execute in separate thread to avoid blocking UI
-        std::thread([this, action]() {
+        work_queue_.Enqueue([this, action]() {
             ExecuteAction(action);
-        }).detach();
+        });
     }
 
     bool PiShockWebSocketManager::ValidateCredentials() const {
-        return config_ && 
-               !config_->pishock_username.empty() &&
+        if (!config_) return false;
+        auto cfg_lock = config_->ReadLock();
+        return !config_->pishock_username.empty() &&
                !config_->pishock_api_key.empty() &&
                !config_->pishock_client_id.empty();
     }

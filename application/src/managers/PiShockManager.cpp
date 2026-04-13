@@ -1,63 +1,44 @@
 #include "PiShockManager.hpp"
-#include <thread>
 #include <sstream>
 #include <algorithm>
+#include <cmath>
 
 namespace StayPutVR {
 
     PiShockManager::PiShockManager()
-        : config_(nullptr)
-        , enabled_(false)
-        , user_agreement_(false)
-        , last_action_time_(std::chrono::steady_clock::now())
-        , last_shock_time_(std::chrono::steady_clock::now())
-        , last_error_("")
-        , action_callback_(nullptr)
+        : ShockDeviceBase(/*rate_limit_seconds=*/2)
     {
     }
 
-    PiShockManager::~PiShockManager() {
-        Shutdown();
-    }
-
-    bool PiShockManager::Initialize(Config* config) {
-        if (!config) {
-            SetError("Invalid configuration provided");
-            return false;
-        }
-
-        config_ = config;
-        enabled_ = config_->pishock_enabled;
-        user_agreement_ = config_->pishock_user_agreement;
-
+    bool PiShockManager::OnInitialize() {
         Logger::Info("PiShockManager initialized");
         return true;
     }
 
-    void PiShockManager::Shutdown() {
-        enabled_ = false;
-        user_agreement_ = false;
-        config_ = nullptr;
+    void PiShockManager::OnShutdown() {
         Logger::Info("PiShockManager shutdown");
     }
 
-    void PiShockManager::Update() {
-        // Update any periodic tasks if needed
-        // Currently no periodic tasks required
+    bool PiShockManager::CheckEnabled() const {
+        if (!config_) return false;
+        auto cfg_lock = config_->ReadLock();
+        return config_->pishock_enabled && config_->pishock_user_agreement;
+    }
+
+    bool PiShockManager::IsEnabled() const {
+        return CheckEnabled();
     }
 
     bool PiShockManager::ValidateConfiguration() const {
         if (!config_) return false;
-        
+        auto cfg_lock = config_->ReadLock();
         return !config_->pishock_username.empty() &&
                !config_->pishock_api_key.empty() &&
                !config_->pishock_share_code.empty();
     }
 
     bool PiShockManager::IsFullyConfigured() const {
-        return ValidateConfiguration() && 
-               config_->pishock_enabled && 
-               config_->pishock_user_agreement;
+        return ValidateConfiguration() && IsEnabled();
     }
 
     void PiShockManager::TriggerDisobedienceActions(const std::string& device_serial) {
@@ -71,24 +52,35 @@ namespace StayPutVR {
             return;
         }
 
-        Logger::Info("Triggering PiShock disobedience actions for device: " + 
+        Logger::Info("Triggering PiShock disobedience actions for device: " +
                    (device_serial.empty() ? "ALL" : device_serial));
 
-        // Execute configured disobedience actions
-        if (config_->pishock_disobedience_beep) {
+        // Snapshot config under read lock
+        bool do_beep, do_vibrate, do_shock;
+        float intensity, duration;
+        {
+            auto cfg_lock = config_->ReadLock();
+            do_beep = config_->pishock_disobedience_beep;
+            do_vibrate = config_->pishock_disobedience_vibrate;
+            do_shock = config_->pishock_disobedience_shock;
+            intensity = config_->pishock_disobedience_intensity;
+            duration = config_->pishock_disobedience_duration;
+        }
+
+        if (do_beep) {
             SendBeep(0, 1, "Disobedience - Beep");
         }
 
-        if (config_->pishock_disobedience_vibrate) {
-            int intensity = ConvertIntensityToAPI(config_->pishock_disobedience_intensity);
-            int duration = ConvertDurationToAPI(config_->pishock_disobedience_duration);
-            SendVibrate(intensity, duration, "Disobedience - Vibrate");
+        if (do_vibrate) {
+            SendVibrate(ConvertIntensityToAPI(intensity),
+                       ConvertDurationToAPI(duration),
+                       "Disobedience - Vibrate");
         }
 
-        if (config_->pishock_disobedience_shock) {
-            int intensity = ConvertIntensityToAPI(config_->pishock_disobedience_intensity);
-            int duration = ConvertDurationToAPI(config_->pishock_disobedience_duration);
-            SendShock(intensity, duration, "Disobedience - Shock");
+        if (do_shock) {
+            SendShock(ConvertIntensityToAPI(intensity),
+                     ConvertDurationToAPI(duration),
+                     "Disobedience - Shock");
         }
     }
 
@@ -103,15 +95,22 @@ namespace StayPutVR {
             return;
         }
 
-        Logger::Info("Triggering PiShock warning actions for device: " + 
+        Logger::Info("Triggering PiShock warning actions for device: " +
                    (device_serial.empty() ? "ALL" : device_serial));
 
-        // Execute warning actions (typically lighter than disobedience)
         SendBeep(0, 1, "Warning - Beep");
-        
-        if (config_->pishock_disobedience_vibrate) {
-            int intensity = (std::max)(1, ConvertIntensityToAPI(config_->pishock_disobedience_intensity) / 2);
-            SendVibrate(intensity, 1, "Warning - Vibrate");
+
+        bool do_vibrate;
+        float intensity;
+        {
+            auto cfg_lock = config_->ReadLock();
+            do_vibrate = config_->pishock_disobedience_vibrate;
+            intensity = config_->pishock_disobedience_intensity;
+        }
+
+        if (do_vibrate) {
+            int half_intensity = (std::max)(1, ConvertIntensityToAPI(intensity) / 2);
+            SendVibrate(half_intensity, 1, "Warning - Vibrate");
         }
     }
 
@@ -127,18 +126,15 @@ namespace StayPutVR {
         }
 
         Logger::Info("Testing configured PiShock out-of-bounds actions...");
-        
-        // Test the actual configured disobedience actions
         TriggerDisobedienceActions("TEST");
     }
 
     void PiShockManager::SendBeep(int intensity, int duration, const std::string& reason) {
         PiShockActionData action;
         action.type = PiShockActionType::BEEP;
-        action.intensity = 0; // Beeps don't use intensity
+        action.intensity = 0;
         action.duration = (std::max)(1, (std::min)(15, duration));
         action.reason = reason;
-
         ExecuteActionAsync(action);
     }
 
@@ -153,7 +149,6 @@ namespace StayPutVR {
         action.intensity = intensity;
         action.duration = duration;
         action.reason = reason;
-
         ExecuteActionAsync(action);
     }
 
@@ -164,8 +159,13 @@ namespace StayPutVR {
         }
 
         if (!CheckShockCooldown()) {
-            std::string cooldown_msg = "Shock cooldown active (waiting " + 
-                                      std::to_string((int)config_->shock_cooldown_seconds) + "s between shocks)";
+            float cooldown_secs;
+            {
+                auto cfg_lock = config_->ReadLock();
+                cooldown_secs = config_->shock_cooldown_seconds;
+            }
+            std::string cooldown_msg = "Shock cooldown active (waiting " +
+                                      std::to_string((int)cooldown_secs) + "s between shocks)";
             Logger::Info(cooldown_msg);
             SetError(cooldown_msg);
             if (action_callback_) {
@@ -179,23 +179,16 @@ namespace StayPutVR {
         action.intensity = intensity;
         action.duration = duration;
         action.reason = reason;
-
         ExecuteActionAsync(action);
     }
 
     std::string PiShockManager::GetConnectionStatus() const {
         if (!config_) return "Not initialized";
+        auto cfg_lock = config_->ReadLock();
         if (!config_->pishock_enabled) return "Disabled";
         if (!config_->pishock_user_agreement) return "User agreement required";
         if (!ValidateConfiguration()) return "Configuration incomplete";
         return "Ready";
-    }
-
-    bool PiShockManager::CanTriggerAction() const {
-        std::lock_guard<std::mutex> lock(rate_limit_mutex_);
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_action_time_);
-        return elapsed.count() >= RATE_LIMIT_SECONDS;
     }
 
     int PiShockManager::ConvertIntensityToAPI(float normalized_intensity) {
@@ -204,50 +197,6 @@ namespace StayPutVR {
 
     int PiShockManager::ConvertDurationToAPI(float duration_seconds) {
         return (std::max)(1, (std::min)(15, static_cast<int>(std::round(duration_seconds))));
-    }
-
-    void PiShockManager::SetError(const std::string& error) {
-        std::lock_guard<std::mutex> lock(error_mutex_);
-        last_error_ = error;
-        Logger::Error("PiShockManager Error: " + error);
-    }
-
-    bool PiShockManager::CheckRateLimit() {
-        std::lock_guard<std::mutex> lock(rate_limit_mutex_);
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_action_time_);
-        
-        if (elapsed.count() >= RATE_LIMIT_SECONDS) {
-            last_action_time_ = now;
-            return true;
-        }
-        return false;
-    }
-
-    void PiShockManager::UpdateRateLimit() {
-        std::lock_guard<std::mutex> lock(rate_limit_mutex_);
-        last_action_time_ = std::chrono::steady_clock::now();
-    }
-
-    bool PiShockManager::CheckShockCooldown() {
-        if (!config_ || !config_->shock_cooldown_enabled) {
-            return true;
-        }
-        
-        std::lock_guard<std::mutex> lock(shock_cooldown_mutex_);
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_shock_time_);
-        
-        if (elapsed.count() >= config_->shock_cooldown_seconds) {
-            last_shock_time_ = now;
-            return true;
-        }
-        return false;
-    }
-
-    void PiShockManager::UpdateShockCooldown() {
-        std::lock_guard<std::mutex> lock(shock_cooldown_mutex_);
-        last_shock_time_ = std::chrono::steady_clock::now();
     }
 
     void PiShockManager::ExecuteAction(const PiShockActionData& action) {
@@ -268,40 +217,31 @@ namespace StayPutVR {
         }
 
         try {
-            // Prepare PiShock API request
-            std::string url = "https://do.pishock.com/api/apioperate/";
-            
-            std::stringstream post_data;
-            post_data << "Username=" << config_->pishock_username
-                     << "&Name=StayPutVR"
-                     << "&Code=" << config_->pishock_share_code
-                     << "&Intensity=" << action.intensity
-                     << "&Duration=" << action.duration
-                     << "&Apikey=" << config_->pishock_api_key
-                     << "&Op=" << static_cast<int>(action.type);
+            std::string username, api_key, share_code;
+            {
+                auto cfg_lock = config_->ReadLock();
+                username = config_->pishock_username;
+                api_key = config_->pishock_api_key;
+                share_code = config_->pishock_share_code;
+            }
 
-            Logger::Info("Sending PiShock " + ActionTypeToString(action.type) + 
-                       " (Intensity: " + std::to_string(action.intensity) + 
-                       ", Duration: " + std::to_string(action.duration) + 
+            Logger::Info("Sending PiShock " + ActionTypeToString(action.type) +
+                       " (Intensity: " + std::to_string(action.intensity) +
+                       ", Duration: " + std::to_string(action.duration) +
                        ", Reason: " + action.reason + ")");
 
             std::string response;
             bool success = SendPiShockCommand(
-                config_->pishock_username,
-                config_->pishock_api_key,
-                config_->pishock_share_code,
+                username, api_key, share_code,
                 static_cast<int>(action.type),
-                action.intensity,
-                action.duration,
+                action.intensity, action.duration,
                 response
             );
 
-            // success is already set by SendPiShockCommand
-            
             LogAction(action, success, response);
-            
+
             if (action_callback_) {
-                action_callback_(ActionTypeToString(action.type), success, 
+                action_callback_(ActionTypeToString(action.type), success,
                                success ? "Action completed successfully" : response);
             }
 
@@ -309,7 +249,6 @@ namespace StayPutVR {
             std::string error = "PiShock action failed: " + std::string(e.what());
             SetError(error);
             LogAction(action, false, error);
-            
             if (action_callback_) {
                 action_callback_(ActionTypeToString(action.type), false, error);
             }
@@ -317,15 +256,15 @@ namespace StayPutVR {
     }
 
     void PiShockManager::ExecuteActionAsync(const PiShockActionData& action) {
-        // Execute in separate thread to avoid blocking UI
-        std::thread([this, action]() {
+        EnqueueWork([this, action]() {
             ExecuteAction(action);
-        }).detach();
+        });
     }
 
     bool PiShockManager::ValidateCredentials() const {
-        return config_ && 
-               !config_->pishock_username.empty() &&
+        if (!config_) return false;
+        auto cfg_lock = config_->ReadLock();
+        return !config_->pishock_username.empty() &&
                !config_->pishock_api_key.empty() &&
                !config_->pishock_share_code.empty();
     }
@@ -337,18 +276,18 @@ namespace StayPutVR {
 
     void PiShockManager::LogAction(const PiShockActionData& action, bool success, const std::string& response) const {
         std::stringstream log_msg;
-        log_msg << "PiShock " << ActionTypeToString(action.type) 
+        log_msg << "PiShock " << ActionTypeToString(action.type)
                 << " (I:" << action.intensity << ", D:" << action.duration << ") "
                 << (success ? "SUCCESS" : "FAILED");
-        
+
         if (!action.reason.empty()) {
             log_msg << " - " << action.reason;
         }
-        
+
         if (!success && !response.empty()) {
             log_msg << " - " << response;
         }
-        
+
         Logger::Info(log_msg.str());
     }
 
@@ -361,4 +300,4 @@ namespace StayPutVR {
         }
     }
 
-} // namespace StayPutVR 
+} // namespace StayPutVR

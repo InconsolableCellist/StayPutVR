@@ -303,6 +303,10 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     return;
                 }
                 
+                // Dispatch callbacks under lock to prevent torn reads
+                // if a setter is called concurrently from the UI thread.
+                std::lock_guard<std::mutex> cb_lock(callback_mutex_);
+
                 // Standard device lock paths
                 if (address == osc_lock_path_hmd_ && lock_callback_) {
                     lock_callback_(OSCDeviceType::HMD, value_bool);

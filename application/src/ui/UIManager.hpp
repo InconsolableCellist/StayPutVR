@@ -33,6 +33,9 @@
 #include "../managers/PiShockWebSocketManager.hpp"
 #include "../managers/OpenShockManager.hpp"
 #include "../managers/ButtplugManager.hpp"
+#include "panels/PiShockPanel.hpp"
+#include "panels/OpenShockPanel.hpp"
+#include "panels/ButtplugPanel.hpp"
 
 namespace StayPutVR {
 
@@ -204,6 +207,11 @@ namespace StayPutVR {
         std::unique_ptr<OpenShockManager> openshock_manager_;
         
         std::unique_ptr<ButtplugManager> buttplug_manager_;
+
+        // UI Panels
+        std::unique_ptr<PiShockPanel> pishock_panel_;
+        std::unique_ptr<OpenShockPanel> openshock_panel_;
+        std::unique_ptr<ButtplugPanel> buttplug_panel_;
         
         // Countdown timer variables
         bool countdown_active_ = false;

@@ -20,7 +20,6 @@ namespace StayPutVR {
         , should_stop_threads_(false)
         , last_chat_message_(std::chrono::steady_clock::now())
         , last_api_call_(std::chrono::steady_clock::now())
-        , oauth_server_running_(false)
     {
     }
 
@@ -686,233 +685,13 @@ namespace StayPutVR {
     }
 
     void TwitchManager::StartOAuthServer() {
-        if (oauth_server_running_) {
-            if (Logger::IsInitialized()) {
-                Logger::Info("OAuth server already running");
-            }
-            return;
-        }
-
-        oauth_server_running_ = true;
-        received_oauth_code_.clear();
-
-        // Start the OAuth callback server in a separate thread
-        oauth_server_thread_ = std::make_unique<std::thread>([this]() {
-            if (Logger::IsInitialized()) {
-                Logger::Info("Starting OAuth callback server on port 8080");
-            }
-
-            // Simple HTTP server implementation using WinSock
-            WSADATA wsaData;
-            if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-                if (Logger::IsInitialized()) {
-                    Logger::Error("WSAStartup failed for OAuth server");
-                }
-                oauth_server_running_ = false;
-                return;
-            }
-
-            SOCKET serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-            if (serverSocket == INVALID_SOCKET) {
-                if (Logger::IsInitialized()) {
-                    Logger::Error("Failed to create OAuth server socket");
-                }
-                WSACleanup();
-                oauth_server_running_ = false;
-                return;
-            }
-
-            // Set up server address
-            sockaddr_in serverAddr;
-            serverAddr.sin_family = AF_INET;
-            serverAddr.sin_addr.s_addr = INADDR_ANY;
-            serverAddr.sin_port = htons(8080);
-
-            // Bind and listen
-            if (bind(serverSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR ||
-                listen(serverSocket, 1) == SOCKET_ERROR) {
-                if (Logger::IsInitialized()) {
-                    Logger::Error("Failed to bind/listen OAuth server socket");
-                }
-                closesocket(serverSocket);
-                WSACleanup();
-                oauth_server_running_ = false;
-                return;
-            }
-
-            if (Logger::IsInitialized()) {
-                Logger::Info("OAuth callback server listening on port 8080");
-            }
-
-            // Accept one connection
-            while (oauth_server_running_) {
-                fd_set readfds;
-                FD_ZERO(&readfds);
-                FD_SET(serverSocket, &readfds);
-
-                timeval timeout;
-                timeout.tv_sec = 1;  // 1 second timeout
-                timeout.tv_usec = 0;
-
-                int result = select(0, &readfds, nullptr, nullptr, &timeout);
-                if (result == SOCKET_ERROR || !oauth_server_running_) {
-                    break;
-                } else if (result == 0) {
-                    // Timeout, continue loop to check if we should stop
-                    continue;
-                }
-
-                SOCKET clientSocket = accept(serverSocket, nullptr, nullptr);
-                if (clientSocket == INVALID_SOCKET || !oauth_server_running_) {
-                    if (clientSocket != INVALID_SOCKET) {
-                        closesocket(clientSocket);
-                    }
-                    break;
-                }
-
-                // Read HTTP request
-                char buffer[4096];
-                int bytesReceived = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
-                if (bytesReceived > 0) {
-                    buffer[bytesReceived] = '\\0';
-                    std::string request(buffer);
-
-                    // Parse for the authorization code
-                    size_t codePos = request.find("code=");
-                    if (codePos != std::string::npos) {
-                        codePos += 5; // Move past "code="
-                        size_t codeEnd = request.find('&', codePos);
-                        if (codeEnd == std::string::npos) {
-                            codeEnd = request.find(' ', codePos); // HTTP request line ends with space
-                        }
-                        if (codeEnd == std::string::npos) {
-                            codeEnd = request.length();
-                        }
-
-                        std::string code = request.substr(codePos, codeEnd - codePos);
-                        
-                        // Store the received code
-                        {
-                            std::lock_guard<std::mutex> lock(oauth_code_mutex_);
-                            received_oauth_code_ = code;
-                        }
-
-                        // Send success response
-                        std::string response = 
-                            "HTTP/1.1 200 OK\\r\\n"
-                            "Content-Type: text/html\\r\\n"
-                            "Connection: close\\r\\n"
-                            "\\r\\n"
-                            "<html><body>"
-                            "<h1>✅ Authorization Successful!</h1>"
-                            "<p>You can close this window and return to StayPutVR.</p>"
-                            "<p>The application will automatically connect to Twitch.</p>"
-                            "</body></html>";
-
-                        send(clientSocket, response.c_str(), (int)response.length(), 0);
-
-                        if (Logger::IsInitialized()) {
-                            Logger::Info("OAuth authorization code received successfully");
-                        }
-
-                        // Process the OAuth callback
-                        if (HandleOAuthCallback(code)) {
-                            if (Logger::IsInitialized()) {
-                                Logger::Info("✅ Twitch OAuth setup completed successfully!");
-                            }
-                            printf("\\n✅ Twitch OAuth setup completed successfully!\\n");
-                        } else {
-                            if (Logger::IsInitialized()) {
-                                Logger::Error("❌ Failed to complete OAuth setup");
-                            }
-                            printf("\\n❌ Failed to complete OAuth setup\\n");
-                        }
-
-                        // Close the client socket and stop the server
-                        closesocket(clientSocket);
-                        break;
-                    } else {
-                        // Send error response
-                        std::string response = 
-                            "HTTP/1.1 400 Bad Request\\r\\n"
-                            "Content-Type: text/html\\r\\n"
-                            "Connection: close\\r\\n"
-                            "\\r\\n"
-                            "<html><body>"
-                            "<h1>❌ Authorization Failed</h1>"
-                            "<p>No authorization code found in the request.</p>"
-                            "</body></html>";
-
-                        send(clientSocket, response.c_str(), (int)response.length(), 0);
-                    }
-                }
-
-                closesocket(clientSocket);
-            }
-
-            // Clean shutdown
-            shutdown(serverSocket, SD_BOTH);
-            closesocket(serverSocket);
-            WSACleanup();
-            oauth_server_running_ = false;
-
-            if (Logger::IsInitialized()) {
-                Logger::Info("OAuth callback server thread finished");
-            }
+        oauth_server_.Start([this](const std::string& code) {
+            return HandleOAuthCallback(code);
         });
     }
 
     void TwitchManager::StopOAuthServer() {
-        if (!oauth_server_running_) {
-            return;
-        }
-
-        if (Logger::IsInitialized()) {
-            Logger::Info("Stopping OAuth callback server");
-        }
-
-        // Signal the server to stop
-        oauth_server_running_ = false;
-        
-        // Force close any listening socket by connecting to it
-        // This will unblock the accept() call in the server thread
-        try {
-            WSADATA wsaData;
-            if (WSAStartup(MAKEWORD(2, 2), &wsaData) == 0) {
-                SOCKET clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-                if (clientSocket != INVALID_SOCKET) {
-                    sockaddr_in serverAddr;
-                    serverAddr.sin_family = AF_INET;
-                    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
-                    serverAddr.sin_port = htons(8080);
-
-                    // Quick connect to unblock the server (ignore result)
-                    connect(clientSocket, (sockaddr*)&serverAddr, sizeof(serverAddr));
-                    closesocket(clientSocket);
-                }
-                WSACleanup();
-            }
-        } catch (...) {
-            // Ignore any errors during cleanup
-        }
-        
-        // Wait for the thread to finish (with timeout)
-        if (oauth_server_thread_ && oauth_server_thread_->joinable()) {
-            // Give the thread up to 2 seconds to finish
-            auto start_time = std::chrono::steady_clock::now();
-            while (oauth_server_running_ && 
-                   std::chrono::steady_clock::now() - start_time < std::chrono::seconds(2)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-            
-            oauth_server_thread_->join();
-        }
-        
-        oauth_server_thread_.reset();
-
-        if (Logger::IsInitialized()) {
-            Logger::Info("OAuth callback server stopped successfully");
-        }
+        oauth_server_.Stop();
     }
 
     // Private methods
@@ -1096,11 +875,19 @@ namespace StayPutVR {
         // so any unsynchronized read would race against that writer.
         const std::string access_token = GetAccessTokenCopy();
 
+        // Snapshot config strings needed for IRC setup under the config read lock
+        std::string bot_username, channel_name;
+        {
+            auto lock = config_->ReadLock();
+            channel_name = config_->twitch_channel_name;
+            bot_username = config_->twitch_bot_username.empty() ?
+                           channel_name : config_->twitch_bot_username;
+        }
+
         if (Logger::IsInitialized()) {
             Logger::Info("🔧 ChatWorker: Starting IRC connection process");
-            Logger::Info("🔧 Bot username: " + (config_->twitch_bot_username.empty() ?
-                                              config_->twitch_channel_name : config_->twitch_bot_username));
-            Logger::Info("🔧 Channel: #" + config_->twitch_channel_name);
+            Logger::Info("🔧 Bot username: " + bot_username);
+            Logger::Info("🔧 Channel: #" + channel_name);
             Logger::Info("🔧 Access token length: " + std::to_string(access_token.length()));
         }
 
@@ -1161,9 +948,7 @@ namespace StayPutVR {
             Logger::Info("✅ Connected to Twitch IRC server");
         }
 
-        // IRC authentication
-        std::string bot_username = config_->twitch_bot_username.empty() ? 
-                                  config_->twitch_channel_name : config_->twitch_bot_username;
+        // IRC authentication (bot_username and channel_name already snapshotted above)
         
         // Make sure we have a valid token before authenticating
         if (access_token.empty()) {
@@ -1193,7 +978,7 @@ namespace StayPutVR {
 
         std::string pass_msg = "PASS oauth:" + access_token + "\r\n";
         std::string nick_msg = "NICK " + bot_username + "\r\n";
-        std::string join_msg = "JOIN #" + config_->twitch_channel_name + "\r\n";
+        std::string join_msg = "JOIN #" + channel_name + "\r\n";
         std::string caps_msg = "CAP REQ :twitch.tv/tags twitch.tv/commands\r\n";
 
         // Send IRC commands
@@ -1427,25 +1212,34 @@ namespace StayPutVR {
             // Check if it's a command
             std::string command, args;
             if (ParseChatCommand(message_content, command, args)) {
+                // Snapshot command names under config read lock
+                std::string lock_cmd, unlock_cmd, status_cmd;
+                {
+                    auto lock = config_->ReadLock();
+                    lock_cmd = config_->twitch_lock_command;
+                    unlock_cmd = config_->twitch_unlock_command;
+                    status_cmd = config_->twitch_status_command;
+                }
+
                 if (Logger::IsInitialized()) {
                     Logger::Info("✅ Found chat command: '" + command + "' (args: '" + args + "') from " + username);
-                    Logger::Info("🔧 Configured commands - lock: '" + config_->twitch_lock_command + 
-                               "', unlock: '" + config_->twitch_unlock_command + 
-                               "', status: '" + config_->twitch_status_command + "'");
+                    Logger::Info("🔧 Configured commands - lock: '" + lock_cmd +
+                               "', unlock: '" + unlock_cmd +
+                               "', status: '" + status_cmd + "'");
                 }
 
                 // Handle the command
-                if (command == config_->twitch_lock_command) {
+                if (command == lock_cmd) {
                     if (Logger::IsInitialized()) {
                         Logger::Info("🔧 Executing LOCK command");
                     }
                     HandleLockCommand(username, args);
-                } else if (command == config_->twitch_unlock_command) {
+                } else if (command == unlock_cmd) {
                     if (Logger::IsInitialized()) {
                         Logger::Info("🔧 Executing UNLOCK command");
                     }
                     HandleUnlockCommand(username, args);
-                } else if (command == config_->twitch_status_command) {
+                } else if (command == status_cmd) {
                     if (Logger::IsInitialized()) {
                         Logger::Info("🔧 Executing STATUS command");
                     }
