@@ -11,11 +11,12 @@
 
 namespace StayPutVR {
 
-    TwitchManager::TwitchManager() 
+    TwitchManager::TwitchManager()
         : config_(nullptr)
         , connected_(false)
         , chat_connected_(false)
         , eventsub_connected_(false)
+        , token_expiry_{}
         , should_stop_threads_(false)
         , last_chat_message_(std::chrono::steady_clock::now())
         , last_api_call_(std::chrono::steady_clock::now())
@@ -126,9 +127,13 @@ namespace StayPutVR {
 
         // Step 1: Check if we have stored tokens
         if (!config_->twitch_access_token.empty()) {
-            access_token_ = config_->twitch_access_token;
-            refresh_token_ = config_->twitch_refresh_token;
-            
+            // Seed the in-memory tokens from config. Expiry is unknown here;
+            // leaving it at epoch preserves pre-mutex behavior (ValidateAccessToken
+            // / RefreshAccessToken drive the real expiry decision).
+            SetTokens(config_->twitch_access_token,
+                      config_->twitch_refresh_token,
+                      std::chrono::steady_clock::time_point{});
+
             if (Logger::IsInitialized()) {
                 Logger::Info("Found stored access token, validating...");
             }
@@ -216,9 +221,8 @@ namespace StayPutVR {
         eventsub_connected_ = false;
         
         // Clear tokens
-        access_token_.clear();
-        refresh_token_.clear();
-        
+        ClearTokens();
+
         connected_ = false;
 
         if (Logger::IsInitialized()) {
@@ -280,15 +284,16 @@ namespace StayPutVR {
             nlohmann::json response_json = nlohmann::json::parse(response);
             
             if (response_json.contains("access_token")) {
-                access_token_ = response_json["access_token"];
-                refresh_token_ = response_json.value("refresh_token", "");
-                
+                std::string new_access = response_json["access_token"];
+                std::string new_refresh = response_json.value("refresh_token", "");
                 int expires_in = response_json.value("expires_in", 3600);
-                token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds(expires_in);
-                
+                auto expiry = std::chrono::steady_clock::now() + std::chrono::seconds(expires_in);
+
+                SetTokens(new_access, new_refresh, expiry);
+
                 // Store tokens in config for persistence
-                config_->twitch_access_token = access_token_;
-                config_->twitch_refresh_token = refresh_token_;
+                config_->twitch_access_token = new_access;
+                config_->twitch_refresh_token = new_refresh;
                 
                 if (Logger::IsInitialized()) {
                     Logger::Info("Successfully obtained Twitch access token");
@@ -366,15 +371,17 @@ namespace StayPutVR {
             nlohmann::json response_json = nlohmann::json::parse(response);
             
             if (response_json.contains("access_token")) {
-                access_token_ = response_json["access_token"];
-                refresh_token_ = response_json.value("refresh_token", refresh_token_); // Keep old if not provided
-                
+                std::string new_access = response_json["access_token"];
+                std::string new_refresh = response_json.value("refresh_token",
+                                                              GetRefreshTokenCopy()); // Keep old if not provided
                 int expires_in = response_json.value("expires_in", 3600);
-                token_expiry_ = std::chrono::steady_clock::now() + std::chrono::seconds(expires_in);
-                
+                auto expiry = std::chrono::steady_clock::now() + std::chrono::seconds(expires_in);
+
+                SetTokens(new_access, new_refresh, expiry);
+
                 // Update config
-                config_->twitch_access_token = access_token_;
-                config_->twitch_refresh_token = refresh_token_;
+                config_->twitch_access_token = new_access;
+                config_->twitch_refresh_token = new_refresh;
                 
                 if (Logger::IsInitialized()) {
                     Logger::Info("Successfully refreshed Twitch access token");
@@ -913,13 +920,40 @@ namespace StayPutVR {
     void TwitchManager::SetError(const std::string& error) {
         std::lock_guard<std::mutex> lock(error_mutex_);
         last_error_ = error;
-        
+
         if (Logger::IsInitialized()) {
             Logger::Error("TwitchManager: " + error);
         }
     }
 
+    std::string TwitchManager::GetAccessTokenCopy() const {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        return access_token_;
+    }
+
+    std::string TwitchManager::GetRefreshTokenCopy() const {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        return refresh_token_;
+    }
+
+    void TwitchManager::SetTokens(const std::string& access_token,
+                                  const std::string& refresh_token,
+                                  std::chrono::steady_clock::time_point expiry) {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        access_token_ = access_token;
+        refresh_token_ = refresh_token;
+        token_expiry_ = expiry;
+    }
+
+    void TwitchManager::ClearTokens() {
+        std::lock_guard<std::mutex> lock(token_mutex_);
+        access_token_.clear();
+        refresh_token_.clear();
+        token_expiry_ = std::chrono::steady_clock::time_point{};
+    }
+
     bool TwitchManager::IsTokenValid() const {
+        std::lock_guard<std::mutex> lock(token_mutex_);
         if (access_token_.empty()) {
             return false;
         }
@@ -929,7 +963,7 @@ namespace StayPutVR {
     }
 
     bool TwitchManager::ValidateAccessToken() {
-        if (access_token_.empty()) {
+        if (GetAccessTokenCopy().empty()) {
             return false;
         }
 
@@ -971,16 +1005,17 @@ namespace StayPutVR {
     }
 
     bool TwitchManager::ValidateTokenScopes() {
-        if (access_token_.empty()) {
+        std::string token = GetAccessTokenCopy();
+        if (token.empty()) {
             return false;
         }
 
         // Make a request to validate token and get scopes
         std::string response;
-        
+
         // Use the OAuth2 validate endpoint to check scopes
         std::map<std::string, std::string> headers;
-        headers["Authorization"] = "OAuth " + access_token_;
+        headers["Authorization"] = "OAuth " + token;
         
         if (!HttpClient::SendHttpRequest("https://id.twitch.tv/oauth2/validate", "GET", headers, "", response)) {
             if (Logger::IsInitialized()) {
@@ -1055,12 +1090,18 @@ namespace StayPutVR {
     }
 
     void TwitchManager::ChatWorker() {
+        // Snapshot the OAuth access token under the mutex once here and use
+        // the local copy for the rest of this function. The main thread can
+        // refresh the stored token at any time (Update -> RefreshAccessToken),
+        // so any unsynchronized read would race against that writer.
+        const std::string access_token = GetAccessTokenCopy();
+
         if (Logger::IsInitialized()) {
             Logger::Info("🔧 ChatWorker: Starting IRC connection process");
-            Logger::Info("🔧 Bot username: " + (config_->twitch_bot_username.empty() ? 
+            Logger::Info("🔧 Bot username: " + (config_->twitch_bot_username.empty() ?
                                               config_->twitch_channel_name : config_->twitch_bot_username));
             Logger::Info("🔧 Channel: #" + config_->twitch_channel_name);
-            Logger::Info("🔧 Access token length: " + std::to_string(access_token_.length()));
+            Logger::Info("🔧 Access token length: " + std::to_string(access_token.length()));
         }
 
         // IRC connection setup
@@ -1125,7 +1166,7 @@ namespace StayPutVR {
                                   config_->twitch_channel_name : config_->twitch_bot_username;
         
         // Make sure we have a valid token before authenticating
-        if (access_token_.empty()) {
+        if (access_token.empty()) {
             if (Logger::IsInitialized()) {
                 Logger::Error("❌ No access token available for IRC authentication");
             }
@@ -1144,13 +1185,13 @@ namespace StayPutVR {
                 Logger::Info("✅ Token is valid for IRC authentication");
             }
         }
-        
+
         if (Logger::IsInitialized()) {
             Logger::Info("🔧 Starting IRC authentication for user: " + bot_username);
-            Logger::Info("🔧 Using access token (first 10 chars): " + access_token_.substr(0, 10) + "...");
+            Logger::Info("🔧 Using access token (first 10 chars): " + access_token.substr(0, 10) + "...");
         }
-        
-        std::string pass_msg = "PASS oauth:" + access_token_ + "\r\n";
+
+        std::string pass_msg = "PASS oauth:" + access_token + "\r\n";
         std::string nick_msg = "NICK " + bot_username + "\r\n";
         std::string join_msg = "JOIN #" + config_->twitch_channel_name + "\r\n";
         std::string caps_msg = "CAP REQ :twitch.tv/tags twitch.tv/commands\r\n";
@@ -1536,10 +1577,11 @@ namespace StayPutVR {
 
         // Set up headers
         std::map<std::string, std::string> headers;
-        
+
         // Add authentication headers if we have an access token
-        if (!access_token_.empty()) {
-            headers["Authorization"] = "Bearer " + access_token_;
+        std::string token = GetAccessTokenCopy();
+        if (!token.empty()) {
+            headers["Authorization"] = "Bearer " + token;
         }
         
         // Add Client-Id header if available
@@ -1575,7 +1617,7 @@ namespace StayPutVR {
     }
 
     std::string TwitchManager::BuildAuthHeader() const {
-        return "Bearer " + access_token_;
+        return "Bearer " + GetAccessTokenCopy();
     }
 
     bool TwitchManager::ParseChatCommand(const std::string& message, std::string& command, std::string& args) {

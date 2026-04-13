@@ -100,10 +100,22 @@ namespace StayPutVR {
         std::atomic<bool> chat_connected_;
         std::atomic<bool> eventsub_connected_;
         
-        // Authentication tokens
+        // Authentication tokens — guarded by token_mutex_. Written on the main
+        // thread (OAuth callback, Update/RefreshAccessToken) and read from the
+        // ChatWorker thread, so every access must go through the helpers below
+        // or hold token_mutex_ directly.
+        mutable std::mutex token_mutex_;
         std::string access_token_;
         std::string refresh_token_;
         std::chrono::steady_clock::time_point token_expiry_;
+
+        // Token access helpers (thread-safe).
+        std::string GetAccessTokenCopy() const;
+        std::string GetRefreshTokenCopy() const;
+        void SetTokens(const std::string& access_token,
+                       const std::string& refresh_token,
+                       std::chrono::steady_clock::time_point expiry);
+        void ClearTokens();
         
         // WebSocket connections
         std::unique_ptr<std::thread> eventsub_thread_;
