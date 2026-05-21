@@ -22,6 +22,8 @@ namespace StayPutVR {
 
 class Config {
 public:
+    static constexpr int CURRENT_CONFIG_VERSION = 1;
+
     Config();
     ~Config() = default;
 
@@ -37,6 +39,9 @@ public:
     bool LoadFromFile(const std::string& filename);
     bool SaveToFile(const std::string& filename) const;
     bool CreateDefaultConfigFile(const std::string& filename);
+
+    // Config versioning (for one-time migrations)
+    int config_version = 0;
 
     // Logging Settings
     std::string log_level;
