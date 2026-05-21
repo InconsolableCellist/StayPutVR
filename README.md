@@ -98,6 +98,13 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
+**1.3.2** - PiShock duration fix (5/21/2026)
+- Fixed bug where PiShock warning/shock duration of 1.0s was resetting to 15s on restart
+
+**1.3.1** - Tech debt sprint (4/13/2026)
+- Internal: guarded Twitch OAuth tokens with a mutex
+- Internal: fixed runtime hazards, extracted UI panels, added base classes
+
 **1.3.0** - BPIO integration (11/3/2025)
 - Added BPIO integration (experimental)
 

@@ -87,5 +87,5 @@ if errorlevel 1 (
 echo.
 echo ============================================
 echo  Installer built successfully!
-echo  Output: installer\StayPutVR v1.3.1 Setup.exe
+echo  Output: installer\StayPutVR v1.3.2 Setup.exe
 echo ============================================
