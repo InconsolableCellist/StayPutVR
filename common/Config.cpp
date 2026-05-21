@@ -146,6 +146,9 @@ bool Config::LoadFromFile(const std::string& filename) {
         nlohmann::json j;
         file >> j;
 
+        // Config versioning
+        config_version = j.value("config_version", 0);
+
         // OSC settings
         osc_enabled = j.value("osc_enabled", false);
         osc_address = j.value("osc_address", "127.0.0.1");
@@ -220,20 +223,24 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_warning_vibrate = j.value("pishock_warning_vibrate", false);
         pishock_warning_intensity = j.value("pishock_warning_intensity", 0.25f);
         pishock_warning_duration = j.value("pishock_warning_duration", 1.0f);
-        // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
-        if (pishock_warning_duration >= 0.0f && pishock_warning_duration <= 1.0f) {
-            pishock_warning_duration = (std::max)(1.0f, pishock_warning_duration * 15.0f);
-        }
-        
+
         // Disobedience (Out of Bounds) PiShock Settings
         pishock_disobedience_beep = j.value("pishock_disobedience_beep", false);
         pishock_disobedience_shock = j.value("pishock_disobedience_shock", false);
         pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
         pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.25f);
         pishock_disobedience_duration = j.value("pishock_disobedience_duration", 1.0f);
+
         // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
-        if (pishock_disobedience_duration >= 0.0f && pishock_disobedience_duration <= 1.0f) {
-            pishock_disobedience_duration = (std::max)(1.0f, pishock_disobedience_duration * 15.0f);
+        // Only run for configs that predate seconds-based durations (version < 1)
+        if (config_version < 1) {
+            if (pishock_warning_duration >= 0.0f && pishock_warning_duration <= 1.0f) {
+                pishock_warning_duration = (std::max)(1.0f, pishock_warning_duration * 15.0f);
+            }
+            if (pishock_disobedience_duration >= 0.0f && pishock_disobedience_duration <= 1.0f) {
+                pishock_disobedience_duration = (std::max)(1.0f, pishock_disobedience_duration * 15.0f);
+            }
+            config_version = CURRENT_CONFIG_VERSION;
         }
         
         // Individual device intensities for PiShock
@@ -578,6 +585,9 @@ bool Config::LoadFromFile(const std::string& filename) {
 bool Config::SaveToFile(const std::string& filename) const {
     try {
         nlohmann::json j;
+
+        // Config versioning
+        j["config_version"] = CURRENT_CONFIG_VERSION;
 
         // OSC settings
         j["osc_enabled"] = osc_enabled;
