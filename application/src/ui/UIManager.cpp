@@ -1457,16 +1457,16 @@ namespace StayPutVR {
 
     void UIManager::RenderIntegrationsTab() {
         if (ImGui::BeginTabBar("IntegrationsSubTabs")) {
-            if (ImGui::BeginTabItem("OSC Triggers")) {
-                RenderOSCTriggersTab();
-                ImGui::EndTabItem();
-            }
             if (ImGui::BeginTabItem("PiShock")) {
                 RenderPiShockTab();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("OpenShock")) {
                 RenderOpenShockTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("OSC Triggers")) {
+                RenderOSCTriggersTab();
                 ImGui::EndTabItem();
             }
             if (ImGui::BeginTabItem("BPIO")) {
@@ -2614,7 +2614,7 @@ namespace StayPutVR {
         }
 
         // ===== Bite Trigger (path only; enable/intensity live in OSC Triggers) =====
-        if (ImGui::CollapsingHeader("Bite Trigger", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Bite Trigger")) {
             ImGui::TextWrapped("OSC parameter path for the bite trigger. Enable it and tune "
                 "intensity/duration in Integrations > OSC Triggers.");
             if (ImGui::InputText("Bite Path", bite_path, IM_ARRAYSIZE(bite_path))) {
@@ -2629,7 +2629,7 @@ namespace StayPutVR {
         }
 
         // ===== Shock Trigger (path only; enable/intensity live in OSC Triggers) =====
-        if (ImGui::CollapsingHeader("Shock Trigger", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Shock Trigger")) {
             ImGui::TextWrapped("OSC parameter path for the shock trigger (e.g. the ChilloutCharles "
                 "shock param). Enable it and tune intensity/duration in Integrations > OSC Triggers.");
             if (ImGui::InputText("Shock Path", shock_path, IM_ARRAYSIZE(shock_path))) {
