@@ -76,6 +76,15 @@ echo
 echo "BUILD SUCCEEDED ($BUILD_TYPE)"
 echo "Output: $SCRIPT_DIR/$APP"
 
+# --- Sync resources into the data dir the app reads at runtime ---
+# The app resolves assets from GetAppDataPath()/resources (XDG_DATA_HOME or
+# ~/.local/share/StayPutVR). Copy the repo's resources there so edits to
+# whats_new.md, logo.png, fonts, etc. are picked up on the next launch.
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/StayPutVR/resources"
+mkdir -p "$DATA_DIR"
+cp -f "$SCRIPT_DIR"/application/resources/* "$DATA_DIR"/ 2>/dev/null || true
+echo "Synced resources -> $DATA_DIR"
+
 if [[ "$DO_RUN" -eq 1 ]]; then
     echo
     echo "=== Launching $APP ==="
