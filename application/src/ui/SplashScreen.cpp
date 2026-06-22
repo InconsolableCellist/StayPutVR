@@ -19,7 +19,7 @@
 namespace StayPutVR {
 
     namespace {
-        constexpr const char* FOXIPSO_URL = "https://foxipso.com";
+        constexpr const char* FOXIPSO_URL = "http://foxipso.com";
         // Reuses Foxipso's existing supporters worker (shared across apps).
         constexpr const char* SUPPORTERS_URL =
             "https://yipai-supporters.dan-a7b.workers.dev/supporters";

@@ -634,9 +634,9 @@ namespace StayPutVR {
         ImGui::SameLine();
         if (ImGui::SmallButton("foxipso.com")) {
 #ifdef _WIN32
-            ShellExecuteA(NULL, "open", "https://foxipso.com", NULL, NULL, SW_SHOWDEFAULT);
+            ShellExecuteA(NULL, "open", "http://foxipso.com", NULL, NULL, SW_SHOWDEFAULT);
 #else
-            (void)std::system("xdg-open 'https://foxipso.com' >/dev/null 2>&1 &");
+            (void)std::system("xdg-open 'http://foxipso.com' >/dev/null 2>&1 &");
 #endif
         }
 
