@@ -288,6 +288,12 @@ void OSCManager::ReceiveThreadFunction() {
         }
         
         if (bytes_received > 0) {
+            // Record inbound liveness: this is the only signal that VRChat (or
+            // any sender) is actually reaching us, since UDP is connectionless.
+            last_inbound_ns_.store(
+                std::chrono::steady_clock::now().time_since_epoch().count(),
+                std::memory_order_relaxed);
+
             // Process the received OSC message
             ProcessOSCMessage(recv_buffer.data(), bytes_received);
         }
@@ -296,6 +302,17 @@ void OSCManager::ReceiveThreadFunction() {
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Receive thread stopped");
     }
+}
+
+double OSCManager::SecondsSinceLastInbound() const {
+    long long ns = last_inbound_ns_.load(std::memory_order_relaxed);
+    if (ns == 0) {
+        return -1.0; // nothing received yet
+    }
+    auto last = std::chrono::steady_clock::time_point(
+        std::chrono::steady_clock::duration(ns));
+    auto elapsed = std::chrono::steady_clock::now() - last;
+    return std::chrono::duration<double>(elapsed).count();
 }
 
 void OSCManager::ProcessOSCMessage(const char* data, size_t size) {

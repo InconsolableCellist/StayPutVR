@@ -69,6 +69,12 @@ public:
     void Shutdown();
     bool IsInitialized() const { return initialized_; }
 
+    // Seconds since the last inbound OSC datagram was received, or a negative
+    // value if none has arrived yet. Used by the Status tab to flag a manual
+    // OSC link as Degraded when it has gone silent (the only liveness signal
+    // available over connectionless UDP). Thread-safe.
+    double SecondsSinceLastInbound() const;
+
     // The port the receive socket is actually bound to. With ephemeral binding
     // this differs from the configured receive_port; otherwise it equals it.
     int GetActualReceivePort() const { return actual_receive_port_; }
@@ -136,6 +142,10 @@ private:
     int send_port_ = 9000;
     int receive_port_ = 9001;
     int actual_receive_port_ = 9001;
+
+    // steady_clock epoch-nanoseconds of the last inbound datagram; 0 = none yet.
+    // Written from the receive thread, read from the UI thread.
+    std::atomic<long long> last_inbound_ns_{0};
 
     // Socket and buffer
     SOCKET socket_ = INVALID_SOCKET;

@@ -114,10 +114,22 @@ namespace StayPutVR {
                     s.detail = port ? ("VRChat OSC port " + std::to_string(*port)) : "VRChat discovered";
                 }
             } else {
-                // Manual mode: UDP is connectionless, so the best we can say for
-                // now is that we are listening. Liveness tracking is added later.
-                s.state = LinkState::Connected;
-                s.detail = "listening (manual UDP)";
+                // Manual mode: no connection state over connectionless UDP, so
+                // fall back to inbound liveness. Fresh traffic => Connected; a
+                // long silence => Degraded (the sender may be gone).
+                constexpr double kOscStaleSeconds = 15.0;
+                double secs = OSCManager::GetInstance().SecondsSinceLastInbound();
+                if (secs < 0.0) {
+                    s.state = LinkState::Connecting;
+                    s.detail = "listening (manual UDP); no OSC received yet";
+                } else if (secs <= kOscStaleSeconds) {
+                    s.state = LinkState::Connected;
+                    s.detail = "receiving (last " + std::to_string(static_cast<int>(secs)) + "s ago)";
+                } else {
+                    s.state = LinkState::Degraded;
+                    s.detail = "no OSC for " + std::to_string(static_cast<int>(secs)) +
+                               "s (sender may be gone)";
+                }
             }
             RenderLinkRow("OSC", s);
         }
@@ -144,23 +156,14 @@ namespace StayPutVR {
                     }
                 }
             } else if (pishock_manager_) {
-                // Legacy is stateless HTTP: no live link, status reflects config.
-                std::string cs = pishock_manager_->GetConnectionStatus();
-                s.state = (cs == "Ready") ? LinkState::Connected : LinkState::Disabled;
-                s.detail = (cs == "Ready") ? "configured (HTTP, status updates on send)" : cs;
-                s.last_error = pishock_manager_->GetLastError();
-                RenderLinkRow("PiShock", s);
+                // Legacy is stateless HTTP: state reflects config + last command.
+                RenderLinkRow("PiShock", pishock_manager_->GetLinkStatus());
             }
         }
 
         // --- OpenShock (stateless HTTP) ---
         if (config_.openshock_enabled && openshock_manager_) {
-            LinkStatus s;
-            std::string cs = openshock_manager_->GetConnectionStatus();
-            s.state = (cs == "Ready") ? LinkState::Connected : LinkState::Disabled;
-            s.detail = (cs == "Ready") ? "configured (HTTP, status updates on send)" : cs;
-            s.last_error = openshock_manager_->GetLastError();
-            RenderLinkRow("OpenShock", s);
+            RenderLinkRow("OpenShock", openshock_manager_->GetLinkStatus());
         }
 
         // --- Twitch (IRC chat + EventSub) ---

@@ -251,6 +251,7 @@ namespace StayPutVR {
             );
 
             LogAction(action, success, response);
+            RecordCommandResult(success);
 
             if (action_callback_) {
                 action_callback_(ActionTypeToString(action.type), success,
@@ -260,6 +261,7 @@ namespace StayPutVR {
         } catch (const std::exception& e) {
             std::string error = "PiShock action failed: " + std::string(e.what());
             SetError(error);
+            RecordCommandResult(false);
             LogAction(action, false, error);
             if (action_callback_) {
                 action_callback_(ActionTypeToString(action.type), false, error);

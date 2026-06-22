@@ -107,4 +107,44 @@ bool ShockDeviceBase::EnqueueWork(std::function<void()> work) {
     return work_queue_.Enqueue(std::move(work));
 }
 
+void ShockDeviceBase::RecordCommandResult(bool success) {
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    had_command_ = true;
+    last_command_ok_ = success;
+    last_command_time_ = std::chrono::steady_clock::now();
+}
+
+LinkStatus ShockDeviceBase::GetLinkStatus() const {
+    LinkStatus s;
+
+    // GetConnectionStatus() (virtual) reports configuration readiness:
+    // "Disabled" / "User agreement required" / "Configuration incomplete" / "Ready".
+    const std::string cs = GetConnectionStatus();
+    if (cs != "Ready") {
+        s.state = LinkState::Disabled;
+        s.detail = cs;
+        return s;
+    }
+
+    std::lock_guard<std::mutex> lock(command_mutex_);
+    if (!had_command_) {
+        s.state = LinkState::Connected;
+        s.detail = "configured (HTTP); no commands sent yet";
+        return s;
+    }
+
+    auto secs = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::now() - last_command_time_).count();
+    if (last_command_ok_) {
+        s.state = LinkState::Connected;
+        s.detail = "last command OK (" + std::to_string(secs) + "s ago)";
+        s.last_ok = last_command_time_;
+    } else {
+        s.state = LinkState::Failed;
+        s.detail = "last command FAILED (" + std::to_string(secs) + "s ago)";
+        s.last_error = GetLastError();
+    }
+    return s;
+}
+
 } // namespace StayPutVR

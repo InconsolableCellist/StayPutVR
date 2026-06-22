@@ -248,6 +248,7 @@ namespace StayPutVR {
                     0, // 0 = Shock
                     intensity, duration, response
                 );
+                RecordCommandResult(success);
 
                 if (!success) {
                     Logger::Error("Failed to send shock to device " + std::to_string(device_index) + ": " + response);
@@ -356,6 +357,7 @@ namespace StayPutVR {
                     1, // 1 = Vibrate
                     intensity, duration, response
                 );
+                RecordCommandResult(success);
 
                 if (!success) {
                     Logger::Error("Failed to send vibrate to device " + std::to_string(device_index) + ": " + response);
@@ -484,6 +486,7 @@ namespace StayPutVR {
                     static_cast<int>(action.type),
                     action.intensity, action.duration, response
                 );
+                RecordCommandResult(success);
             } else {
                 SetError("No shock devices configured");
                 response = "No shock devices configured";
@@ -499,6 +502,7 @@ namespace StayPutVR {
         } catch (const std::exception& e) {
             std::string error = "OpenShock action failed: " + std::string(e.what());
             SetError(error);
+            RecordCommandResult(false);
             LogAction(action, false, error);
             if (action_callback_) {
                 action_callback_(ActionTypeToString(action.type), false, error);
@@ -588,6 +592,7 @@ namespace StayPutVR {
                 static_cast<int>(action.type),
                 action.intensity, action.duration, response
             );
+            RecordCommandResult(success);
 
             LogAction(action, success, response);
 
@@ -599,6 +604,7 @@ namespace StayPutVR {
         } catch (const std::exception& e) {
             std::string error = "OpenShock action failed: " + std::string(e.what());
             SetError(error);
+            RecordCommandResult(false);
             LogAction(action, false, error);
             if (action_callback_) {
                 action_callback_(ActionTypeToString(action.type), false, error);

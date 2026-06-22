@@ -4,6 +4,7 @@
 #include "Config.hpp"
 #include "Logger.hpp"
 #include "AsyncWorkQueue.hpp"
+#include "LinkStatus.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -33,6 +34,11 @@ public:
     bool CanTriggerAction() const override;
     void SetActionCallback(ShockActionCallback callback) override;
 
+    // Connection-status snapshot for the Status tab. Stateless HTTP managers
+    // have no live link, so this reflects configuration plus the outcome of the
+    // most recent network command (the only reachability signal available).
+    LinkStatus GetLinkStatus() const;
+
 protected:
     // --- Hooks for subclasses ---
 
@@ -56,6 +62,12 @@ protected:
     // Enqueue work on the bounded async worker thread.
     bool EnqueueWork(std::function<void()> work);
 
+    // Record the outcome of a network command (the actual HTTP send), so the
+    // Status tab can show whether the device is currently reachable. Validation
+    // / cooldown / rate-limit rejections are NOT command results and must not be
+    // reported here.
+    void RecordCommandResult(bool success);
+
     Config* config_ = nullptr;
     ShockActionCallback action_callback_;
 
@@ -75,6 +87,12 @@ private:
     // Error handling
     std::string last_error_;
     mutable std::mutex error_mutex_;
+
+    // Last network-command outcome (for GetLinkStatus).
+    mutable std::mutex command_mutex_;
+    std::chrono::steady_clock::time_point last_command_time_{};
+    bool had_command_ = false;
+    bool last_command_ok_ = false;
 };
 
 } // namespace StayPutVR
