@@ -1,0 +1,6 @@
+# Linux development build output (see README "Building on Linux")
+/build-linux/
+
+# Runtime-generated artifacts
+/config.ini
+/imgui.ini

@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <array>
+#include <mutex>
 #include <shared_mutex>
 #include <nlohmann/json.hpp>
 
@@ -45,12 +46,18 @@ public:
 
     // Logging Settings
     std::string log_level;
+    float ui_font_scale = 1.0f; // UI font size multiplier (Settings > Display)
 
     // OSC Settings
     bool osc_enabled = false;
     std::string osc_address = "127.0.0.1";
     int osc_send_port = 9000;
     int osc_receive_port = 9001;
+    // When enabled, the receive port is auto-negotiated (ephemeral bind) and
+    // advertised to VRChat via OSCQuery/mDNS, and the send port is discovered
+    // from VRChat. Fixes conflicts with other OSC apps holding 9001. When off,
+    // the fixed send/receive ports above are used.
+    bool osc_query_enabled = true;
     bool chaining_mode = false;
     std::string osc_address_bounds;
     std::string osc_address_warning;
@@ -74,7 +81,17 @@ public:
 
     std::string osc_bite_path = "/avatar/parameters/SPVR_Bite";
     bool osc_bite_enabled = true;
-    
+
+    // External shock triggers (issue #7): the bite param and the new Shock param
+    // each fire a direct shock on all configured shockers at their own intensity
+    // (0..1) and duration (seconds). Both are blocked while emergency stop is active.
+    std::string osc_shock_path = "/avatar/parameters/Shock";
+    bool osc_shock_enabled = true;
+    float osc_shock_intensity = 0.25f;
+    float osc_shock_duration = 1.0f;
+    float osc_bite_intensity = 0.25f;
+    float osc_bite_duration = 1.0f;
+
     // Global lock/unlock paths
     std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
     std::string osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
@@ -97,7 +114,7 @@ public:
     bool pishock_enabled = false;
     int pishock_group = 0;
     bool pishock_user_agreement = false;
-    PiShockMode pishock_mode = PiShockMode::LEGACY_API;
+    PiShockMode pishock_mode = PiShockMode::WEBSOCKET_V2;
     
     // PiShock Direct API Settings (common to both modes)
     std::string pishock_api_key;

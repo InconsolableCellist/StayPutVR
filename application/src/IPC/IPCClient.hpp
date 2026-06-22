@@ -2,7 +2,17 @@
 #include <string>
 #include <vector>
 #include <functional>
+#ifdef _WIN32
 #include <Windows.h>
+#else
+// The IPC client talks to the SteamVR driver over a Windows named pipe. There
+// is no driver on the Linux development build, so provide placeholder types and
+// stub the implementation (always reports disconnected, surfaces no devices).
+typedef void* HANDLE;
+#ifndef INVALID_HANDLE_VALUE
+#define INVALID_HANDLE_VALUE (nullptr)
+#endif
+#endif
 #include <thread>
 #include <mutex>
 #include <atomic>

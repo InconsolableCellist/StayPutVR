@@ -1,7 +1,9 @@
 #include "HttpClient.hpp"
 #include "Logger.hpp"
+#ifdef _WIN32
 #include <Windows.h>
 #include <winhttp.h>
+#endif
 #include <sstream>
 #include <string>
 #include <algorithm>
@@ -10,9 +12,13 @@
 #include <queue>
 #include <mutex>
 
+#ifdef _WIN32
 #pragma comment(lib, "winhttp.lib")
+#endif
 
 namespace StayPutVR {
+
+#ifdef _WIN32
 
 bool HttpClient::initialized_ = false;
 std::thread HttpClient::worker_thread_;
@@ -738,4 +744,66 @@ bool SendOpenShockCommandMulti(
     return success;
 }
 
-} // namespace StayPutVR 
+#else // !_WIN32 — Linux development build: HTTP/PiShock-legacy/OpenShock stubbed (no WinHTTP).
+
+bool HttpClient::initialized_ = false;
+std::thread HttpClient::worker_thread_;
+std::atomic<bool> HttpClient::worker_running_(false);
+std::queue<std::function<void()>> HttpClient::request_queue_;
+std::mutex HttpClient::queue_mutex_;
+
+bool HttpClient::Initialize() { initialized_ = true; return true; }
+void HttpClient::Shutdown() { initialized_ = false; }
+
+bool HttpClient::PostJson(const std::string&, const nlohmann::json&, std::string& responseText,
+                          std::function<void(int)>) {
+    responseText = "HTTP disabled on Linux development build";
+    return false;
+}
+
+bool HttpClient::SendHttpRequest(const std::string&, const std::string&,
+                                 const std::map<std::string, std::string>&, const std::string&,
+                                 std::string& responseText, std::function<void(int)>) {
+    responseText = "HTTP disabled on Linux development build";
+    return false;
+}
+
+void HttpClient::StartWorkerThread() {}
+void HttpClient::StopWorkerThread() {}
+void HttpClient::QueueAsyncRequest(std::function<void()>) {}
+void HttpClient::WorkerThreadFunction() {}
+
+bool SendPiShockCommand(const std::string&, const std::string&, const std::string&,
+                        int, int, int, std::string& response) {
+    response = "PiShock legacy HTTP disabled on Linux development build";
+    return false;
+}
+
+void SendPiShockCommandAsync(const std::string&, const std::string&, const std::string&,
+                             int, int, int,
+                             std::function<void(bool, const std::string&)> callback) {
+    if (callback) callback(false, "PiShock legacy HTTP disabled on Linux development build");
+}
+
+bool SendOpenShockCommand(const std::string&, const std::string&, const std::string&,
+                          int, int, int, std::string& response) {
+    response = "OpenShock HTTP disabled on Linux development build";
+    return false;
+}
+
+void SendOpenShockCommandAsync(const std::string&, const std::string&, const std::string&,
+                               int, int, int,
+                               std::function<void(bool, const std::string&)> callback) {
+    if (callback) callback(false, "OpenShock HTTP disabled on Linux development build");
+}
+
+bool SendOpenShockCommandMulti(const std::string&, const std::string&,
+                               const std::vector<std::string>&, int, int, int,
+                               std::string& response) {
+    response = "OpenShock HTTP disabled on Linux development build";
+    return false;
+}
+
+#endif // _WIN32
+
+} // namespace StayPutVR

@@ -13,8 +13,8 @@ namespace StayPutVR {
         if (initialized_) return;
 
         // Set the resources path to be relative to the executable
-        resources_path_ = GetAppDataPath() + "\\resources";
-        
+        resources_path_ = GetAppDataPath() + "/resources";
+
         // Check if resources directory exists
         if (!std::filesystem::exists(resources_path_)) {
             try {
@@ -29,12 +29,12 @@ namespace StayPutVR {
                     Logger::Error("AudioManager: Failed to create resources directory: " + std::string(e.what()));
                 }
                 // Fall back to current directory
-                resources_path_ = ".\\resources";
+                resources_path_ = "./resources";
             }
         }
 
         initialized_ = true;
-        
+
         if (Logger::IsInitialized()) {
             Logger::Info("AudioManager: Initialized with resources path: " + resources_path_);
         }
@@ -49,8 +49,9 @@ namespace StayPutVR {
             Initialize();
         }
 
-        std::string fullPath = resources_path_ + "\\" + filename;
-        
+        std::string fullPath = resources_path_ + "/" + filename;
+
+#ifdef _WIN32
         // Check if file exists
         if (!std::filesystem::exists(fullPath)) {
             if (Logger::IsInitialized()) {
@@ -63,7 +64,7 @@ namespace StayPutVR {
         int size_needed = MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, NULL, 0);
         std::wstring wFullPath(size_needed, 0);
         MultiByteToWideChar(CP_UTF8, 0, fullPath.c_str(), -1, &wFullPath[0], size_needed);
-        
+
         // Calculate volume level (0-1000)
         int volumeLevel = static_cast<int>(volume * 1000);
         // Clamp volume to valid range
@@ -74,7 +75,7 @@ namespace StayPutVR {
         WORD rightVolume = leftVolume;
         DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
         waveOutSetVolume(NULL, dwVolume);
-        
+
         // Play sound asynchronously
         DWORD flags = SND_FILENAME | SND_ASYNC | SND_NODEFAULT;
         if (::PlaySoundW(wFullPath.c_str(), NULL, flags)) {
@@ -90,6 +91,12 @@ namespace StayPutVR {
             }
             return false;
         }
+#else
+        // Audio playback is not wired up on the Linux development build.
+        (void)fullPath;
+        (void)volume;
+        return false;
+#endif
     }
 
     bool AudioManager::PlayWarningSound(float volume) {
@@ -97,7 +104,7 @@ namespace StayPutVR {
     }
 
     bool AudioManager::PlayOutOfBoundsSound(float volume) {
-        // Just use warning.wav as fallback - disobedience.wav is explicitly 
+        // Just use warning.wav as fallback - disobedience.wav is explicitly
         // checked in the UIManager when needed
         if (StayPutVR::Logger::IsInitialized()) {
             StayPutVR::Logger::Warning("AudioManager: Using warning.wav for out of bounds");
@@ -107,55 +114,65 @@ namespace StayPutVR {
 
     bool AudioManager::PlayLockSound(float volume) {
         // If lock.wav doesn't exist, use Windows default sound
-        std::string filePath = resources_path_ + "\\lock.wav";
+        std::string filePath = resources_path_ + "/lock.wav";
         if (std::filesystem::exists(filePath)) {
             return PlaySound("lock.wav", volume);
-        } else {
-            if (Logger::IsInitialized()) {
-                Logger::Warning("AudioManager: lock.wav not found, using system sound");
-            }
-            
-            // Apply volume to system sound
-            WORD leftVolume = static_cast<WORD>(volume * 65535.0f);
-            WORD rightVolume = leftVolume;
-            DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
-            waveOutSetVolume(NULL, dwVolume);
-            
-            // Use Windows system sound (asterisk) as fallback
-            DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
-            return ::PlaySoundW(L"SystemAsterisk", NULL, flags);
         }
+#ifdef _WIN32
+        if (Logger::IsInitialized()) {
+            Logger::Warning("AudioManager: lock.wav not found, using system sound");
+        }
+
+        // Apply volume to system sound
+        WORD leftVolume = static_cast<WORD>(volume * 65535.0f);
+        WORD rightVolume = leftVolume;
+        DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
+        waveOutSetVolume(NULL, dwVolume);
+
+        // Use Windows system sound (asterisk) as fallback
+        DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
+        return ::PlaySoundW(L"SystemAsterisk", NULL, flags);
+#else
+        (void)volume;
+        return false;
+#endif
     }
 
     bool AudioManager::PlayUnlockSound(float volume) {
         // If unlock.wav doesn't exist, use Windows default sound
-        std::string filePath = resources_path_ + "\\unlock.wav";
+        std::string filePath = resources_path_ + "/unlock.wav";
         if (std::filesystem::exists(filePath)) {
             return PlaySound("unlock.wav", volume);
-        } else {
-            if (Logger::IsInitialized()) {
-                Logger::Warning("AudioManager: unlock.wav not found, using system sound");
-            }
-            
-            // Apply volume to system sound
-            WORD leftVolume = static_cast<WORD>(volume * 65535.0f);
-            WORD rightVolume = leftVolume;
-            DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
-            waveOutSetVolume(NULL, dwVolume);
-            
-            // Use Windows system sound (exclamation) as fallback
-            DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
-            return ::PlaySoundW(L"SystemExclamation", NULL, flags);
         }
+#ifdef _WIN32
+        if (Logger::IsInitialized()) {
+            Logger::Warning("AudioManager: unlock.wav not found, using system sound");
+        }
+
+        // Apply volume to system sound
+        WORD leftVolume = static_cast<WORD>(volume * 65535.0f);
+        WORD rightVolume = leftVolume;
+        DWORD dwVolume = MAKELONG(leftVolume, rightVolume);
+        waveOutSetVolume(NULL, dwVolume);
+
+        // Use Windows system sound (exclamation) as fallback
+        DWORD flags = SND_ALIAS | SND_ASYNC | SND_NODEFAULT;
+        return ::PlaySoundW(L"SystemExclamation", NULL, flags);
+#else
+        (void)volume;
+        return false;
+#endif
     }
 
     void AudioManager::StopSound() {
+#ifdef _WIN32
         // Use the PlaySound Windows API with the SND_PURGE flag to stop current sound
         ::PlaySoundW(NULL, NULL, SND_PURGE);
-        
+
         if (Logger::IsInitialized()) {
             Logger::Debug("AudioManager: Stopped all playing sounds");
         }
+#endif
     }
 
-} // namespace StayPutVR 
+} // namespace StayPutVR

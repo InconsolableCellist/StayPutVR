@@ -47,7 +47,10 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CanTriggerAction()) {
+        // Rate-limit once per event so a single disobedience event's
+        // beep + vibrate + shock all fire (CheckRateLimit consumes the budget;
+        // the per-action check in ExecuteAction was dropping later actions).
+        if (!CheckRateLimit()) {
             Logger::Info("Rate limit active, skipping disobedience actions");
             return;
         }
@@ -90,7 +93,8 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CanTriggerAction()) {
+        // Rate-limit once per event (see TriggerDisobedienceActions).
+        if (!CheckRateLimit()) {
             Logger::Info("Rate limit active, skipping warning actions");
             return;
         }
@@ -112,6 +116,18 @@ namespace StayPutVR {
             int half_intensity = (std::max)(1, ConvertIntensityToAPI(intensity) / 2);
             SendVibrate(half_intensity, 1, "Warning - Vibrate");
         }
+    }
+
+    void PiShockManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock not enabled, skipping external shock");
+            return;
+        }
+        if (!CheckRateLimit()) {
+            Logger::Info("Rate limit active, skipping external shock");
+            return;
+        }
+        SendShock(ConvertIntensityToAPI(intensity), ConvertDurationToAPI(duration_seconds), reason);
     }
 
     void PiShockManager::TestActions() {
@@ -208,13 +224,9 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CheckRateLimit()) {
-            SetError("Rate limit exceeded");
-            if (action_callback_) {
-                action_callback_(ActionTypeToString(action.type), false, "Rate limit exceeded");
-            }
-            return;
-        }
+        // Rate limiting is applied once per event in TriggerDisobedienceActions/
+        // TriggerWarningActions, so every action in one event fires. The shock
+        // cooldown still gates shocks individually (see SendShock()).
 
         try {
             std::string username, api_key, share_code;

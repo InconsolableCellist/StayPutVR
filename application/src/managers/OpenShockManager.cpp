@@ -111,6 +111,17 @@ namespace StayPutVR {
         }
     }
 
+    void OpenShockManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason) {
+        if (!IsEnabled()) {
+            Logger::Info("OpenShock not enabled, skipping external shock");
+            return;
+        }
+        // SendShock -> ExecuteAction already applies the rate limit and shock
+        // cooldown, so don't double-gate here. Duration is API ms (300..65535).
+        int duration_ms = (std::max)(300, (std::min)(65535, static_cast<int>(duration_seconds * 1000.0f)));
+        SendShock(ConvertIntensityToAPI(intensity), duration_ms, reason, "");
+    }
+
     void OpenShockManager::TestActions() {
         if (!IsEnabled()) {
             SetError("OpenShock not enabled");

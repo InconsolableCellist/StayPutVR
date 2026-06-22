@@ -56,6 +56,9 @@ namespace StayPutVR {
         // Action triggering
         void TriggerDisobedienceActions(const std::string& device_serial = "");
         void TriggerWarningActions(const std::string& device_serial = "");
+        // Fire a direct shock at an explicit intensity (0..1) and duration
+        // (seconds) on all configured shockers. Used by external triggers.
+        void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "");
         void TestActions();
         
         // Individual action methods
@@ -140,7 +143,9 @@ namespace StayPutVR {
         // Multi-device methods
         void SendBeepMulti(int duration, const std::string& reason, const std::string& device_serial);
         void SendVibrateMulti(int duration, const std::string& reason, const std::string& device_serial);
-        void SendShockMulti(int duration, const std::string& reason, const std::string& device_serial);
+        // intensity_override: API intensity (0..100) to use for every device;
+        // when < 0 the configured disobedience intensities are used.
+        void SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override = -1);
         
         // Logging helpers
         void LogAction(const PiShockWSActionData& action, bool success, const std::string& response) const;

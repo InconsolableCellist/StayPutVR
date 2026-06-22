@@ -1,7 +1,11 @@
 #pragma once
 
+#ifdef _WIN32
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#else
+#include "WinsockCompat.hpp"
+#endif
 
 #include <string>
 #include <memory>
@@ -55,10 +59,24 @@ class OSCManager {
 public:
     static OSCManager& GetInstance();
 
-    bool Initialize(const std::string& address, int send_port, int receive_port);
+    // Initialize the OSC sockets. When use_ephemeral_receive_port is true the
+    // receive socket binds to an OS-chosen port (port 0) instead of the fixed
+    // receive_port, so it never conflicts with another app holding 9001. The
+    // actual bound port can then be read via GetActualReceivePort() and
+    // advertised over OSCQuery/mDNS.
+    bool Initialize(const std::string& address, int send_port, int receive_port,
+                    bool use_ephemeral_receive_port = false);
     void Shutdown();
     bool IsInitialized() const { return initialized_; }
-    
+
+    // The port the receive socket is actually bound to. With ephemeral binding
+    // this differs from the configured receive_port; otherwise it equals it.
+    int GetActualReceivePort() const { return actual_receive_port_; }
+
+    // Retarget the send socket to a new UDP port on the same address. Used by
+    // OSCQuery to point sends at VRChat's discovered OSC port. Thread-safe.
+    void SetSendPort(int send_port);
+
     // Function to set config for device lock paths
     void SetConfig(const Config& config);
 
@@ -81,6 +99,13 @@ public:
 
     // Set callback for bite actions
     void SetBiteCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); bite_callback_ = std::move(callback); }
+
+    // Set callback for avatar change (VRChat /avatar/change). Fired when the
+    // user switches avatars so lock/shock state can be reset.
+    void SetAvatarChangeCallback(std::function<void()> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); avatar_change_callback_ = std::move(callback); }
+
+    // Set callback for the external shock param (/avatar/parameters/Shock).
+    void SetShockCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); shock_callback_ = std::move(callback); }
 
     // Set callback for emergency stop stretch actions
     void SetEStopStretchCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); estop_stretch_callback_ = std::move(callback); }
@@ -110,11 +135,16 @@ private:
     std::string address_;
     int send_port_ = 9000;
     int receive_port_ = 9001;
-    
+    int actual_receive_port_ = 9001;
+
     // Socket and buffer
     SOCKET socket_ = INVALID_SOCKET;
     SOCKET receive_socket_ = INVALID_SOCKET;
     sockaddr_in* server_addr_ = nullptr;
+    // Guards the send address (server_addr_) so SetSendPort() (called from the
+    // OSCQuery browse thread when VRChat is discovered) and the senders running
+    // on the UI thread don't tear the sin_port field.
+    mutable std::mutex send_addr_mutex_;
     std::array<char, MAX_PACKET_SIZE> buffer_;
     
     // Thread for receiving OSC messages
@@ -147,6 +177,7 @@ private:
     std::string osc_global_unlock_path_ = "/avatar/parameters/SPVR_global_unlock";
     std::string osc_global_out_of_bounds_path_ = "/avatar/parameters/SPVR_Global_OutOfBounds";
     std::string osc_bite_path_ = "/avatar/parameters/SPVR_Bite";
+    std::string osc_shock_path_ = "/avatar/parameters/Shock";
     std::string osc_estop_stretch_path_ = "/avatar/parameters/SPVR_EStop_Stretch";
     
     // Helper methods for sending OSC messages
@@ -172,6 +203,12 @@ private:
     
     // Callback for bite events
     std::function<void(bool)> bite_callback_;
+
+    // Callback for external shock param (/avatar/parameters/Shock)
+    std::function<void(bool)> shock_callback_;
+
+    // Callback for avatar change events (/avatar/change)
+    std::function<void()> avatar_change_callback_;
     
     // Callback for emergency stop stretch events
     std::function<void(float)> estop_stretch_callback_;

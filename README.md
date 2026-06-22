@@ -98,6 +98,21 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 ## 📅 Version History
 
+**1.4** - Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (6/22/2026)
+- PiShock WebSocket v2 is now the default for new users (existing users keep their saved setting)
+- Fixed PiShock multi-action: Beep + Vibrate + Shock now all fire from a single event (#9)
+- Changing avatars now unlocks and resets all device status instead of leaving it stale (#6)
+- Added an OSC `Shock` parameter and surfaced the Bite shock in the UI — both have their own intensity/duration and are blocked while emergency stop is active (#7)
+- Added OSCQuery (mDNS) auto-discovery so StayPutVR no longer fights other apps over the OSC receive port (#8); can be turned off to use manual ports
+- Reduced synced avatar parameters: device status is now sent as 3 bools per device (15 synced bits) instead of 5 synced ints (40 bits) — **requires the new 1.4 avatar prefab**
+- Redesigned the Devices tab: drag-and-drop role assignment onto an avatar effigy, a per-device movement "heat" meter for identifying trackers, and a scaled radial zone map (a classic list view is still available)
+- Reorganized the interface into Status / Devices / Integrations / Settings tabs; OSC enable and Bite/Shock triggers are now reachable from the Status tab without digging into OSC settings
+- OSC is now enabled by default, with the advanced path settings collapsed behind clearer defaults and per-section reset buttons
+- Settings now auto-save instantly (no more "Save All Settings" button) and include an adjustable UI font scale
+- Refreshed the application theme
+- Updated Dear ImGui
+- Added a Linux development build (GUI + OSC simulation, no SteamVR driver) for avatar prefab iteration
+
 **1.3.2** - PiShock duration fix (5/21/2026)
 - Fixed bug where PiShock warning/shock duration of 1.0s was resetting to 15s on restart
 

@@ -21,8 +21,17 @@ target_include_directories(imgui PUBLIC
 )
 
 # Link against OpenGL
-find_package(OpenGL REQUIRED)
-target_link_libraries(imgui PUBLIC
-    OpenGL::GL
-    glfw
-) 
+if(WIN32)
+    find_package(OpenGL REQUIRED)
+    target_link_libraries(imgui PUBLIC
+        OpenGL::GL
+        glfw
+    )
+else()
+    # Linux dev build: the imgui_impl_opengl3 backend uses its own runtime GL
+    # loader, so no -lGL link is required. GLFW is the system runtime (imported).
+    target_link_libraries(imgui PUBLIC
+        glfw
+        ${CMAKE_DL_LIBS}
+    )
+endif()

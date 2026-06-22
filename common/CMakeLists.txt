@@ -6,6 +6,7 @@ set(HEADER_FILES
     DeviceTypes.hpp
     Logger.hpp
     OSCManager.hpp
+    OSCQueryServer.hpp
     Audio.hpp
     PathUtils.hpp
     IVRDevice.hpp
@@ -24,6 +25,7 @@ add_library(stayputvr_common STATIC
     Audio.cpp
     Logger.cpp
     OSCManager.cpp
+    OSCQueryServer.cpp
     HttpClient.cpp
     WebSocketClient.cpp
     ShockDeviceBase.cpp
@@ -47,8 +49,19 @@ if(MSVC)
     )
 endif()
 
-# Link with Windows libraries for audio
-target_link_libraries(stayputvr_common PRIVATE
-    winmm.lib
-    ws2_32.lib
-) 
+# Platform networking/audio/threading dependencies
+if(WIN32)
+    # Link with Windows libraries for audio + sockets.
+    # iphlpapi is needed by the vendored mdns.h (OSCQuery) for adapter enumeration.
+    target_link_libraries(stayputvr_common PRIVATE
+        winmm.lib
+        ws2_32.lib
+        iphlpapi.lib
+    )
+else()
+    find_package(Threads REQUIRED)
+    target_link_libraries(stayputvr_common PRIVATE
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+    )
+endif()

@@ -8,9 +8,9 @@ For most users, I strongly recommend using my collar & cuffs prefab, which is av
 
 ### Device Status Messages (Outgoing)
 
-StayPutVR sends device status updates to indicate the current state of each tracked device:
+StayPutVR sends the current state of each tracked device to the avatar.
 
-**Path Format**: `/avatar/parameters/SPVR_{DeviceName}_Status`  
+**Path Format**: `/avatar/parameters/SPVR_{DeviceName}_Status`
 **Value Type**: Integer (0-5)
 
 **Status Values:**
@@ -20,6 +20,17 @@ StayPutVR sends device status updates to indicate the current state of each trac
 - `3`: **Locked Warning** - Device is locked and in warning zone (Flashing Yellow LED)
 - `4`: **Locked Disobedience** - Device is locked and user is disobeying (Flashing Red LED)
 - `5`: **Locked Out of Bounds** - Device is locked and completely out of bounds (Blinking White)
+
+`{DeviceName}` is one of `HMD`, `ControllerLeft`, `ControllerRight`, `FootLeft`, `FootRight` (`Hip` is also supported).
+
+#### Synced parameter footprint (avatar creators)
+
+OSC parameters are written on the *local* client only and do **not** consume synced parameter space by themselves — synced cost is determined by which parameters your **VRChat Expression Parameters** declare as networkSynced.
+
+- **Pre-1.4 prefab:** declares `SPVR_{DeviceName}_Status` as a **synced int** → 5 devices × 8 bits = **40 synced bits**.
+- **1.4 prefab:** keeps `SPVR_{DeviceName}_Status` as a **local** (non-synced) animator parameter and decodes it, via a VRC Avatar Parameter Driver layer, into **3 synced bools** `SPVR_{DeviceName}_Status_b0/_b1/_b2` (encoding the value as `b2·4 + b1·2 + b0`). Only the bools are synced → 5 devices × 3 bits = **15 synced bits**.
+
+Because StayPutVR sends the same `_Status` int either way, the app works unchanged with both prefabs — the optimization is entirely avatar-side. The `Foxipso → StayPutVR → Setup Controller (1.4)` editor menu sets up the decode layer + synced bools automatically.
 
 ### Device Lock Control (Incoming)
 

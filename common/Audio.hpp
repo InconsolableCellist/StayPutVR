@@ -1,12 +1,13 @@
 #pragma once
 
 #include <string>
+#ifdef _WIN32
 #include <Windows.h>
 #include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+#endif
 #include "PathUtils.hpp"
 #include "Logger.hpp"
-
-#pragma comment(lib, "winmm.lib")
 
 namespace StayPutVR {
 

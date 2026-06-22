@@ -1,11 +1,15 @@
 #include "IPCClient.hpp"
 #include "../../../common/Logger.hpp"
 #include <iostream>
+#ifdef _WIN32
 #include <Windows.h>
+#endif
 #include <future>
 #include <chrono>
 
 namespace StayPutVR {
+
+#ifdef _WIN32
 
     IPCClient::IPCClient() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false) {
         Logger::Info("IPCClient: Constructor called");
@@ -445,4 +449,24 @@ namespace StayPutVR {
             Logger::Error("IPCClient: Exception in ProcessDeviceUpdateMessage: " + std::string(e.what()));
         }
     }
+
+#else // !_WIN32 — Linux development build: no SteamVR driver, IPC is stubbed.
+
+    IPCClient::IPCClient() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false) {}
+    IPCClient::~IPCClient() {}
+    bool IPCClient::Connect() { return false; }
+    void IPCClient::Disconnect() {}
+    bool IPCClient::IsConnected() const { return false; }
+    void IPCClient::ProcessMessages() {}
+    void IPCClient::SendCommand(const std::string&, const std::string&) {}
+    void IPCClient::SetDeviceUpdateCallback(DeviceUpdateCallback callback) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        device_update_callback_ = std::move(callback);
+    }
+    void IPCClient::ReaderThread() {}
+    bool IPCClient::ReadMessage(std::vector<uint8_t>&) { return false; }
+    bool IPCClient::WriteMessage(const std::vector<uint8_t>&) { return false; }
+    void IPCClient::ProcessDeviceUpdateMessage(const std::vector<uint8_t>&) {}
+
+#endif // _WIN32
 }

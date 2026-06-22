@@ -15,9 +15,13 @@
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
+#ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#else
+#include "../../../common/WinsockCompat.hpp"
+#endif
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
@@ -28,6 +32,7 @@
 #include "../../../common/PathUtils.hpp"
 #include "../DeviceManager/DeviceManager.hpp"
 #include "../../../common/OSCManager.hpp"
+#include "../../../common/OSCQueryServer.hpp"
 #include "../managers/TwitchManager.hpp"
 #include "../managers/PiShockManager.hpp"
 #include "../managers/PiShockWebSocketManager.hpp"
@@ -51,7 +56,8 @@ namespace StayPutVR {
         PISHOCK,
         OPENSHOCK,
         BUTTPLUG,
-        TWITCH
+        TWITCH,
+        INTEGRATIONS
     };
 
     struct DevicePosition {
@@ -79,6 +85,9 @@ namespace StayPutVR {
         
         // Position deviation from locked position
         float position_deviation = 0.0f;
+        // Movement "heat" 0..1 for tracker identification: ramps up fast when the
+        // device moves and cools slowly when still (updated in UpdateDevicePositions).
+        float movement_heat = 0.0f;
         bool exceeds_threshold = false;
         bool in_warning_zone = false;
         
@@ -150,7 +159,18 @@ namespace StayPutVR {
         
         // OSC status
         bool osc_enabled_ = false;
-        
+
+        // OSCQuery (mDNS) auto-discovery server. Lazily created when OSC is
+        // started with config_.osc_query_enabled. Advertises our (ephemeral)
+        // receive port to VRChat and discovers VRChat's OSC port for sends.
+        std::unique_ptr<OSCQueryServer> osc_query_server_;
+
+        // Devices > Visual assignment view state.
+        unsigned int effigy_tex_ = 0;        // GL texture id (0 = none/not loaded)
+        int effigy_tex_w_ = 0, effigy_tex_h_ = 0;
+        bool effigy_load_attempted_ = false; // attempt the PNG load only once
+        DeviceRole selected_slot_role_ = DeviceRole::None; // slot whose config panel is open
+
         // Tab system
         TabType current_tab_ = TabType::MAIN;
         
@@ -173,7 +193,26 @@ namespace StayPutVR {
         void RenderOpenShockTab();
         void RenderButtplugTab();
         void RenderTwitchTab();
+        // Integrations tab: hosts PiShock / OpenShock / BPIO / Twitch / OSC Triggers as sub-tabs.
+        void RenderIntegrationsTab();
+        // OSC Triggers sub-tab: bite/shock enable + intensity/duration (paths live in Settings > OSC).
+        void RenderOSCTriggersTab();
         
+        // Apply the custom ImGui style/theme (rounded frames, soft-blue palette).
+        void ApplyTheme();
+        // Draw the radial boundary-zone map. Auto-fits the current content
+        // region so the rings never clip; distance from center is literal
+        // (device dot distance == real deviation from its locked origin).
+        void RenderZoneMap();
+
+        // Devices > Visual assignment view (effigy + drag-drop + per-slot config).
+        void RenderVisualAssignment();
+        void RenderSlotConfig(DeviceRole role);
+        void LoadEffigyTexture();
+        void AssignRoleToSerial(const std::string& serial, DeviceRole role);
+        std::string SerialForRole(DeviceRole role) const;
+        static const char* RoleName(DeviceRole role);
+
         // Original UI elements (to be migrated to tabs)
         void RenderDeviceList();
         void RenderConfigControls();
@@ -223,6 +262,10 @@ namespace StayPutVR {
         void OnDeviceIncluded(OSCDeviceType device, bool include);
         void TriggerGlobalOutOfBoundsActions();
         void TriggerBiteActions();
+        void HandleAvatarChange();
+        // Fire a direct shock on all enabled shock managers at the given
+        // intensity (0..1) and duration (seconds). Blocked during emergency stop.
+        void TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason);
         void ResetEmergencyStop();
         
         // Helper functions
@@ -230,6 +273,11 @@ namespace StayPutVR {
         void HandleOSCConnection();
         void DisconnectOSC();
         void VerifyOSCCallbacks();
+
+        // OSCQuery (mDNS) lifecycle. Started/stopped alongside the OSC sockets
+        // when config_.osc_query_enabled is set.
+        void StartOSCQuery();
+        void StopOSCQuery();
         
         // Helper function to map DeviceType to OSCDeviceType
         OSCDeviceType MapToOSCDeviceType(DeviceType type);

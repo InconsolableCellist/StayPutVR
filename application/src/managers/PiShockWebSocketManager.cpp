@@ -159,7 +159,10 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CanTriggerAction()) {
+        // Rate-limit once per event so a single disobedience event's
+        // beep + vibrate + shock all fire (the per-action checks in ExecuteAction
+        // and the Send*Multi methods were dropping every action after the first).
+        if (!CheckRateLimit()) {
             Logger::Info("Rate limit active, skipping disobedience actions");
             return;
         }
@@ -194,7 +197,8 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CanTriggerAction()) {
+        // Rate-limit once per event (see TriggerDisobedienceActions).
+        if (!CheckRateLimit()) {
             Logger::Info("Rate limit active, skipping warning actions");
             return;
         }
@@ -209,6 +213,22 @@ namespace StayPutVR {
             int intensity = (std::max)(1, ConvertIntensityToAPI(config_->pishock_disobedience_intensity) / 2);
             SendVibrate(intensity, 1000, "Warning - Vibrate");
         }
+    }
+
+    void PiShockWebSocketManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock WebSocket not enabled, skipping external shock");
+            return;
+        }
+        if (!IsConnected()) {
+            Logger::Warning("PiShock WebSocket not connected, skipping external shock");
+            return;
+        }
+        if (!CheckRateLimit()) {
+            Logger::Info("Rate limit active, skipping external shock");
+            return;
+        }
+        SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, "", ConvertIntensityToAPI(intensity));
     }
 
     void PiShockWebSocketManager::TestActions() {
@@ -378,13 +398,8 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CheckRateLimit()) {
-            SetError("Rate limit exceeded");
-            if (action_callback_) {
-                action_callback_(ActionTypeToString(action.type), false, "Rate limit exceeded");
-            }
-            return;
-        }
+        // Rate limiting is applied once per event by the Trigger* methods, so
+        // every action in one event fires. Shock cooldown still gates shocks.
 
         try {
             Logger::Info("Sending PiShock WebSocket " + ActionTypeToString(action.type) + 
@@ -676,10 +691,7 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CheckRateLimit()) {
-            SetError("Rate limit exceeded");
-            return;
-        }
+        // Rate limiting is applied once per event by the Trigger* methods.
 
         try {
             // Determine which shocker devices to use
@@ -749,10 +761,7 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CheckRateLimit()) {
-            SetError("Rate limit exceeded");
-            return;
-        }
+        // Rate limiting is applied once per event by the Trigger* methods.
 
         try {
             // Determine which shocker devices to use
@@ -859,7 +868,7 @@ namespace StayPutVR {
         }
     }
 
-    void PiShockWebSocketManager::SendShockMulti(int duration, const std::string& reason, const std::string& device_serial) {
+    void PiShockWebSocketManager::SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override) {
         if (!ValidateCredentials()) {
             SetError("Invalid PiShock credentials");
             return;
@@ -881,10 +890,7 @@ namespace StayPutVR {
             return;
         }
 
-        if (!CheckRateLimit()) {
-            SetError("Rate limit exceeded");
-            return;
-        }
+        // Rate limiting is applied once per event by the Trigger* methods.
 
         try {
             // Determine which shocker devices to use
@@ -931,18 +937,22 @@ namespace StayPutVR {
             std::vector<nlohmann::json> commands;
             for (size_t i = 0; i < shocker_ids_to_use.size(); ++i) {
                 int device_index = device_indices[i];
-                float intensity_normalized;
-                
-                // Use individual disobedience intensities if enabled, otherwise use master
-                if (config_->pishock_use_individual_disobedience_intensities) {
-                    intensity_normalized = config_->pishock_individual_disobedience_intensities[device_index];
+                int intensity;
+                if (intensity_override >= 0) {
+                    // Explicit intensity (external bite / Shock trigger).
+                    intensity = (std::max)(1, intensity_override);
                 } else {
-                    intensity_normalized = config_->pishock_disobedience_intensity;
+                    float intensity_normalized;
+                    // Use individual disobedience intensities if enabled, otherwise use master
+                    if (config_->pishock_use_individual_disobedience_intensities) {
+                        intensity_normalized = config_->pishock_individual_disobedience_intensities[device_index];
+                    } else {
+                        intensity_normalized = config_->pishock_disobedience_intensity;
+                    }
+                    intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
                 }
-                
-                int intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
-                
-                Logger::Info("Sending PiShock Shock to device " + std::to_string(device_index) + 
+
+                Logger::Info("Sending PiShock Shock to device " + std::to_string(device_index) +
                            " (ID: " + std::to_string(shocker_ids_to_use[i]) + ")" +
                            " (Intensity: " + std::to_string(intensity) + 
                            ", Duration: " + std::to_string(duration) + "ms)");

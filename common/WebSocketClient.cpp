@@ -3,9 +3,13 @@
 #include <sstream>
 #include <algorithm>
 
+#ifdef _WIN32
 #pragma comment(lib, "winhttp.lib")
+#endif
 
 namespace StayPutVR {
+
+#ifdef _WIN32
 
 // Helper function to convert DWORD to string
 static std::string DWordToString(DWORD value) {
@@ -461,6 +465,47 @@ std::string WebSocketClient::GetLastError() const {
     std::lock_guard<std::mutex> lock(error_mutex_);
     return last_error_;
 }
+
+#else // !_WIN32 — Linux development build stub (no WinHTTP WebSocket).
+
+WebSocketClient::WebSocketClient()
+    : h_session_(nullptr), h_connection_(nullptr), h_websocket_(nullptr),
+      state_(WebSocketState::DISCONNECTED), port_(0), secure_(false),
+      receive_thread_running_(false) {}
+
+WebSocketClient::~WebSocketClient() {}
+
+bool WebSocketClient::Connect(const std::string& url) {
+    url_ = url;
+    SetError("WebSocket not supported on the Linux development build");
+    return false;
+}
+
+void WebSocketClient::Disconnect() {}
+bool WebSocketClient::IsConnected() const { return false; }
+bool WebSocketClient::SendText(const std::string&) { return false; }
+bool WebSocketClient::SendBinary(const void*, size_t) { return false; }
+void WebSocketClient::Update() {}
+
+std::string WebSocketClient::GetLastError() const {
+    std::lock_guard<std::mutex> lock(error_mutex_);
+    return last_error_;
+}
+
+bool WebSocketClient::ParseUrl(const std::string&) { return false; }
+
+void WebSocketClient::SetError(const std::string& error) {
+    {
+        std::lock_guard<std::mutex> lock(error_mutex_);
+        last_error_ = error;
+    }
+    state_ = WebSocketState::ERROR_STATE;
+}
+
+void WebSocketClient::ReceiveThreadFunction() {}
+void WebSocketClient::CleanupHandles() {}
+
+#endif // _WIN32
 
 } // namespace StayPutVR
 

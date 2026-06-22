@@ -31,6 +31,9 @@ namespace StayPutVR {
         bool IsEnabled() const override;
         void TriggerDisobedienceActions(const std::string& device_serial = "") override;
         void TriggerWarningActions(const std::string& device_serial = "") override;
+        // Fire a direct shock at an explicit intensity (0..1) and duration
+        // (seconds). Used by external triggers (bite / Shock param).
+        void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "");
         void TestActions() override;
         std::string GetConnectionStatus() const override;
 

@@ -15,11 +15,12 @@ OSCManager::~OSCManager() {
     }
 }
 
-bool OSCManager::Initialize(const std::string& address, int send_port, int receive_port) {
+bool OSCManager::Initialize(const std::string& address, int send_port, int receive_port,
+                            bool use_ephemeral_receive_port) {
     if (initialized_) {
         if (Logger::IsInitialized()) {
-            Logger::Debug("OSCManager: Already initialized with address " + address_ + 
-                          " (send port: " + std::to_string(send_port_) + 
+            Logger::Debug("OSCManager: Already initialized with address " + address_ +
+                          " (send port: " + std::to_string(send_port_) +
                           ", receive port: " + std::to_string(receive_port_) + ")");
         }
         return true;
@@ -28,6 +29,7 @@ bool OSCManager::Initialize(const std::string& address, int send_port, int recei
     address_ = address;
     send_port_ = send_port;
     receive_port_ = receive_port;
+    actual_receive_port_ = receive_port;
 
     // Initialize Winsock
     WSADATA wsaData;
@@ -81,13 +83,16 @@ bool OSCManager::Initialize(const std::string& address, int send_port, int recei
         return false;
     }
     
-    // Set up the local address structure for receiving
+    // Set up the local address structure for receiving. When OSCQuery is on we
+    // bind to port 0 so the OS picks a free ephemeral port; this avoids the
+    // crash/conflict when another OSC app already holds the fixed port (9001).
+    // VRChat then learns the real port via the OSCQuery/mDNS advertisement.
     sockaddr_in local_addr;
     ZeroMemory(&local_addr, sizeof(local_addr));
     local_addr.sin_family = AF_INET;
     local_addr.sin_addr.s_addr = INADDR_ANY;
-    local_addr.sin_port = htons(static_cast<u_short>(receive_port));
-    
+    local_addr.sin_port = htons(static_cast<u_short>(use_ephemeral_receive_port ? 0 : receive_port));
+
     // Bind the receive socket
     result = bind(receive_socket_, (sockaddr*)&local_addr, sizeof(local_addr));
     if (result == SOCKET_ERROR) {
@@ -101,14 +106,26 @@ bool OSCManager::Initialize(const std::string& address, int send_port, int recei
         WSACleanup();
         return false;
     }
-    
+
+    // Read back the actual bound port (matters when binding ephemeral).
+    {
+        sockaddr_in bound_addr;
+        ZeroMemory(&bound_addr, sizeof(bound_addr));
+        socklen_t bound_len = sizeof(bound_addr);
+        if (getsockname(receive_socket_, (sockaddr*)&bound_addr, &bound_len) == 0) {
+            actual_receive_port_ = ntohs(bound_addr.sin_port);
+        } else {
+            actual_receive_port_ = receive_port;
+        }
+    }
+
     // Start the receive thread
     receive_thread_running_ = true;
     try {
         receive_thread_ = std::thread(&OSCManager::ReceiveThreadFunction, this);
-        
+
         if (Logger::IsInitialized()) {
-            Logger::Info("OSCManager: Receive thread started on port " + std::to_string(receive_port));
+            Logger::Info("OSCManager: Receive thread started on port " + std::to_string(actual_receive_port_));
         }
     }
     catch (const std::exception& e) {
@@ -127,12 +144,24 @@ bool OSCManager::Initialize(const std::string& address, int send_port, int recei
     initialized_ = true;
 
     if (Logger::IsInitialized()) {
-        Logger::Info("OSCManager: Initialized with address " + address + 
-                    " (send port: " + std::to_string(send_port) + 
-                    ", receive port: " + std::to_string(receive_port) + ")");
+        Logger::Info("OSCManager: Initialized with address " + address +
+                    " (send port: " + std::to_string(send_port) +
+                    ", receive port: " + std::to_string(actual_receive_port_) +
+                    (use_ephemeral_receive_port ? " [ephemeral]" : "") + ")");
     }
 
     return true;
+}
+
+void OSCManager::SetSendPort(int send_port) {
+    std::lock_guard<std::mutex> lock(send_addr_mutex_);
+    send_port_ = send_port;
+    if (server_addr_ != nullptr) {
+        server_addr_->sin_port = htons(static_cast<u_short>(send_port));
+    }
+    if (Logger::IsInitialized()) {
+        Logger::Info("OSCManager: Send target port updated to " + std::to_string(send_port));
+    }
 }
 
 void OSCManager::Shutdown() {
@@ -157,17 +186,21 @@ void OSCManager::Shutdown() {
         }
     }
 
-    // Clean up sockets
-    closesocket(socket_);
+    // Clean up sockets. The send socket and server_addr_ are guarded by
+    // send_addr_mutex_ because the OSCQuery browse thread may call SetSendPort();
+    // take it here too so teardown can't race a concurrent retarget. (Callers
+    // should StopOSCQuery() before Shutdown(), but lock defensively.)
+    {
+        std::lock_guard<std::mutex> addr_lock(send_addr_mutex_);
+        closesocket(socket_);
+        delete server_addr_;
+        server_addr_ = nullptr;
+    }
     closesocket(receive_socket_);
-    
+
     // Clean up Winsock
     WSACleanup();
-    
-    // Free server address structure
-    delete server_addr_;
-    server_addr_ = nullptr;
-    
+
     initialized_ = false;
 
     if (Logger::IsInitialized()) {
@@ -197,6 +230,7 @@ void OSCManager::SetConfig(const Config& config) {
     osc_global_unlock_path_ = config.osc_global_unlock_path;
     osc_global_out_of_bounds_path_ = config.osc_global_out_of_bounds_path;
     osc_bite_path_ = config.osc_bite_path;
+    osc_shock_path_ = config.osc_shock_path;
     osc_estop_stretch_path_ = config.osc_estop_stretch_path;
     
     if (Logger::IsInitialized()) {
@@ -212,9 +246,17 @@ void OSCManager::ReceiveThreadFunction() {
     // Buffer for incoming data
     std::array<char, MAX_PACKET_SIZE> recv_buffer;
     
-    // Set up timeout for recv to allow checking the running flag
+    // Set up timeout for recv to allow checking the running flag.
+    // Winsock takes a DWORD of milliseconds; POSIX takes a struct timeval.
+#ifdef _WIN32
     DWORD timeout = 500; // 500 ms
     setsockopt(receive_socket_, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout));
+#else
+    struct timeval timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 500 * 1000; // 500 ms
+    setsockopt(receive_socket_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+#endif
     
     while (receive_thread_running_) {
         // Receive data
@@ -263,7 +305,27 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
         if (packet.isMessage()) {
             OSCPP::Server::Message message(packet);
             std::string address = message.address();
-            
+
+            // Avatar change: VRChat sends /avatar/change (with the new avatar id
+            // as a string argument) when the user switches avatars. The string
+            // arg isn't handled by the tag switch below, so dispatch it up front
+            // so lock/shock state can be reset. Copy the callback under the lock
+            // and invoke it outside the lock (it performs a heavier reset).
+            if (address == "/avatar/change") {
+                std::function<void()> cb;
+                {
+                    std::lock_guard<std::mutex> cb_lock(callback_mutex_);
+                    cb = avatar_change_callback_;
+                }
+                if (cb) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("OSCManager: /avatar/change received");
+                    }
+                    cb();
+                }
+                return;
+            }
+
             bool should_log = address.find("SPVR_") != std::string::npos;
             OSCPP::Server::ArgStream args = message.args();
             
@@ -343,6 +405,11 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                 // Bite path
                 else if (address == osc_bite_path_ && bite_callback_ && value_bool) {
                     bite_callback_(true);
+                }
+
+                // External shock path (/avatar/parameters/Shock)
+                else if (address == osc_shock_path_ && shock_callback_ && value_bool) {
+                    shock_callback_(true);
                 }
                 
                 // Emergency stop stretch path
@@ -432,8 +499,14 @@ void OSCManager::SendDeviceStatus(OSCDeviceType device, DeviceStatus status) {
     std::string path = GetStatusPath(device);
     int statusValue = static_cast<int>(status);
 
+    // Send the device status as an int. This OSC param is written on the local
+    // client only and does NOT consume synced parameter space by itself. The 1.4
+    // avatar prefab keeps this as a LOCAL animator param and decodes it into 3
+    // synced bools (SPVR_<dev>_Status_b0/_b1/_b2) via a parameter-driver layer,
+    // which is what actually reduces synced bits (40 -> 15). The pre-1.4 prefab
+    // syncs this int directly, so the same message works for both.
     if (SendOSCMessage(path, statusValue) && Logger::IsInitialized()) {
-        Logger::Debug("OSCManager: Sending status " + std::to_string(statusValue) + " to " + path + 
+        Logger::Debug("OSCManager: Sending status " + std::to_string(statusValue) + " to " + path +
             " (device=" + GetDeviceString(device) + ", status=" + std::to_string(statusValue) + ")");
     }
 }
@@ -548,12 +621,14 @@ bool OSCManager::SendOSCMessage(const std::string& path, int value) {
               .int32(value)
               .closeMessage();
 
-        // Send the packet
-        int result = sendto(socket_, 
-                     static_cast<const char*>(packet.data()), 
-                     static_cast<int>(packet.size()), 
-                     0, 
-                     reinterpret_cast<struct sockaddr*>(server_addr_), 
+        // Send the packet. Hold send_addr_mutex_ so a concurrent SetSendPort()
+        // (from the OSCQuery browse thread) can't tear server_addr_->sin_port.
+        std::lock_guard<std::mutex> lock(send_addr_mutex_);
+        int result = sendto(socket_,
+                     static_cast<const char*>(packet.data()),
+                     static_cast<int>(packet.size()),
+                     0,
+                     reinterpret_cast<struct sockaddr*>(server_addr_),
                      sizeof(sockaddr_in));
                      
         if (result == SOCKET_ERROR) {
@@ -581,12 +656,14 @@ bool OSCManager::SendOSCMessage(const std::string& path, float value) {
               .float32(value)
               .closeMessage();
 
-        // Send the packet
-        int result = sendto(socket_, 
-                     static_cast<const char*>(packet.data()), 
-                     static_cast<int>(packet.size()), 
-                     0, 
-                     reinterpret_cast<struct sockaddr*>(server_addr_), 
+        // Send the packet. Hold send_addr_mutex_ so a concurrent SetSendPort()
+        // (from the OSCQuery browse thread) can't tear server_addr_->sin_port.
+        std::lock_guard<std::mutex> lock(send_addr_mutex_);
+        int result = sendto(socket_,
+                     static_cast<const char*>(packet.data()),
+                     static_cast<int>(packet.size()),
+                     0,
+                     reinterpret_cast<struct sockaddr*>(server_addr_),
                      sizeof(sockaddr_in));
                      
         if (result == SOCKET_ERROR) {

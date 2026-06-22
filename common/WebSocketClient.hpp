@@ -6,8 +6,13 @@
 #include <thread>
 #include <mutex>
 #include <queue>
+#ifdef _WIN32
 #include <Windows.h>
 #include <winhttp.h>
+#else
+// Placeholder so the WinHTTP handle members compile on the Linux dev build.
+typedef void* HINTERNET;
+#endif
 
 namespace StayPutVR {
 

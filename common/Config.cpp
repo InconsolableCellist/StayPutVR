@@ -1,7 +1,6 @@
 #include "Config.hpp"
 #include <fstream>
 #include <unordered_set>
-#include "../thirdparty/inih/INIReader.h"
 #include <filesystem>
 #include <sstream>
 #include <iostream>
@@ -17,10 +16,11 @@ Config::Config()
     , osc_address("127.0.0.1")
     , osc_send_port(9000)
     , osc_receive_port(9001)
+    , osc_query_enabled(true)
     , osc_address_bounds("/stayputvr/bounds")
     , osc_address_warning("/stayputvr/warning")
     , osc_address_disable("/stayputvr/disable")
-    , osc_enabled(false)
+    , osc_enabled(true)
     , chaining_mode(false)
     , osc_lock_path_hmd("/avatar/parameters/SPVR_HMD_Latch_IsPosed")
     , osc_lock_path_left_hand("/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed")
@@ -45,7 +45,7 @@ Config::Config()
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
-    , pishock_mode(PiShockMode::LEGACY_API)
+    , pishock_mode(PiShockMode::WEBSOCKET_V2)
     , pishock_api_key("")
     , pishock_username("")
     , pishock_user_id(0)
@@ -144,7 +144,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         config_version = j.value("config_version", 0);
 
         // OSC settings
-        osc_enabled = j.value("osc_enabled", false);
+        osc_enabled = j.value("osc_enabled", true);
         osc_address = j.value("osc_address", "127.0.0.1");
         
         // Check if we're loading from an old config that had a single osc_port
@@ -157,8 +157,9 @@ bool Config::LoadFromFile(const std::string& filename) {
             osc_receive_port = j.value("osc_receive_port", 9001);
         }
         
+        osc_query_enabled = j.value("osc_query_enabled", true);
         chaining_mode = j.value("chaining_mode", false);
-        
+
         // Load OSC lock paths
         osc_lock_path_hmd = j.value("osc_lock_path_hmd", "/avatar/parameters/SPVR_HMD_Latch_IsPosed");
         osc_lock_path_left_hand = j.value("osc_lock_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed");
@@ -184,12 +185,26 @@ bool Config::LoadFromFile(const std::string& filename) {
         osc_estop_stretch_enabled = j.value("osc_estop_stretch_enabled", true);
         osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = j.value("osc_bite_enabled", true);
+        osc_shock_path = j.value("osc_shock_path", "/avatar/parameters/Shock");
+        osc_shock_enabled = j.value("osc_shock_enabled", true);
+        osc_shock_intensity = j.value("osc_shock_intensity", 0.25f);
+        osc_shock_duration = j.value("osc_shock_duration", 1.0f);
+        osc_bite_intensity = j.value("osc_bite_intensity", 0.25f);
+        osc_bite_duration = j.value("osc_bite_duration", 1.0f);
 
         // PiShock settings
         pishock_enabled = j.value("pishock_enabled", false);
         pishock_group = j.value("pishock_group", 0);
         pishock_user_agreement = j.value("pishock_user_agreement", false);
-        pishock_mode = static_cast<PiShockMode>(j.value("pishock_mode", 0));
+        // New installs default to WebSocket v2. Preserve existing legacy users:
+        // if pishock_mode was never saved but a legacy share code is present, the
+        // user configured the legacy HTTP API, so keep them on LEGACY_API.
+        if (j.contains("pishock_mode")) {
+            pishock_mode = static_cast<PiShockMode>(j.value("pishock_mode", static_cast<int>(PiShockMode::WEBSOCKET_V2)));
+        } else {
+            bool has_legacy_share_code = !j.value("pishock_share_code", std::string("")).empty();
+            pishock_mode = has_legacy_share_code ? PiShockMode::LEGACY_API : PiShockMode::WEBSOCKET_V2;
+        }
         
         // PiShock API settings
         pishock_api_key = j.value("pishock_api_key", "");
@@ -426,6 +441,7 @@ bool Config::LoadFromFile(const std::string& filename) {
 
         // Load logging settings
         log_level = j.value("log_level", "WARNING");
+        ui_font_scale = j.value("ui_font_scale", 1.0f);
         
         // Load boundary settings
         warning_threshold = j.value("warning_threshold", 0.1f);
@@ -590,6 +606,7 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_address"] = osc_address;
         j["osc_send_port"] = osc_send_port;
         j["osc_receive_port"] = osc_receive_port;
+        j["osc_query_enabled"] = osc_query_enabled;
         j["chaining_mode"] = chaining_mode;
         
         // OSC device lock paths
@@ -617,6 +634,12 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_estop_stretch_enabled"] = osc_estop_stretch_enabled;
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;
+        j["osc_shock_path"] = osc_shock_path;
+        j["osc_shock_enabled"] = osc_shock_enabled;
+        j["osc_shock_intensity"] = osc_shock_intensity;
+        j["osc_shock_duration"] = osc_shock_duration;
+        j["osc_bite_intensity"] = osc_bite_intensity;
+        j["osc_bite_duration"] = osc_bite_duration;
 
         // PiShock settings
         j["pishock_enabled"] = pishock_enabled;
@@ -814,6 +837,7 @@ bool Config::SaveToFile(const std::string& filename) const {
 
         // Logging settings
         j["log_level"] = log_level;
+        j["ui_font_scale"] = ui_font_scale;
         
         // Boundary settings
         j["warning_threshold"] = warning_threshold;

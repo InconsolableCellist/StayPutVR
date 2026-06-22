@@ -7,11 +7,16 @@
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
+#include "stb/stb_image.h" // effigy PNG decode (impl is in stb_image_impl.cpp)
 #include <nlohmann/json.hpp>
 #include "../../common/Logger.hpp"
 #include "../../common/PathUtils.hpp"
 #include "../../common/Audio.hpp"
+#ifdef _WIN32
 #include <shellapi.h> // For ShellExecuteA
+#else
+#include <cstdlib> // For std::system (xdg-open)
+#endif
 #include <thread> // For std::this_thread::sleep_for
 #include "../../../common/OSCManager.hpp"
 #include "../../common/HttpClient.hpp"
@@ -39,7 +44,7 @@ namespace StayPutVR {
         // Initialize config_file_ with just the filename, not the full path
         config_file_ = "config.ini";
         // Increase window height to prevent cutting off UI elements
-        window_height_ = 750;
+        window_height_ = 850;
         
         // Create device manager instance
         device_manager_ = new DeviceManager();
@@ -108,9 +113,33 @@ namespace StayPutVR {
         imgui_context_ = ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
-        
-        ImGui::StyleColorsDark();
-        
+
+        ApplyTheme();
+
+        // Load a vector font (nicer than the stock 13px bitmap). DroidSans.ttf is
+        // vendored under thirdparty/imgui/misc/fonts and shipped in resources/.
+        // ImGui 1.92 builds the atlas texture lazily; just AddFontFromFileTTF.
+        {
+            std::string fontPath = GetAppDataPath() + "/resources/DroidSans.ttf";
+            if (!std::filesystem::exists(fontPath) && std::filesystem::exists("./resources/DroidSans.ttf")) {
+                fontPath = "./resources/DroidSans.ttf"; // dev fallback (running from build dir)
+            }
+            if (std::filesystem::exists(fontPath)) {
+                static const ImWchar ranges[] = {
+                    0x0020, 0x00FF, // Basic Latin + Latin-1 Supplement
+                    0x2000, 0x206F, // General Punctuation (dashes, ellipsis, quotes)
+                    0,
+                };
+                ImFontConfig cfg;
+                cfg.PixelSnapH = true;
+                if (!io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f, &cfg, ranges)) {
+                    Logger::Warning("UIManager: failed to load DroidSans.ttf; using default font");
+                }
+            } else {
+                Logger::Warning("UIManager: DroidSans.ttf not found in resources; using default font");
+            }
+        }
+
         // Setup Platform/Renderer backends
         ImGui_ImplGlfw_InitForOpenGL(window_, true);
         ImGui_ImplOpenGL3_Init(glsl_version);
@@ -162,9 +191,12 @@ namespace StayPutVR {
             // Add a small delay to ensure all components are properly initialized
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             
-            // Try to initialize OSC
-            bool osc_init_result = OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_send_port, config_.osc_receive_port);
-            
+            // Try to initialize OSC. With OSCQuery on, bind the receive socket
+            // to an ephemeral port so it never conflicts with another OSC app.
+            bool osc_use_query = config_.osc_query_enabled;
+            bool osc_init_result = OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_send_port,
+                                                                        config_.osc_receive_port, osc_use_query);
+
             if (osc_init_result) {
                 osc_enabled_ = true;
                 
@@ -218,6 +250,31 @@ namespace StayPutVR {
                         TriggerBiteActions();
                     }
                 );
+
+                OSCManager::GetInstance().SetAvatarChangeCallback(
+                    [this]() {
+                        HandleAvatarChange();
+                    }
+                );
+
+                OSCManager::GetInstance().SetShockCallback(
+                    [this](bool triggered) {
+                        bool enabled; float intensity, duration;
+                        {
+                            auto cfg_lock = config_.ReadLock();
+                            enabled = config_.osc_shock_enabled;
+                            intensity = config_.osc_shock_intensity;
+                            duration = config_.osc_shock_duration;
+                        }
+                        if (!enabled) {
+                            return;
+                        }
+                        if (Logger::IsInitialized()) {
+                            Logger::Info("Shock param triggered via OSC");
+                        }
+                        TriggerExternalShock(intensity, duration, "Shock param");
+                    }
+                );
                 
                 OSCManager::GetInstance().SetEStopStretchCallback(
                     [this](float stretch_value) {
@@ -247,6 +304,12 @@ namespace StayPutVR {
                     }
                 );
                 
+                // Start OSCQuery (mDNS) so VRChat can discover our ephemeral
+                // receive port and we can discover VRChat's OSC port.
+                if (osc_use_query) {
+                    StartOSCQuery();
+                }
+
                 if (Logger::IsInitialized()) {
                     Logger::Info("UIManager: OSC auto-connection successful, callbacks registered");
                 }
@@ -369,7 +432,17 @@ namespace StayPutVR {
         
         // Save configuration before shutting down
         SaveConfig();
-        
+
+        // Release the effigy GL texture (Devices > Visual).
+        if (effigy_tex_ != 0) {
+            GLuint t = effigy_tex_;
+            glDeleteTextures(1, &t);
+            effigy_tex_ = 0;
+        }
+
+        // Stop OSCQuery (mDNS) threads so they release their sockets cleanly.
+        StopOSCQuery();
+
         // Shutdown managers
         ShutdownTwitchManager();
         ShutdownPiShockManager();
@@ -529,7 +602,23 @@ namespace StayPutVR {
                 for (int i = 0; i < 4; i++) {
                     device_positions_[index].rotation[i] = current_rot[i];
                 }
-                
+
+                // Update movement heat (for device identification): fast attack
+                // when moving, slow decay when still, so wiggling a tracker in
+                // SteamVR makes its row light up and stay warm for a moment.
+                {
+                    float delta = 0.0f;
+                    for (int i = 0; i < 3; ++i) {
+                        delta += std::abs(device_positions_[index].position[i] -
+                                          device_positions_[index].previous_position[i]);
+                    }
+                    const float kFullScaleDelta = 0.03f; // ~3 cm/update == full heat
+                    float target = (std::min)(delta / kFullScaleDelta, 1.0f);
+                    float& heat = device_positions_[index].movement_heat;
+                    const float alpha = (target > heat) ? 0.6f : 0.04f; // fast attack, slow decay
+                    heat += (target - heat) * alpha;
+                }
+
                 if (device_positions_[index].locked) {
                     // If locked, calculate and store position offset
                     for (int i = 0; i < 3; i++) {
@@ -1281,6 +1370,9 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderMainWindow() {
+        // Apply the user's font-size multiplier (Settings > Display).
+        ImGui::GetIO().FontGlobalScale = config_.ui_font_scale;
+
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->WorkPos);
         ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -1291,10 +1383,7 @@ namespace StayPutVR {
             ImGuiWindowFlags_NoResize | 
             ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysVerticalScrollbar);
-        
-        ImGui::Text("StayPutVR Control Panel");
-        ImGui::Separator();
-        
+
         RenderTabBar();
         
         switch (current_tab_) {
@@ -1328,6 +1417,9 @@ namespace StayPutVR {
             case TabType::TWITCH:
                 RenderTwitchTab();
                 break;
+            case TabType::INTEGRATIONS:
+                RenderIntegrationsTab();
+                break;
             case TabType::SETTINGS:
                 RenderSettingsTab();
                 break;
@@ -1336,75 +1428,516 @@ namespace StayPutVR {
         ImGui::End();
     }
     
+    void UIManager::RenderOSCTriggersTab() {
+        bool changed = false;
+        ImGui::TextWrapped("Avatar OSC triggers fire a shock on all configured shockers when the "
+                           "matching parameter is received. Change the parameter PATHS in "
+                           "Settings -> OSC.");
+        ImGui::Separator();
+
+        ImGui::SeparatorText("Bite  (SPVR_Bite)");
+        if (ImGui::Checkbox("Enable Bite trigger", &config_.osc_bite_enabled)) changed = true;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::SliderFloat("Bite intensity", &config_.osc_bite_intensity, 0.0f, 1.0f, "%.2f")) changed = true;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::SliderFloat("Bite duration (s)", &config_.osc_bite_duration, 0.1f, 15.0f, "%.1f")) changed = true;
+
+        ImGui::SeparatorText("Shock  (/avatar/parameters/Shock)");
+        if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::SliderFloat("Shock intensity", &config_.osc_shock_intensity, 0.0f, 1.0f, "%.2f")) changed = true;
+        ImGui::SetNextItemWidth(220);
+        if (ImGui::SliderFloat("Shock duration (s)", &config_.osc_shock_duration, 0.1f, 15.0f, "%.1f")) changed = true;
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Both are blocked while emergency stop is active.");
+
+        if (changed) SaveConfig();
+    }
+
+    void UIManager::RenderIntegrationsTab() {
+        if (ImGui::BeginTabBar("IntegrationsSubTabs")) {
+            if (ImGui::BeginTabItem("OSC Triggers")) {
+                RenderOSCTriggersTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("PiShock")) {
+                RenderPiShockTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("OpenShock")) {
+                RenderOpenShockTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("BPIO")) {
+                RenderButtplugTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Twitch")) {
+                RenderTwitchTab();
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+    }
+
     void UIManager::RenderTabBar() {
         if (ImGui::BeginTabBar("##Tabs", ImGuiTabBarFlags_None)) {
-            if (ImGui::BeginTabItem("Main")) {
+            if (ImGui::BeginTabItem("Status")) {
                 current_tab_ = TabType::MAIN;
                 ImGui::EndTabItem();
             }
-            
+
             if (ImGui::BeginTabItem("Devices")) {
                 current_tab_ = TabType::DEVICES;
                 ImGui::EndTabItem();
             }
-            
-            if (ImGui::BeginTabItem("Notifications")) {
-                current_tab_ = TabType::NOTIFICATIONS;
+
+            if (ImGui::BeginTabItem("Integrations")) {
+                current_tab_ = TabType::INTEGRATIONS;
                 ImGui::EndTabItem();
             }
-            
-            if (ImGui::BeginTabItem("Timers")) {
-                current_tab_ = TabType::TIMERS;
-                ImGui::EndTabItem();
-            }
-            
-            if (ImGui::BeginTabItem("OSC")) {
-                current_tab_ = TabType::OSC;
-                ImGui::EndTabItem();
-            }
-            
-            if (ImGui::BeginTabItem("PiShock")) {
-                current_tab_ = TabType::PISHOCK;
-                ImGui::EndTabItem();
-            }
-            
-            if (ImGui::BeginTabItem("OpenShock")) {
-                current_tab_ = TabType::OPENSHOCK;
-                ImGui::EndTabItem();
-            }
-            
-            if (ImGui::BeginTabItem("ButtplugIO")) {
-                current_tab_ = TabType::BUTTPLUG;
-                ImGui::EndTabItem();
-            }
-            
-            if (ImGui::BeginTabItem("Twitch")) {
-                current_tab_ = TabType::TWITCH;
-                ImGui::EndTabItem();
-            }
-            
+
             if (ImGui::BeginTabItem("Settings")) {
                 current_tab_ = TabType::SETTINGS;
                 ImGui::EndTabItem();
             }
-            
+
             ImGui::EndTabBar();
         }
     }
     
+    void UIManager::ApplyTheme() {
+        ImGui::StyleColorsDark();
+        ImGuiStyle& style = ImGui::GetStyle();
+
+        // Geometry — rounded frames/buttons + roomier spacing.
+        style.WindowRounding    = 6.0f;
+        style.ChildRounding     = 5.0f;
+        style.FrameRounding     = 4.0f;
+        style.PopupRounding     = 5.0f;
+        style.GrabRounding      = 4.0f;
+        style.TabRounding       = 4.0f;
+        style.ScrollbarRounding = 8.0f;
+        style.WindowPadding     = ImVec2(10.0f, 8.0f);
+        style.FramePadding      = ImVec2(7.0f, 4.0f);
+        style.ItemSpacing       = ImVec2(8.0f, 5.0f);
+        style.ScrollbarSize     = 13.0f;
+        style.WindowBorderSize  = 0.0f;
+        style.ChildBorderSize   = 1.0f;
+
+        // Soft-blue dark palette (ported from the companion app).
+        const ImVec4 bg         = ImVec4(0.080f, 0.080f, 0.100f, 1.0f);
+        const ImVec4 bg_panel   = ImVec4(0.110f, 0.110f, 0.135f, 1.0f);
+        const ImVec4 bg_raised  = ImVec4(0.150f, 0.150f, 0.180f, 1.0f);
+        const ImVec4 bg_hover   = ImVec4(0.210f, 0.210f, 0.250f, 1.0f);
+        const ImVec4 bg_active  = ImVec4(0.260f, 0.260f, 0.310f, 1.0f);
+        const ImVec4 accent     = ImVec4(0.60f, 0.80f, 1.00f, 1.0f);
+        const ImVec4 accent_dim = ImVec4(0.26f, 0.42f, 0.58f, 1.0f);
+        const ImVec4 accent_fnt = ImVec4(0.20f, 0.30f, 0.42f, 1.0f);
+        auto mix = [](const ImVec4& a, const ImVec4& b, float k) {
+            return ImVec4(a.x+(b.x-a.x)*k, a.y+(b.y-a.y)*k, a.z+(b.z-a.z)*k, a.w+(b.w-a.w)*k);
+        };
+        const ImVec4 accent_mid = mix(accent_dim, accent, 0.4f);
+
+        ImVec4* c = style.Colors;
+        c[ImGuiCol_WindowBg]          = bg;
+        c[ImGuiCol_ChildBg]           = ImVec4(0, 0, 0, 0);
+        c[ImGuiCol_PopupBg]           = ImVec4(bg_panel.x, bg_panel.y, bg_panel.z, 0.98f);
+        c[ImGuiCol_FrameBg]           = bg_raised;
+        c[ImGuiCol_FrameBgHovered]    = bg_hover;
+        c[ImGuiCol_FrameBgActive]     = bg_active;
+        c[ImGuiCol_TitleBg]           = bg_panel;
+        c[ImGuiCol_TitleBgActive]     = bg_raised;
+        c[ImGuiCol_MenuBarBg]         = bg_panel;
+        c[ImGuiCol_ScrollbarBg]       = ImVec4(bg.x, bg.y, bg.z, 0.6f);
+        c[ImGuiCol_Button]            = accent_fnt;
+        c[ImGuiCol_ButtonHovered]     = accent_dim;
+        c[ImGuiCol_ButtonActive]      = accent_mid;
+        c[ImGuiCol_Header]            = accent_fnt;
+        c[ImGuiCol_HeaderHovered]     = accent_dim;
+        c[ImGuiCol_HeaderActive]      = accent_mid;
+        c[ImGuiCol_CheckMark]         = accent;
+        c[ImGuiCol_SliderGrab]        = accent_dim;
+        c[ImGuiCol_SliderGrabActive]  = accent;
+        c[ImGuiCol_SeparatorHovered]  = accent_dim;
+        c[ImGuiCol_SeparatorActive]   = accent;
+        c[ImGuiCol_ResizeGrip]        = accent_fnt;
+        c[ImGuiCol_ResizeGripHovered] = accent_dim;
+        c[ImGuiCol_ResizeGripActive]  = accent;
+        c[ImGuiCol_Tab]               = bg_panel;
+        c[ImGuiCol_TabHovered]        = accent_dim;
+        c[ImGuiCol_TabSelected]       = accent_fnt;
+    }
+
+    void UIManager::RenderZoneMap() {
+        // Auto-fit the map to the available region so the rings never clip. The
+        // largest threshold maps to the rim; device dots stay literal-distance
+        // (clamped to the rim so a far-out device renders at the edge, not off
+        // screen). Center = each device's locked origin.
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        float canvas_size = std::min(avail.x, avail.y);
+        if (canvas_size < 80.0f) canvas_size = 80.0f;
+
+        ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
+        ImVec2 canvas_center(canvas_pos.x + canvas_size / 2, canvas_pos.y + canvas_size / 2);
+        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+        const float margin_frac = 0.88f; // leave room for the zone labels
+        float max_threshold = (std::max)((std::max)(warning_threshold_, position_threshold_), disable_threshold_);
+        if (max_threshold < 1e-3f) max_threshold = 1e-3f;
+        const float rim = canvas_size * 0.5f * margin_frac;
+        const float scale_factor = rim / max_threshold; // largest ring == rim
+
+        float disable_radius       = disable_threshold_ * scale_factor;
+        float out_of_bounds_radius = position_threshold_ * scale_factor;
+        float warning_radius       = warning_threshold_ * scale_factor;
+
+        draw_list->AddCircleFilled(canvas_center, warning_radius, IM_COL32(0, 255, 0, 50));
+        draw_list->AddCircle(canvas_center, disable_radius,       IM_COL32(255, 0, 0, 100), 0, 2.0f);
+        draw_list->AddCircle(canvas_center, out_of_bounds_radius, IM_COL32(255, 128, 0, 150), 0, 2.0f);
+        draw_list->AddCircle(canvas_center, warning_radius,       IM_COL32(255, 255, 0, 150), 0, 2.0f);
+
+        for (const auto& device : device_positions_) {
+            if (!(device.include_in_locking || device.locked)) continue;
+
+            float deviation_x = 0.0f, deviation_z = 0.0f;
+            if (device.locked || (device.include_in_locking && global_lock_active_)) {
+                deviation_x = device.position[0] - device.original_position[0];
+                deviation_z = device.position[2] - device.original_position[2];
+            }
+
+            float scaled_x = deviation_x * scale_factor;
+            float scaled_z = deviation_z * scale_factor;
+            float r = std::sqrt(scaled_x * scaled_x + scaled_z * scaled_z);
+            if (r > rim && r > 0.0f) { scaled_x *= rim / r; scaled_z *= rim / r; } // clamp to rim, keep angle
+            ImVec2 device_pos(canvas_center.x + scaled_x, canvas_center.y + scaled_z);
+
+            float total_deviation = std::sqrt(deviation_x * deviation_x + deviation_z * deviation_z);
+            ImU32 device_color =
+                (total_deviation > position_threshold_) ? IM_COL32(255, 0, 0, 255) :
+                (total_deviation > warning_threshold_)  ? IM_COL32(255, 255, 0, 255) :
+                                                          IM_COL32(0, 255, 0, 255);
+
+            draw_list->AddCircleFilled(device_pos, 5.0f, device_color);
+
+            std::string label = device.device_name;
+            if (label.empty()) {
+                switch (device.type) {
+                    case DeviceType::HMD: label = "HMD"; break;
+                    case DeviceType::CONTROLLER: label = "CTRL"; break;
+                    case DeviceType::TRACKER: label = "TRK"; break;
+                    case DeviceType::TRACKING_REFERENCE: label = "BASE"; break;
+                    default: label = "UNK"; break;
+                }
+            }
+            draw_list->AddText(ImVec2(device_pos.x + 7, device_pos.y - 7), device_color, label.c_str());
+        }
+
+        draw_list->AddText(ImVec2(canvas_center.x - 25, canvas_center.y - warning_radius - 15),
+                           IM_COL32(255, 255, 0, 255), "Warning");
+        draw_list->AddText(ImVec2(canvas_center.x - 40, canvas_center.y - out_of_bounds_radius - 15),
+                           IM_COL32(255, 128, 0, 255), "Out of Bounds");
+        draw_list->AddText(ImVec2(canvas_center.x - 22, canvas_center.y - disable_radius - 15),
+                           IM_COL32(255, 0, 0, 255), "Disable");
+
+        ImGui::Dummy(ImVec2(canvas_size, canvas_size));
+    }
+
+    const char* UIManager::RoleName(DeviceRole role) {
+        switch (role) {
+            case DeviceRole::HMD: return "Collar / HMD";
+            case DeviceRole::LeftController: return "Left Hand";
+            case DeviceRole::RightController: return "Right Hand";
+            case DeviceRole::Hip: return "Hip";
+            case DeviceRole::LeftFoot: return "Left Foot";
+            case DeviceRole::RightFoot: return "Right Foot";
+            default: return "Unassigned";
+        }
+    }
+
+    std::string UIManager::SerialForRole(DeviceRole role) const {
+        if (role == DeviceRole::None) return "";
+        for (const auto& d : device_positions_)
+            if (d.role == role) return d.serial;
+        return "";
+    }
+
+    void UIManager::AssignRoleToSerial(const std::string& serial, DeviceRole role) {
+        // Roles are unique slots: clear any other device currently holding it.
+        if (role != DeviceRole::None) {
+            for (auto& d : device_positions_) {
+                if (d.serial != serial && d.role == role) {
+                    d.role = DeviceRole::None;
+                    config_.device_roles[d.serial] = static_cast<int>(DeviceRole::None);
+                }
+            }
+        }
+        for (auto& d : device_positions_) {
+            if (d.serial == serial) {
+                d.role = role;
+                config_.device_roles[serial] = static_cast<int>(role);
+            }
+        }
+        SaveConfig();
+    }
+
+    void UIManager::LoadEffigyTexture() {
+        if (effigy_load_attempted_) return;
+        effigy_load_attempted_ = true;
+
+        std::string path = GetAppDataPath() + "/resources/effigy.png";
+        if (!std::filesystem::exists(path) && std::filesystem::exists("./resources/effigy.png")) {
+            path = "./resources/effigy.png";
+        }
+        if (!std::filesystem::exists(path)) {
+            if (Logger::IsInitialized()) Logger::Info("UIManager: effigy.png not found; Visual tab uses a wireframe placeholder");
+            return;
+        }
+
+        int w = 0, h = 0, n = 0;
+        unsigned char* data = stbi_load(path.c_str(), &w, &h, &n, 4);
+        if (!data) {
+            if (Logger::IsInitialized()) Logger::Warning("UIManager: failed to decode effigy.png");
+            return;
+        }
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        stbi_image_free(data);
+
+        effigy_tex_ = tex;
+        effigy_tex_w_ = w;
+        effigy_tex_h_ = h;
+    }
+
+    void UIManager::RenderVisualAssignment() {
+        LoadEffigyTexture();
+
+        struct Slot { DeviceRole role; const char* label; float ux, uy; };
+        // Slot positions normalized to the effigy image (front-facing; viewer-left
+        // = "Left" so the user's left tracker maps to the left of the screen).
+        static const Slot kSlots[] = {
+            { DeviceRole::HMD,             "Collar/HMD", 0.49f, 0.27f },
+            { DeviceRole::LeftController,  "L Hand",     0.16f, 0.56f },
+            { DeviceRole::RightController, "R Hand",     0.84f, 0.56f },
+            { DeviceRole::Hip,             "Hip",        0.49f, 0.52f },
+            { DeviceRole::LeftFoot,        "L Foot",     0.38f, 0.94f },
+            { DeviceRole::RightFoot,       "R Foot",     0.63f, 0.94f },
+        };
+
+        const float effigyH = 380.0f;
+        float effigyW = ImGui::GetContentRegionAvail().x * 0.42f;
+        if (effigyW < 160.0f) effigyW = 160.0f;
+
+        // ---- LEFT: effigy + slot hotspots ----
+        ImGui::BeginChild("EffigyPane", ImVec2(effigyW, effigyH), true);
+        {
+            ImVec2 box = ImGui::GetContentRegionAvail();
+            float imgH = box.y - 4.0f;
+            float aspect = (effigy_tex_h_ > 0) ? (float)effigy_tex_w_ / (float)effigy_tex_h_ : 0.56f;
+            float imgW = imgH * aspect;
+            ImVec2 origin = ImGui::GetCursorScreenPos();
+            float xpad = (box.x - imgW) * 0.5f; if (xpad < 0.0f) xpad = 0.0f;
+            origin.x += xpad;
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+
+            if (effigy_tex_ != 0) {
+                dl->AddImage((ImTextureID)(intptr_t)effigy_tex_, origin, ImVec2(origin.x + imgW, origin.y + imgH));
+            } else {
+                // Wireframe placeholder if the PNG is missing.
+                ImU32 line = IM_COL32(100, 180, 255, 200);
+                auto P = [&](float ux, float uy){ return ImVec2(origin.x + ux*imgW, origin.y + uy*imgH); };
+                dl->AddCircle(P(0.49f,0.13f), imgW*0.10f, line, 24, 2.0f);
+                dl->AddLine(P(0.49f,0.23f), P(0.49f,0.58f), line, 2.0f);
+                dl->AddLine(P(0.30f,0.30f), P(0.70f,0.30f), line, 2.0f);
+                dl->AddLine(P(0.30f,0.30f), P(0.16f,0.56f), line, 2.0f);
+                dl->AddLine(P(0.70f,0.30f), P(0.84f,0.56f), line, 2.0f);
+                dl->AddLine(P(0.42f,0.58f), P(0.42f,0.92f), line, 2.0f);
+                dl->AddLine(P(0.59f,0.58f), P(0.59f,0.92f), line, 2.0f);
+            }
+
+            const float hot = 30.0f;
+            for (const auto& s : kSlots) {
+                ImVec2 c(origin.x + s.ux*imgW, origin.y + s.uy*imgH);
+                ImGui::SetCursorScreenPos(ImVec2(c.x - hot/2, c.y - hot/2));
+                ImGui::InvisibleButton(s.label, ImVec2(hot, hot));
+                bool hovered = ImGui::IsItemHovered();
+
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_DEVICE")) {
+                        std::string serial(static_cast<const char*>(p->Data));
+                        AssignRoleToSerial(serial, s.role);
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+                if (ImGui::IsItemClicked()) selected_slot_role_ = s.role;
+
+                // Colour the slot by the assigned device's live status (green safe,
+                // yellow warning, red out-of-bounds; dim when unassigned).
+                std::string serial = SerialForRole(s.role);
+                bool filled = !serial.empty();
+                ImU32 status_col = IM_COL32(130, 150, 170, 120); // unassigned (dim)
+                if (filled) {
+                    const DevicePosition* dev = nullptr;
+                    for (const auto& d : device_positions_) if (d.serial == serial) { dev = &d; break; }
+                    float dev_total = 0.0f;
+                    if (dev && (dev->locked || (dev->include_in_locking && global_lock_active_))) {
+                        float dx = dev->position[0] - dev->original_position[0];
+                        float dz = dev->position[2] - dev->original_position[2];
+                        dev_total = std::sqrt(dx*dx + dz*dz);
+                    }
+                    status_col = (dev_total > position_threshold_) ? IM_COL32(255, 70, 70, 255)
+                               : (dev_total > warning_threshold_)  ? IM_COL32(255, 215, 60, 255)
+                                                                   : IM_COL32(70, 220, 100, 255);
+                }
+                ImU32 ring = hovered ? IM_COL32(255, 255, 255, 255) : status_col;
+                dl->AddCircleFilled(c, hot/2 - 2, filled ? IM_COL32(30, 60, 45, 150) : IM_COL32(20, 24, 32, 140));
+                dl->AddCircle(c, hot/2, ring, 24, filled ? 3.0f : 1.5f);
+                if (s.role == selected_slot_role_)
+                    dl->AddCircle(c, hot/2 + 3, IM_COL32(80, 160, 255, 255), 24, 2.0f);
+
+                // Label on the LEFT for left-side slots (L Hand / L Foot), else right.
+                ImVec2 tsz = ImGui::CalcTextSize(s.label);
+                bool label_left = (s.ux < 0.45f);
+                ImVec2 tpos = label_left ? ImVec2(c.x - hot/2 - 3 - tsz.x, c.y - 7)
+                                         : ImVec2(c.x + hot/2 + 3, c.y - 7);
+                ImU32 label_col = filled ? status_col : IM_COL32(170, 180, 200, 200);
+                dl->AddText(tpos, label_col, s.label);
+            }
+            ImGui::SetCursorScreenPos(origin);
+            ImGui::Dummy(box);
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // ---- RIGHT: detected devices with heat + drag source ----
+        ImGui::BeginChild("DeviceListPane", ImVec2(0, effigyH), true);
+        ImGui::TextWrapped("Drag a device onto an avatar slot to assign it. Wiggle a tracker in "
+                           "SteamVR to find it (its heat bar lights up). Click a slot to configure it.");
+        ImGui::Separator();
+        if (device_positions_.empty()) {
+            ImGui::TextDisabled("No devices detected (SteamVR not connected?).");
+        }
+        for (auto& d : device_positions_) {
+            ImGui::PushID(d.serial.c_str());
+            std::string row = d.device_name.empty() ? d.serial : d.device_name;
+            ImGui::Selectable(row.c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x * 0.45f, 0));
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                ImGui::SetDragDropPayload("SPVR_DEVICE", d.serial.c_str(), d.serial.size() + 1);
+                ImGui::Text("Assign %s", row.c_str());
+                ImGui::EndDragDropSource();
+            }
+            ImGui::SameLine();
+            float h = d.movement_heat;
+            ImVec4 hc(0.25f + 0.75f*h, 0.30f, 0.95f*(1.0f-h), 1.0f);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, hc);
+            ImGui::ProgressBar(h, ImVec2(70, 0), h > 0.5f ? "HOT" : (h > 0.12f ? "warm" : "idle"));
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            if (d.role == DeviceRole::None)
+                ImGui::TextColored(ImVec4(0.6f,0.6f,0.6f,1.0f), "(unassigned)");
+            else
+                ImGui::TextColored(ImVec4(0.45f,0.9f,0.55f,1.0f), "-> %s", RoleName(d.role));
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+
+        // ---- Per-slot configure panel ----
+        if (selected_slot_role_ != DeviceRole::None) {
+            ImGui::Separator();
+            RenderSlotConfig(selected_slot_role_);
+        }
+    }
+
+    void UIManager::RenderSlotConfig(DeviceRole role) {
+        ImGui::Text("Configure slot: %s", RoleName(role));
+        std::string serial = SerialForRole(role);
+        if (serial.empty()) {
+            ImGui::TextDisabled("No device assigned. Drag one onto this slot.");
+            return;
+        }
+        DevicePosition* dev = nullptr;
+        for (auto& d : device_positions_) if (d.serial == serial) { dev = &d; break; }
+        if (!dev) return;
+
+        ImGui::Text("Assigned: %s", dev->device_name.empty() ? serial.c_str() : dev->device_name.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Unassign")) {
+            AssignRoleToSerial(serial, DeviceRole::None);
+            selected_slot_role_ = DeviceRole::None;
+            return;
+        }
+
+        bool inc = dev->include_in_locking;
+        if (ImGui::Checkbox("Include in locking", &inc)) {
+            dev->include_in_locking = inc;
+            config_.device_settings[serial] = inc;
+            SaveConfig();
+        }
+
+        // Shockers — reuse the existing 5 configured PiShock/OpenShock slots.
+        ImGui::Text("Shockers:");
+        bool any_shock = false;
+        for (int i = 0; i < 5; ++i) {
+            bool has = (config_.pishock_shocker_ids[i] != 0) || !config_.openshock_device_ids[i].empty();
+            if (!has) continue;
+            any_shock = true;
+            ImGui::SameLine();
+            ImGui::PushID(1000 + i);
+            bool on = dev->shock_device_enabled[i];
+            std::string lbl = std::to_string(i + 1);
+            if (ImGui::Checkbox(lbl.c_str(), &on)) {
+                dev->shock_device_enabled[i] = on;
+                config_.device_shock_ids[serial] = dev->shock_device_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_shock) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
+        // Vibration — the 5 configured Buttplug device indices.
+        ImGui::Text("Vibration:");
+        bool any_vibe = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.buttplug_device_indices[i] < 0) continue;
+            any_vibe = true;
+            ImGui::SameLine();
+            ImGui::PushID(2000 + i);
+            bool on = dev->vibration_device_enabled[i];
+            std::string lbl = std::to_string(i + 1);
+            if (ImGui::Checkbox(lbl.c_str(), &on)) {
+                dev->vibration_device_enabled[i] = on;
+                config_.device_vibration_ids[serial] = dev->vibration_device_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_vibe) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+    }
+
     void UIManager::RenderMainTab() {
-        ImGui::Text("StayPutVR Main Control Panel");
+        ImGui::Text("StayPutVR Status");
         ImGui::Separator();
         
-        // Connection status panel at the top
-        ImGui::BeginChild("ConnectionPanel", ImVec2(0, 60), true);
+        // Connection status panel at the top. Auto-resize height so the
+        // not-connected content (message + retry button) always shows in full
+        // instead of scrolling inside a fixed 60px box.
+        ImGui::BeginChild("ConnectionPanel", ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         
         bool isConnected = device_manager_ && device_manager_->IsConnected();
         
         if (isConnected) {
-            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✓ Connected to driver");
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected to driver");
         } else {
-            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "✗ Not connected to driver");
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Not connected to driver");
             ImGui::Text("The driver is not running or could not be reached");
             
             if (ImGui::Button("Retry Connection")) {
@@ -1423,7 +1956,44 @@ namespace StayPutVR {
         }
         
         ImGui::EndChild();
-        
+
+        // OSC quick controls so users don't need to open Settings > OSC just to
+        // start listening. Mirrors the enable/disable button on the OSC sub-tab.
+        ImGui::BeginChild("OSCQuickPanel", ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        ImGui::Text("OSC");
+        ImGui::SameLine();
+        if (osc_enabled_) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+            if (ImGui::Button("Disable OSC", ImVec2(130, 0))) {
+                DisconnectOSC();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Active - listening for OSC");
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+            if (ImGui::Button("Enable OSC", ImVec2(130, 0))) {
+                HandleOSCConnection();
+            }
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Inactive");
+        }
+
+        // Avatar trigger toggles (intensity/duration live in Integrations > OSC Triggers).
+        if (ImGui::Checkbox("Bite trigger", &config_.osc_bite_enabled)) {
+            SaveConfig();
+        }
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Shock trigger", &config_.osc_shock_enabled)) {
+            SaveConfig();
+        }
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Fire a shock from avatar parameters. Tune intensity/duration in "
+            "Integrations > OSC Triggers; change parameter paths in Settings > OSC.");
+        ImGui::EndChild();
+
         // Emergency Stop Status Panel
         if (emergency_stop_active_) {
             ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.8f, 0.2f, 0.2f, 0.3f)); // Red background
@@ -1568,93 +2138,7 @@ namespace StayPutVR {
         ImGui::Text("Device Positions:");
         ImGui::Separator();
         
-        // Create a visualization with all three rings
-        const float canvas_size = 300.0f; // Increased size for better zoom
-        ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
-        ImVec2 canvas_center(canvas_pos.x + canvas_size/2, canvas_pos.y + canvas_size/2);
-        
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        
-        // Visualization scaling factor (increased for better zoom)
-        // Adjust scale factor to make the rings match real-world distances better
-        const float scale_factor = canvas_size/1.0f; // Changed from 1.5f to 1.0f for better scaling
-        
-        // Draw the boundary circles with consistent ratios
-        float disable_radius = disable_threshold_ * scale_factor;
-        float out_of_bounds_radius = position_threshold_ * scale_factor;
-        float warning_radius = warning_threshold_ * scale_factor;
-        
-        draw_list->AddCircle(canvas_center, disable_radius, IM_COL32(255, 0, 0, 100), 0, 2.0f);
-        draw_list->AddCircle(canvas_center, out_of_bounds_radius, IM_COL32(255, 128, 0, 150), 0, 2.0f);
-        draw_list->AddCircle(canvas_center, warning_radius, IM_COL32(255, 255, 0, 150), 0, 2.0f);
-        
-        // Draw the safe zone
-        draw_list->AddCircleFilled(canvas_center, warning_radius, IM_COL32(0, 255, 0, 50));
-        
-        // Draw each device that's included in locking
-        for (const auto& device : device_positions_) {
-            if (device.include_in_locking || device.locked) {
-                // Calculate position deviation
-                float deviation_x = 0.0f;
-                float deviation_z = 0.0f;
-                
-                if (device.locked || (device.include_in_locking && global_lock_active_)) {
-                    deviation_x = device.position[0] - device.original_position[0];
-                    deviation_z = device.position[2] - device.original_position[2];
-                }
-                
-                // Scale deviation to canvas (with better zoom)
-                float scaled_x = deviation_x * scale_factor;
-                float scaled_z = deviation_z * scale_factor;
-                
-                // Calculate device position on canvas
-                ImVec2 device_pos(canvas_center.x + scaled_x, canvas_center.y + scaled_z);
-                
-                // Choose color based on device state and deviation
-                ImU32 device_color;
-                float total_deviation = std::sqrt(deviation_x*deviation_x + deviation_z*deviation_z);
-                
-                if (total_deviation > position_threshold_) {
-                    device_color = IM_COL32(255, 0, 0, 255); // Red for out of bounds
-                } else if (total_deviation > warning_threshold_) {
-                    device_color = IM_COL32(255, 255, 0, 255); // Yellow for warning
-                } else {
-                    device_color = IM_COL32(0, 255, 0, 255); // Green for within bounds
-                }
-                
-                // Draw the device as a small circle
-                draw_list->AddCircleFilled(device_pos, 5.0f, device_color);
-                
-                // Use custom name if available, otherwise use device type
-                std::string label;
-                if (!device.device_name.empty()) {
-                    label = device.device_name;
-                } else {
-                    // Default to device type
-                    switch (device.type) {
-                        case DeviceType::HMD: label = "HMD"; break;
-                        case DeviceType::CONTROLLER: label = "CTRL"; break;
-                        case DeviceType::TRACKER: label = "TRK"; break;
-                        case DeviceType::TRACKING_REFERENCE: label = "BASE"; break;
-                        default: label = "UNK"; break;
-                    }
-                }
-                
-                // Draw the label
-                draw_list->AddText(ImVec2(device_pos.x + 7, device_pos.y - 7), device_color, label.c_str());
-            }
-        }
-        
-        // Add labels for the zones
-        draw_list->AddText(ImVec2(canvas_center.x - 25, canvas_center.y - warning_radius - 15), 
-                          IM_COL32(255, 255, 0, 255), "Warning Zone");
-        draw_list->AddText(ImVec2(canvas_center.x - 35, canvas_center.y - out_of_bounds_radius - 15), 
-                          IM_COL32(255, 128, 0, 255), "Out of Bounds Zone");
-        draw_list->AddText(ImVec2(canvas_center.x - 15, canvas_center.y - disable_radius - 15), 
-                          IM_COL32(255, 0, 0, 255), "Disable Zone");
-        
-        // Add the canvas space to ImGui
-        ImGui::Dummy(ImVec2(canvas_size, canvas_size));
+        RenderZoneMap();
         
         ImGui::EndChild();
         
@@ -1708,7 +2192,30 @@ namespace StayPutVR {
     void UIManager::RenderDevicesTab() {
         ImGui::Text("Device Management");
         ImGui::Separator();
-        RenderDeviceList();
+
+        if (ImGui::BeginTabBar("DevicesSubTabs")) {
+            // Classic: the existing per-device table (kept as the reliable fallback).
+            if (ImGui::BeginTabItem("Classic")) {
+                RenderDeviceList();
+                ImGui::EndTabItem();
+            }
+
+            // Visual: the new avatar-effigy assignment view (work in progress).
+            // Phase 1 shows the scaled zone map; effigy + drag-drop + heat meter
+            // land in later phases.
+            if (ImGui::BeginTabItem("Visual")) {
+                RenderVisualAssignment();
+                ImGui::Spacing();
+                ImGui::Separator();
+                ImGui::Text("Live boundary zones (distance from each device's locked origin):");
+                ImGui::BeginChild("VisualZoneMap", ImVec2(0, 300), true);
+                RenderZoneMap();
+                ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+
+            ImGui::EndTabBar();
+        }
     }
     
     void UIManager::RenderBoundariesTab() {
@@ -1986,7 +2493,7 @@ namespace StayPutVR {
     void UIManager::RenderOSCTab() {
         ImGui::Text("OSC Configuration");
         ImGui::Separator();
-        
+
         if (osc_enabled_) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
             if (ImGui::Button("Disable OSC", ImVec2(150, 40))) {
@@ -2004,360 +2511,357 @@ namespace StayPutVR {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "INACTIVE - Not listening for OSC commands");
         }
-        
+
+        // Surface a silent OSCQuery failure: if OSC Query is on and running but the
+        // mDNS socket couldn't bind (UDP 5353 in use), VRChat can't discover us.
+        if (osc_enabled_ && config_.osc_query_enabled && osc_query_server_ &&
+            osc_query_server_->IsRunning() && !osc_query_server_->IsAdvertising()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f),
+                "OSC Query: mDNS unavailable (UDP 5353 in use) - VRChat may not discover StayPutVR. "
+                "Turn off OSC Query to use manual ports, or free port 5353.");
+        }
+
         ImGui::Spacing();
-        ImGui::Separator();
-        
-        // OSC connection settings
-        ImGui::Text("OSC Connection");
-        ImGui::Separator();
-        
-        // Create buffers for editing
+
+        // Inputs for OSC settings
+        bool changed = false;
+
+        // --- Editing buffers, declared at function scope so the per-section
+        //     "Reset" buttons can refresh them. Initialized from config on first
+        //     use (when still empty). ---
         static char osc_ip[128];
         static int osc_send_port = 9000;
         static int osc_receive_port = 9001;
-        
-        // Initialize with current values
-        if (strlen(osc_ip) == 0) {
-            strcpy_s(osc_ip, sizeof(osc_ip), config_.osc_address.c_str());
-        }
-        if (osc_send_port != config_.osc_send_port) {
-            osc_send_port = config_.osc_send_port;
-        }
-        if (osc_receive_port != config_.osc_receive_port) {
-            osc_receive_port = config_.osc_receive_port;
-        }
-        
-        // Inputs for OSC settings
-        bool changed = false;
-        
-        if (ImGui::InputText("OSC IP Address", osc_ip, IM_ARRAYSIZE(osc_ip))) {
-            config_.osc_address = osc_ip;
-            changed = true;
-        }
-        
-        if (ImGui::InputInt("OSC Send Port", &osc_send_port)) {
-            config_.osc_send_port = osc_send_port;
-            changed = true;
-        }
-        ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("Port used to send locking status to VRChat");
-        
-        if (ImGui::InputInt("OSC Receive Port", &osc_receive_port)) {
-            config_.osc_receive_port = osc_receive_port;
-            changed = true;
-        }
-        ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("Port used to receive interaction data from VRChat, such as locking and unlocking");
-        
-        // OSC Device Lock Paths
-        ImGui::Separator();
-        ImGui::Text("Device Lock Paths");
-        ImGui::TextWrapped("These are the OSC addresses that the application will listen to for locking/unlocking signals. Sending a value of true/1 to these addresses will lock the corresponding device, false/0 will unlock it.");
-        ImGui::Separator();
-        
-        // Device-specific paths
-        
-        // HMD
         static char hmd_path[128];
-        if (strlen(hmd_path) == 0) {
-            strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
-        }
-        if (ImGui::InputText("HMD Lock Path", hmd_path, IM_ARRAYSIZE(hmd_path))) {
-            config_.osc_lock_path_hmd = hmd_path;
-            changed = true;
-        }
-        
-        // Left Hand
         static char left_hand_path[128];
-        if (strlen(left_hand_path) == 0) {
-            strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
-        }
-        if (ImGui::InputText("Left Hand Lock Path", left_hand_path, IM_ARRAYSIZE(left_hand_path))) {
-            config_.osc_lock_path_left_hand = left_hand_path;
-            changed = true;
-        }
-        
-        // Right Hand
         static char right_hand_path[128];
-        if (strlen(right_hand_path) == 0) {
-            strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
-        }
-        if (ImGui::InputText("Right Hand Lock Path", right_hand_path, IM_ARRAYSIZE(right_hand_path))) {
-            config_.osc_lock_path_right_hand = right_hand_path;
-            changed = true;
-        }
-        
-        // Left Foot
         static char left_foot_path[128];
-        if (strlen(left_foot_path) == 0) {
-            strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
-        }
-        if (ImGui::InputText("Left Foot Lock Path", left_foot_path, IM_ARRAYSIZE(left_foot_path))) {
-            config_.osc_lock_path_left_foot = left_foot_path;
-            changed = true;
-        }
-        
-        // Right Foot
         static char right_foot_path[128];
-        if (strlen(right_foot_path) == 0) {
-            strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
-        }
-        if (ImGui::InputText("Right Foot Lock Path", right_foot_path, IM_ARRAYSIZE(right_foot_path))) {
-            config_.osc_lock_path_right_foot = right_foot_path;
-            changed = true;
-        }
-        
-        // Hip
         static char hip_path[128];
-        if (strlen(hip_path) == 0) {
-            strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
-        }
-        if (ImGui::InputText("Hip Lock Path", hip_path, IM_ARRAYSIZE(hip_path))) {
-            config_.osc_lock_path_hip = hip_path;
-            changed = true;
-        }
-        
-        // Device Include Paths
-        ImGui::Separator();
-        ImGui::Text("Device Include Paths");
-        ImGui::TextWrapped("These are the OSC addresses that toggle whether a device is included in locking. When a true/1 value is received, the include state for that device will be toggled.");
-        ImGui::Separator();
-        
-        // HMD Include
         static char hmd_include_path[128];
-        if (strlen(hmd_include_path) == 0) {
-            strcpy_s(hmd_include_path, sizeof(hmd_include_path), config_.osc_include_path_hmd.c_str());
-        }
-        if (ImGui::InputText("HMD Include Path", hmd_include_path, IM_ARRAYSIZE(hmd_include_path))) {
-            config_.osc_include_path_hmd = hmd_include_path;
-            changed = true;
-        }
-        
-        // Left Hand Include
         static char left_hand_include_path[128];
-        if (strlen(left_hand_include_path) == 0) {
-            strcpy_s(left_hand_include_path, sizeof(left_hand_include_path), config_.osc_include_path_left_hand.c_str());
-        }
-        if (ImGui::InputText("Left Hand Include Path", left_hand_include_path, IM_ARRAYSIZE(left_hand_include_path))) {
-            config_.osc_include_path_left_hand = left_hand_include_path;
-            changed = true;
-        }
-        
-        // Right Hand Include
         static char right_hand_include_path[128];
-        if (strlen(right_hand_include_path) == 0) {
-            strcpy_s(right_hand_include_path, sizeof(right_hand_include_path), config_.osc_include_path_right_hand.c_str());
-        }
-        if (ImGui::InputText("Right Hand Include Path", right_hand_include_path, IM_ARRAYSIZE(right_hand_include_path))) {
-            config_.osc_include_path_right_hand = right_hand_include_path;
-            changed = true;
-        }
-        
-        // Left Foot Include
         static char left_foot_include_path[128];
-        if (strlen(left_foot_include_path) == 0) {
-            strcpy_s(left_foot_include_path, sizeof(left_foot_include_path), config_.osc_include_path_left_foot.c_str());
-        }
-        if (ImGui::InputText("Left Foot Include Path", left_foot_include_path, IM_ARRAYSIZE(left_foot_include_path))) {
-            config_.osc_include_path_left_foot = left_foot_include_path;
-            changed = true;
-        }
-        
-        // Right Foot Include
         static char right_foot_include_path[128];
-        if (strlen(right_foot_include_path) == 0) {
-            strcpy_s(right_foot_include_path, sizeof(right_foot_include_path), config_.osc_include_path_right_foot.c_str());
-        }
-        if (ImGui::InputText("Right Foot Include Path", right_foot_include_path, IM_ARRAYSIZE(right_foot_include_path))) {
-            config_.osc_include_path_right_foot = right_foot_include_path;
-            changed = true;
-        }
-        
-        // Hip Include
         static char hip_include_path[128];
-        if (strlen(hip_include_path) == 0) {
-            strcpy_s(hip_include_path, sizeof(hip_include_path), config_.osc_include_path_hip.c_str());
-        }
-        if (ImGui::InputText("Hip Include Path", hip_include_path, IM_ARRAYSIZE(hip_include_path))) {
-            config_.osc_include_path_hip = hip_include_path;
-            changed = true;
-        }
-        
-        // Global Lock/Unlock Paths
-        ImGui::Separator();
-        ImGui::Text("Global Lock/Unlock Paths");
-        ImGui::TextWrapped("These are the OSC addresses that will trigger global lock or unlock of all enabled devices.");
-        ImGui::Separator();
-        
-        // Global Lock
         static char global_lock_path[128];
-        if (strlen(global_lock_path) == 0) {
-            strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
-        }
-        if (ImGui::InputText("Global Lock Path", global_lock_path, IM_ARRAYSIZE(global_lock_path))) {
-            config_.osc_global_lock_path = global_lock_path;
-            changed = true;
-        }
-        
-        // Global Unlock
         static char global_unlock_path[128];
-        if (strlen(global_unlock_path) == 0) {
-            strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
-        }
-        if (ImGui::InputText("Global Unlock Path", global_unlock_path, IM_ARRAYSIZE(global_unlock_path))) {
-            config_.osc_global_unlock_path = global_unlock_path;
-            changed = true;
-        }
-        
-        ImGui::Separator();
-        ImGui::Text("Global Out-of-Bounds Trigger");
-        ImGui::TextWrapped("Enable automatic out-of-bounds actions when receiving the SPVR_Global_OutOfBounds parameter from VRChat.");
-        
-        bool global_out_of_bounds_enabled = config_.osc_global_out_of_bounds_enabled;
-        if (ImGui::Checkbox("Enable Global Out-of-Bounds Trigger", &global_out_of_bounds_enabled)) {
-            config_.osc_global_out_of_bounds_enabled = global_out_of_bounds_enabled;
-            changed = true;
-        }
-        
-        ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_Global_OutOfBounds parameter will trigger out-of-bounds actions");
-        
-        // Global out-of-bounds path input
         static char global_out_of_bounds_path[128];
-        if (strlen(global_out_of_bounds_path) == 0) {
-            strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
-        }
-        if (ImGui::InputText("Global Out-of-Bounds Path", global_out_of_bounds_path, IM_ARRAYSIZE(global_out_of_bounds_path))) {
-            config_.osc_global_out_of_bounds_path = global_out_of_bounds_path;
-            changed = true;
-        }
-        
-        ImGui::Separator();
-        ImGui::Text("Bite Trigger");
-        ImGui::TextWrapped("Enable disobedience actions when receiving the SPVR_Bite parameter from VRChat.");
-        
-        bool bite_enabled = config_.osc_bite_enabled;
-        if (ImGui::Checkbox("Enable Bite Trigger", &bite_enabled)) {
-            config_.osc_bite_enabled = bite_enabled;
-            changed = true;
-        }
-        
-        ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_Bite parameter will trigger disobedience actions");
-        
-        // Bite path input
         static char bite_path[128];
-        if (strlen(bite_path) == 0) {
-            strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
-        }
-        if (ImGui::InputText("Bite Path", bite_path, IM_ARRAYSIZE(bite_path))) {
-            config_.osc_bite_path = bite_path;
-            changed = true;
-        }
-        
-        ImGui::Separator();
-        ImGui::Text("Emergency Stop Stretch");
-        ImGui::TextWrapped("Enable emergency unlock when receiving the SPVR_EStop_Stretch parameter from VRChat with a value >= 0.5.");
-        
-        bool estop_stretch_enabled = config_.osc_estop_stretch_enabled;
-        if (ImGui::Checkbox("Enable Emergency Stop Stretch", &estop_stretch_enabled)) {
-            config_.osc_estop_stretch_enabled = estop_stretch_enabled;
-            changed = true;
-        }
-        
-        ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_EStop_Stretch parameter with value >= 0.5 will immediately unlock all devices (emergency stop)");
-        
-        // Emergency stop stretch path input
+        static char shock_path[128];
         static char estop_stretch_path[128];
-        if (strlen(estop_stretch_path) == 0) {
-            strcpy_s(estop_stretch_path, sizeof(estop_stretch_path), config_.osc_estop_stretch_path.c_str());
-        }
-        if (ImGui::InputText("Emergency Stop Stretch Path", estop_stretch_path, IM_ARRAYSIZE(estop_stretch_path))) {
-            config_.osc_estop_stretch_path = estop_stretch_path;
-            changed = true;
-        }
-        
-        // Chaining mode
-        ImGui::Text("Chaining Mode");
-        ImGui::Separator();
-        
-        bool chaining_mode = config_.chaining_mode;
-        if (ImGui::Checkbox("Enable Chaining Mode", &chaining_mode)) {
-            config_.chaining_mode = chaining_mode;
-            changed = true;
-        }
-        
-        ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("When a device is locked via OSC, all devices will be locked");
-        
-        // Reset to defaults button
-        ImGui::Separator();
-        if (ImGui::Button("Reset Paths to Defaults")) {
-            // Reset device lock paths
-            config_.osc_lock_path_hmd = "/avatar/parameters/SPVR_HMD_Latch_IsPosed";
-            strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
-            
-            config_.osc_lock_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed";
-            strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
-            
-            config_.osc_lock_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed";
-            strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
-            
-            config_.osc_lock_path_left_foot = "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed";
-            strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
-            
-            config_.osc_lock_path_right_foot = "/avatar/parameters/SPVR_FootRight_Latch_IsPosed";
-            strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
-            
-            config_.osc_lock_path_hip = "/avatar/parameters/SPVR_Hip_Latch_IsPosed";
-            strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
-            
-            // Reset device include paths
-            config_.osc_include_path_hmd = "/avatar/parameters/SPVR_HMD_include";
-            strcpy_s(hmd_include_path, sizeof(hmd_include_path), config_.osc_include_path_hmd.c_str());
-            
-            config_.osc_include_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_include";
-            strcpy_s(left_hand_include_path, sizeof(left_hand_include_path), config_.osc_include_path_left_hand.c_str());
-            
-            config_.osc_include_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_include";
-            strcpy_s(right_hand_include_path, sizeof(right_hand_include_path), config_.osc_include_path_right_hand.c_str());
-            
-            config_.osc_include_path_left_foot = "/avatar/parameters/SPVR_FootLeft_include";
-            strcpy_s(left_foot_include_path, sizeof(left_foot_include_path), config_.osc_include_path_left_foot.c_str());
-            
-            config_.osc_include_path_right_foot = "/avatar/parameters/SPVR_FootRight_include";
-            strcpy_s(right_foot_include_path, sizeof(right_foot_include_path), config_.osc_include_path_right_foot.c_str());
-            
-            config_.osc_include_path_hip = "/avatar/parameters/SPVR_Hip_include";
-            strcpy_s(hip_include_path, sizeof(hip_include_path), config_.osc_include_path_hip.c_str());
-            
-            // Reset global lock/unlock paths
-            config_.osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
-            strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
-            
-            config_.osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
-            strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
-            
-            config_.osc_global_out_of_bounds_path = "/avatar/parameters/SPVR_Global_OutOfBounds";
-            strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
-            
-            config_.osc_bite_path = "/avatar/parameters/SPVR_Bite";
-            strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
-            
-            // Update OSCManager with new paths
-            if (osc_enabled_) {
-                OSCManager::GetInstance().SetConfig(config_);
+
+        if (strlen(osc_ip) == 0) strcpy_s(osc_ip, sizeof(osc_ip), config_.osc_address.c_str());
+        if (osc_send_port != config_.osc_send_port) osc_send_port = config_.osc_send_port;
+        if (osc_receive_port != config_.osc_receive_port) osc_receive_port = config_.osc_receive_port;
+        if (strlen(hmd_path) == 0) strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
+        if (strlen(left_hand_path) == 0) strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
+        if (strlen(right_hand_path) == 0) strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
+        if (strlen(left_foot_path) == 0) strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
+        if (strlen(right_foot_path) == 0) strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
+        if (strlen(hip_path) == 0) strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
+        if (strlen(hmd_include_path) == 0) strcpy_s(hmd_include_path, sizeof(hmd_include_path), config_.osc_include_path_hmd.c_str());
+        if (strlen(left_hand_include_path) == 0) strcpy_s(left_hand_include_path, sizeof(left_hand_include_path), config_.osc_include_path_left_hand.c_str());
+        if (strlen(right_hand_include_path) == 0) strcpy_s(right_hand_include_path, sizeof(right_hand_include_path), config_.osc_include_path_right_hand.c_str());
+        if (strlen(left_foot_include_path) == 0) strcpy_s(left_foot_include_path, sizeof(left_foot_include_path), config_.osc_include_path_left_foot.c_str());
+        if (strlen(right_foot_include_path) == 0) strcpy_s(right_foot_include_path, sizeof(right_foot_include_path), config_.osc_include_path_right_foot.c_str());
+        if (strlen(hip_include_path) == 0) strcpy_s(hip_include_path, sizeof(hip_include_path), config_.osc_include_path_hip.c_str());
+        if (strlen(global_lock_path) == 0) strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
+        if (strlen(global_unlock_path) == 0) strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
+        if (strlen(global_out_of_bounds_path) == 0) strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
+        if (strlen(bite_path) == 0) strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
+        if (strlen(shock_path) == 0) strcpy_s(shock_path, sizeof(shock_path), config_.osc_shock_path.c_str());
+        if (strlen(estop_stretch_path) == 0) strcpy_s(estop_stretch_path, sizeof(estop_stretch_path), config_.osc_estop_stretch_path.c_str());
+
+        // ===== Connection =====
+        if (ImGui::CollapsingHeader("Connection", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::InputText("OSC IP Address", osc_ip, IM_ARRAYSIZE(osc_ip))) {
+                config_.osc_address = osc_ip;
+                changed = true;
             }
-            
-            changed = true;
+            if (ImGui::InputInt("OSC Send Port", &osc_send_port)) {
+                config_.osc_send_port = osc_send_port;
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("Port used to send locking status to VRChat");
+            if (ImGui::InputInt("OSC Receive Port", &osc_receive_port)) {
+                config_.osc_receive_port = osc_receive_port;
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("Port used to receive interaction data from VRChat, such as locking and unlocking");
+
+            if (ImGui::Checkbox("OSC Query (mDNS auto-discovery)", &config_.osc_query_enabled)) {
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("When enabled, OSC ports are auto-negotiated via mDNS/OSCQuery: "
+                "StayPutVR binds an ephemeral receive port (avoiding conflicts with other OSC apps "
+                "that hold 9001) and advertises it to VRChat, and discovers VRChat's OSC port for "
+                "sending. When disabled, the manual Send/Receive ports above are used. "
+                "Changes take effect the next time OSC is enabled.");
+
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Reset to Defaults##conn")) {
+                config_.osc_address = "127.0.0.1";
+                strcpy_s(osc_ip, sizeof(osc_ip), config_.osc_address.c_str());
+                config_.osc_send_port = 9000; osc_send_port = 9000;
+                config_.osc_receive_port = 9001; osc_receive_port = 9001;
+                config_.osc_query_enabled = true;
+                changed = true;
+            }
         }
-        
+
+        // ===== Bite Trigger (path only; enable/intensity live in OSC Triggers) =====
+        if (ImGui::CollapsingHeader("Bite Trigger", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextWrapped("OSC parameter path for the bite trigger. Enable it and tune "
+                "intensity/duration in Integrations > OSC Triggers.");
+            if (ImGui::InputText("Bite Path", bite_path, IM_ARRAYSIZE(bite_path))) {
+                config_.osc_bite_path = bite_path;
+                changed = true;
+            }
+            if (ImGui::SmallButton("Reset to Defaults##bite")) {
+                config_.osc_bite_path = "/avatar/parameters/SPVR_Bite";
+                strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
+                changed = true;
+            }
+        }
+
+        // ===== Shock Trigger (path only; enable/intensity live in OSC Triggers) =====
+        if (ImGui::CollapsingHeader("Shock Trigger", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::TextWrapped("OSC parameter path for the shock trigger (e.g. the ChilloutCharles "
+                "shock param). Enable it and tune intensity/duration in Integrations > OSC Triggers.");
+            if (ImGui::InputText("Shock Path", shock_path, IM_ARRAYSIZE(shock_path))) {
+                config_.osc_shock_path = shock_path;
+                changed = true;
+            }
+            if (ImGui::SmallButton("Reset to Defaults##shock")) {
+                config_.osc_shock_path = "/avatar/parameters/Shock";
+                strcpy_s(shock_path, sizeof(shock_path), config_.osc_shock_path.c_str());
+                changed = true;
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::SeparatorText("Advanced Settings");
+        ImGui::TextWrapped("Advanced Settings. The following values are generally safe and desirable "
+            "to leave at their defaults.");
+        ImGui::Spacing();
+
+        // ===== Device Lock Paths =====
+        if (ImGui::CollapsingHeader("Device Lock Paths")) {
+            ImGui::TextWrapped("These are the OSC addresses that the application will listen to for locking/unlocking signals. Sending a value of true/1 to these addresses will lock the corresponding device, false/0 will unlock it.");
+            if (ImGui::InputText("HMD Lock Path", hmd_path, IM_ARRAYSIZE(hmd_path))) {
+                config_.osc_lock_path_hmd = hmd_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Left Hand Lock Path", left_hand_path, IM_ARRAYSIZE(left_hand_path))) {
+                config_.osc_lock_path_left_hand = left_hand_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Right Hand Lock Path", right_hand_path, IM_ARRAYSIZE(right_hand_path))) {
+                config_.osc_lock_path_right_hand = right_hand_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Left Foot Lock Path", left_foot_path, IM_ARRAYSIZE(left_foot_path))) {
+                config_.osc_lock_path_left_foot = left_foot_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Right Foot Lock Path", right_foot_path, IM_ARRAYSIZE(right_foot_path))) {
+                config_.osc_lock_path_right_foot = right_foot_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Hip Lock Path", hip_path, IM_ARRAYSIZE(hip_path))) {
+                config_.osc_lock_path_hip = hip_path;
+                changed = true;
+            }
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Reset to Defaults##lockpaths")) {
+                config_.osc_lock_path_hmd = "/avatar/parameters/SPVR_HMD_Latch_IsPosed";
+                strcpy_s(hmd_path, sizeof(hmd_path), config_.osc_lock_path_hmd.c_str());
+                config_.osc_lock_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed";
+                strcpy_s(left_hand_path, sizeof(left_hand_path), config_.osc_lock_path_left_hand.c_str());
+                config_.osc_lock_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed";
+                strcpy_s(right_hand_path, sizeof(right_hand_path), config_.osc_lock_path_right_hand.c_str());
+                config_.osc_lock_path_left_foot = "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed";
+                strcpy_s(left_foot_path, sizeof(left_foot_path), config_.osc_lock_path_left_foot.c_str());
+                config_.osc_lock_path_right_foot = "/avatar/parameters/SPVR_FootRight_Latch_IsPosed";
+                strcpy_s(right_foot_path, sizeof(right_foot_path), config_.osc_lock_path_right_foot.c_str());
+                config_.osc_lock_path_hip = "/avatar/parameters/SPVR_Hip_Latch_IsPosed";
+                strcpy_s(hip_path, sizeof(hip_path), config_.osc_lock_path_hip.c_str());
+                changed = true;
+            }
+        }
+
+        // ===== Device Include Paths =====
+        if (ImGui::CollapsingHeader("Device Include Paths")) {
+            ImGui::TextWrapped("These are the OSC addresses that toggle whether a device is included in locking. When a true/1 value is received, the include state for that device will be toggled.");
+            if (ImGui::InputText("HMD Include Path", hmd_include_path, IM_ARRAYSIZE(hmd_include_path))) {
+                config_.osc_include_path_hmd = hmd_include_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Left Hand Include Path", left_hand_include_path, IM_ARRAYSIZE(left_hand_include_path))) {
+                config_.osc_include_path_left_hand = left_hand_include_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Right Hand Include Path", right_hand_include_path, IM_ARRAYSIZE(right_hand_include_path))) {
+                config_.osc_include_path_right_hand = right_hand_include_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Left Foot Include Path", left_foot_include_path, IM_ARRAYSIZE(left_foot_include_path))) {
+                config_.osc_include_path_left_foot = left_foot_include_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Right Foot Include Path", right_foot_include_path, IM_ARRAYSIZE(right_foot_include_path))) {
+                config_.osc_include_path_right_foot = right_foot_include_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Hip Include Path", hip_include_path, IM_ARRAYSIZE(hip_include_path))) {
+                config_.osc_include_path_hip = hip_include_path;
+                changed = true;
+            }
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Reset to Defaults##includepaths")) {
+                config_.osc_include_path_hmd = "/avatar/parameters/SPVR_HMD_include";
+                strcpy_s(hmd_include_path, sizeof(hmd_include_path), config_.osc_include_path_hmd.c_str());
+                config_.osc_include_path_left_hand = "/avatar/parameters/SPVR_ControllerLeft_include";
+                strcpy_s(left_hand_include_path, sizeof(left_hand_include_path), config_.osc_include_path_left_hand.c_str());
+                config_.osc_include_path_right_hand = "/avatar/parameters/SPVR_ControllerRight_include";
+                strcpy_s(right_hand_include_path, sizeof(right_hand_include_path), config_.osc_include_path_right_hand.c_str());
+                config_.osc_include_path_left_foot = "/avatar/parameters/SPVR_FootLeft_include";
+                strcpy_s(left_foot_include_path, sizeof(left_foot_include_path), config_.osc_include_path_left_foot.c_str());
+                config_.osc_include_path_right_foot = "/avatar/parameters/SPVR_FootRight_include";
+                strcpy_s(right_foot_include_path, sizeof(right_foot_include_path), config_.osc_include_path_right_foot.c_str());
+                config_.osc_include_path_hip = "/avatar/parameters/SPVR_Hip_include";
+                strcpy_s(hip_include_path, sizeof(hip_include_path), config_.osc_include_path_hip.c_str());
+                changed = true;
+            }
+        }
+
+        // ===== Global Lock / Unlock / Out-of-Bounds =====
+        if (ImGui::CollapsingHeader("Global Lock / Unlock / Out-of-Bounds")) {
+            ImGui::TextWrapped("These are the OSC addresses that will trigger global lock or unlock of all enabled devices.");
+            if (ImGui::InputText("Global Lock Path", global_lock_path, IM_ARRAYSIZE(global_lock_path))) {
+                config_.osc_global_lock_path = global_lock_path;
+                changed = true;
+            }
+            if (ImGui::InputText("Global Unlock Path", global_unlock_path, IM_ARRAYSIZE(global_unlock_path))) {
+                config_.osc_global_unlock_path = global_unlock_path;
+                changed = true;
+            }
+
+            ImGui::Separator();
+            bool global_out_of_bounds_enabled = config_.osc_global_out_of_bounds_enabled;
+            if (ImGui::Checkbox("Enable Global Out-of-Bounds Trigger", &global_out_of_bounds_enabled)) {
+                config_.osc_global_out_of_bounds_enabled = global_out_of_bounds_enabled;
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_Global_OutOfBounds parameter will trigger out-of-bounds actions");
+            if (ImGui::InputText("Global Out-of-Bounds Path", global_out_of_bounds_path, IM_ARRAYSIZE(global_out_of_bounds_path))) {
+                config_.osc_global_out_of_bounds_path = global_out_of_bounds_path;
+                changed = true;
+            }
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Reset to Defaults##globalpaths")) {
+                config_.osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
+                strcpy_s(global_lock_path, sizeof(global_lock_path), config_.osc_global_lock_path.c_str());
+                config_.osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
+                strcpy_s(global_unlock_path, sizeof(global_unlock_path), config_.osc_global_unlock_path.c_str());
+                config_.osc_global_out_of_bounds_path = "/avatar/parameters/SPVR_Global_OutOfBounds";
+                strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
+                changed = true;
+            }
+        }
+
+        // ===== Emergency Stop Stretch =====
+        if (ImGui::CollapsingHeader("Emergency Stop Stretch")) {
+            ImGui::TextWrapped("Enable emergency unlock when receiving the SPVR_EStop_Stretch parameter from VRChat with a value >= 0.5.");
+            bool estop_stretch_enabled = config_.osc_estop_stretch_enabled;
+            if (ImGui::Checkbox("Enable Emergency Stop Stretch", &estop_stretch_enabled)) {
+                config_.osc_estop_stretch_enabled = estop_stretch_enabled;
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("When enabled, receiving the /avatar/parameters/SPVR_EStop_Stretch parameter with value >= 0.5 will immediately unlock all devices (emergency stop)");
+            if (ImGui::InputText("Emergency Stop Stretch Path", estop_stretch_path, IM_ARRAYSIZE(estop_stretch_path))) {
+                config_.osc_estop_stretch_path = estop_stretch_path;
+                changed = true;
+            }
+            ImGui::Spacing();
+            if (ImGui::SmallButton("Reset to Defaults##estop")) {
+                config_.osc_estop_stretch_path = "/avatar/parameters/SPVR_EStop_Stretch";
+                strcpy_s(estop_stretch_path, sizeof(estop_stretch_path), config_.osc_estop_stretch_path.c_str());
+                changed = true;
+            }
+        }
+
+        // ===== Chaining Mode =====
+        if (ImGui::CollapsingHeader("Chaining Mode")) {
+            bool chaining_mode = config_.chaining_mode;
+            if (ImGui::Checkbox("Enable Chaining Mode", &chaining_mode)) {
+                config_.chaining_mode = chaining_mode;
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("When a device is locked via OSC, all devices will be locked");
+        }
+
+        // ===== Debug / OSC Simulation =====
+        // Drive the avatar's SPVR_*_Status params without a headset, to develop
+        // and test the prefab. Sends go to VRChat on the configured send port.
+        if (ImGui::CollapsingHeader("Debug / OSC Simulation")) {
+            ImGui::TextWrapped("Send device status to VRChat to drive the avatar prefab "
+                               "(no headset required). Requires OSC to be enabled above.");
+            if (!osc_enabled_) {
+                ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.0f, 1.0f), "OSC is not enabled - sends are no-ops until you enable it.");
+            }
+
+            static const char* kStatusNames[] = {
+                "0 - Disabled", "1 - Unlocked", "2 - Locked (Safe)",
+                "3 - Locked (Warning)", "4 - Locked (Disobedience)", "5 - Locked (Out of Bounds)"
+            };
+            struct DebugDevice { const char* label; OSCDeviceType type; };
+            static const DebugDevice kDebugDevices[] = {
+                { "HMD",              OSCDeviceType::HMD },
+                { "Controller Left",  OSCDeviceType::ControllerLeft },
+                { "Controller Right", OSCDeviceType::ControllerRight },
+                { "Foot Left",        OSCDeviceType::FootLeft },
+                { "Foot Right",       OSCDeviceType::FootRight },
+                { "Hip",              OSCDeviceType::Hip },
+            };
+            static int debug_status[6] = { 0, 0, 0, 0, 0, 0 };
+
+            for (int i = 0; i < 6; ++i) {
+                ImGui::PushID(i);
+                ImGui::SetNextItemWidth(280);
+                if (ImGui::Combo(kDebugDevices[i].label, &debug_status[i], kStatusNames, IM_ARRAYSIZE(kStatusNames))) {
+                    OSCManager::GetInstance().SendDeviceStatus(kDebugDevices[i].type, static_cast<DeviceStatus>(debug_status[i]));
+                }
+                ImGui::PopID();
+            }
+
+            ImGui::Spacing();
+            auto sendAll = [&](DeviceStatus s) {
+                for (int i = 0; i < 6; ++i) {
+                    debug_status[i] = static_cast<int>(s);
+                    OSCManager::GetInstance().SendDeviceStatus(kDebugDevices[i].type, s);
+                }
+            };
+            if (ImGui::Button("All Disabled")) sendAll(DeviceStatus::Disabled);
+            ImGui::SameLine();
+            if (ImGui::Button("All Unlocked")) sendAll(DeviceStatus::Unlocked);
+            ImGui::SameLine();
+            if (ImGui::Button("All Locked")) sendAll(DeviceStatus::LockedSafe);
+            ImGui::SameLine();
+            if (ImGui::Button("All Out of Bounds")) sendAll(DeviceStatus::LockedOutOfBounds);
+        }
+
         // Save changes
         if (changed) {
             SaveConfig();
-            
+
             // If OSC is enabled, update the paths in the OSCManager
             if (osc_enabled_) {
                 OSCManager::GetInstance().SetConfig(config_);
@@ -2374,8 +2878,12 @@ namespace StayPutVR {
             return;
         }
 
-        // Initialize OSC manager
-        if (OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_send_port, config_.osc_receive_port)) {
+        // Initialize OSC manager. When OSCQuery is enabled, bind the receive
+        // socket to an ephemeral port (avoids the crash/conflict when another
+        // OSC app already holds 9001) and advertise the real port via mDNS.
+        bool use_query = config_.osc_query_enabled;
+        if (OSCManager::GetInstance().Initialize(config_.osc_address, config_.osc_send_port,
+                                                 config_.osc_receive_port, use_query)) {
             osc_enabled_ = true;
             config_.osc_enabled = true;
             SaveConfig();
@@ -2385,6 +2893,13 @@ namespace StayPutVR {
 
             // Set up callbacks
             VerifyOSCCallbacks();
+
+            // Start the OSCQuery (mDNS) server so VRChat can auto-discover our
+            // actual (ephemeral) receive port, and so we can discover VRChat's
+            // OSC port and retarget sends to it.
+            if (use_query) {
+                StartOSCQuery();
+            }
 
             if (Logger::IsInitialized()) {
                 Logger::Info("OSC connection established");
@@ -2396,10 +2911,73 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::StartOSCQuery() {
+        int receive_port = OSCManager::GetInstance().GetActualReceivePort();
+
+        if (!osc_query_server_) {
+            osc_query_server_ = std::make_unique<OSCQueryServer>();
+        }
+
+        // Advertise the SPVR avatar params VRChat should send to us. VRChat only
+        // needs the receive port to start sending; the parameter tree improves
+        // discoverability in OSCQuery-aware tooling. Mark them WriteOnly since
+        // these are inputs VRChat writes to StayPutVR.
+        using A = OSCQueryServer::Access;
+        const std::string p = "/avatar/parameters/";
+        osc_query_server_->AddParameter(config_.osc_lock_path_hmd, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_lock_path_left_hand, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_lock_path_right_hand, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_lock_path_left_foot, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_lock_path_right_foot, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_lock_path_hip, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_include_path_hmd, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_include_path_left_hand, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_include_path_right_hand, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_include_path_left_foot, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_include_path_right_foot, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_include_path_hip, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_global_lock_path, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_global_unlock_path, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_global_out_of_bounds_path, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_bite_path, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_shock_path, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_estop_stretch_path, "f", A::WriteOnly, 0.0f);
+        osc_query_server_->AddParameter(p + "avatar/change", "s", A::WriteOnly, std::string());
+
+        // When VRChat's OSC port is discovered, retarget our send socket to it.
+        // Until then sends fall back to the configured osc_send_port (9000).
+        osc_query_server_->SetVRChatPortDiscoveredCallback([](int port) {
+            OSCManager::GetInstance().SetSendPort(port);
+        });
+
+        if (osc_query_server_->Start(receive_port)) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("OSCQuery started, advertising receive port " + std::to_string(receive_port));
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("OSCQuery failed to start; falling back to fixed OSC ports");
+            }
+        }
+    }
+
+    void UIManager::StopOSCQuery() {
+        if (osc_query_server_) {
+            osc_query_server_->Stop();
+            osc_query_server_.reset();
+            if (Logger::IsInitialized()) {
+                Logger::Info("OSCQuery stopped");
+            }
+        }
+    }
+
     void UIManager::DisconnectOSC() {
         if (!osc_enabled_) {
             return;
         }
+
+        // Stop OSCQuery before tearing down the OSC sockets.
+        StopOSCQuery();
 
         OSCManager::GetInstance().Shutdown();
         osc_enabled_ = false;
@@ -2550,133 +3128,120 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderSettingsTab() {
-        ImGui::Text("Application Settings");
-        ImGui::Separator();
-        
         bool changed = false;
-        
-        // Configuration file management
-        ImGui::Text("Configuration Management");
-        ImGui::Separator();
-        
-        RenderConfigControls();
-        
-        // Logging configuration
-        ImGui::Text("Logging Settings");
-        ImGui::Separator();
-        
-        // Log level selection
-        const char* log_levels[] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" };
-        static int current_log_level = 0;
-        
-        // Find the current log level in the array
-        for (int i = 0; i < IM_ARRAYSIZE(log_levels); i++) {
-            if (config_.log_level == log_levels[i]) {
-                current_log_level = i;
-                break;
-            }
-        }
-        
-        ImGui::Text("Log Level:");
-        if (ImGui::Combo("##LogLevel", &current_log_level, log_levels, IM_ARRAYSIZE(log_levels))) {
-            config_.log_level = log_levels[current_log_level];
-            // Apply the new log level immediately
-            StayPutVR::Logger::SetLogLevel(StayPutVR::Logger::StringToLogLevel(config_.log_level));
-            Logger::Info("Log level changed to: " + config_.log_level);
+
+        // ---- First-class: UI font size ----
+        ImGui::Text("UI font size:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::SliderFloat("##FontScale", &config_.ui_font_scale, 0.70f, 1.60f, "%.2fx")) {
             changed = true;
         }
-        
         ImGui::SameLine();
-        ImGui::TextDisabled("(?)");
-        if (ImGui::IsItemHovered()) {
-            ImGui::BeginTooltip();
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
-            ImGui::TextUnformatted("DEBUG: Most verbose, shows all log messages\n"
-                                  "INFO: Shows informational messages and above\n"
-                                  "WARNING: Shows warnings and errors only (default)\n"
-                                  "ERROR: Shows only errors and critical messages\n"
-                                  "CRITICAL: Shows only the most severe issues");
-            ImGui::PopTextWrapPos();
-            ImGui::EndTooltip();
+        if (ImGui::SmallButton("Reset##font")) {
+            config_.ui_font_scale = 1.0f;
+            changed = true;
         }
-        
-        // Data folders
-        ImGui::Text("Data Folders");
-        ImGui::Separator();
-        
-        // Get data folders
-        std::string appDataPath = GetAppDataPath();
-        std::string logPath = appDataPath + "\\logs";
-        std::string configPath = appDataPath + "\\config";
-        std::string resourcesPath = appDataPath + "\\resources";
-        
-        // Display paths
-        ImGui::Text("Settings Path: %s", configPath.c_str());
-        ImGui::Text("Log Path: %s", logPath.c_str());
-        ImGui::Text("Resources Path: %s", resourcesPath.c_str());
-        
-        // Add buttons to open folders in Explorer
-        if (ImGui::Button("Open Settings Folder")) {
-            ShellExecuteA(NULL, "open", configPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
-        }
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Open Log Folder")) {
-            ShellExecuteA(NULL, "open", logPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
-        }
-        
-        ImGui::SameLine();
-        
-        if (ImGui::Button("Open Resources Folder")) {
-            ShellExecuteA(NULL, "open", resourcesPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
-        }
-        
-        // Audio files information
-        ImGui::Separator();
-        ImGui::Text("Audio Resources");
-        ImGui::TextWrapped("To use custom sounds, place your audio files in the Resources folder:");
-        ImGui::TextWrapped("- warning.wav - Played when device is in warning zone");
-        ImGui::TextWrapped("- disobedience.wav - Played when device exceeds bounds");
-        ImGui::TextWrapped("- success.wav - Played when device returns to safe zone");
-        ImGui::TextWrapped("- lock.wav - Played when devices are locked");
-        ImGui::TextWrapped("- unlock.wav - Played when devices are unlocked");
-        ImGui::TextWrapped("- countdown.wav - Played during countdown timer");
-        
-        ImGui::Separator();
-        
-        // Application settings
-        ImGui::Text("Application Settings");
-        ImGui::Separator();
-        
-        // Force save all current configuration settings
-        if (ImGui::Button("Save All Settings", ImVec2(150, 30))) {
-            SaveConfig();
-            ImGui::OpenPopup("SettingsSaved");
-        }
-        
-        if (ImGui::BeginPopupModal("SettingsSaved", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("All settings have been saved!");
-            if (ImGui::Button("OK", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
+
+        // ---- First-class: logging ----
+        {
+            const char* log_levels[] = { "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL" };
+            static int current_log_level = 0;
+            for (int i = 0; i < IM_ARRAYSIZE(log_levels); i++) {
+                if (config_.log_level == log_levels[i]) { current_log_level = i; break; }
             }
-            ImGui::EndPopup();
+            ImGui::Text("Log level:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(160);
+            if (ImGui::Combo("##LogLevel", &current_log_level, log_levels, IM_ARRAYSIZE(log_levels))) {
+                config_.log_level = log_levels[current_log_level];
+                StayPutVR::Logger::SetLogLevel(StayPutVR::Logger::StringToLogLevel(config_.log_level));
+                Logger::Info("Log level changed to: " + config_.log_level);
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("DEBUG: most verbose. INFO: informational and above. "
+                "WARNING: warnings + errors (default). ERROR: errors only. CRITICAL: most severe only.");
         }
-        
-        // About section
-        ImGui::Text("About StayPutVR");
-        ImGui::Separator();
-        
-        ImGui::Text("StayPutVR - Virtual Reality Position Locking");
-        ImGui::Text("Version: 1.3.2");
-        ImGui::Text("© 2026 Foxipso");
-        ImGui::Text("foxipso.com");
-        
-        if (ImGui::Button("Visit Website")) {
+
+        // ---- First-class: About ----
+        ImGui::Text("StayPutVR 1.4");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(c) 2026 Foxipso");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("foxipso.com")) {
+#ifdef _WIN32
             ShellExecuteA(NULL, "open", "https://foxipso.com", NULL, NULL, SW_SHOWDEFAULT);
+#else
+            (void)std::system("xdg-open 'https://foxipso.com' >/dev/null 2>&1 &");
+#endif
         }
-        
-        // Save changes if anything was modified
+
+        ImGui::Separator();
+
+        // ---- Sub-tabs ----
+        if (ImGui::BeginTabBar("SettingsSubTabs")) {
+            if (ImGui::BeginTabItem("OSC")) {
+                RenderOSCTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Timers")) {
+                RenderTimersTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Notifications")) {
+                RenderNotificationsTab();
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Folders")) {
+                if (ImGui::CollapsingHeader("Configuration Profiles")) {
+                    RenderConfigControls();
+                }
+                if (ImGui::CollapsingHeader("Data Folders", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    std::string appDataPath = GetAppDataPath();
+                    std::string logPath = appDataPath + "/logs";
+                    std::string configPath = appDataPath + "/config";
+                    std::string resourcesPath = appDataPath + "/resources";
+                    ImGui::Text("Settings Path: %s", configPath.c_str());
+                    ImGui::Text("Log Path: %s", logPath.c_str());
+                    ImGui::Text("Resources Path: %s", resourcesPath.c_str());
+                    if (ImGui::Button("Open Settings Folder")) {
+#ifdef _WIN32
+                        ShellExecuteA(NULL, "open", configPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+#else
+                        (void)std::system(("xdg-open '" + configPath + "' >/dev/null 2>&1 &").c_str());
+#endif
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Open Log Folder")) {
+#ifdef _WIN32
+                        ShellExecuteA(NULL, "open", logPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+#else
+                        (void)std::system(("xdg-open '" + logPath + "' >/dev/null 2>&1 &").c_str());
+#endif
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Open Resources Folder")) {
+#ifdef _WIN32
+                        ShellExecuteA(NULL, "open", resourcesPath.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+#else
+                        (void)std::system(("xdg-open '" + resourcesPath + "' >/dev/null 2>&1 &").c_str());
+#endif
+                    }
+                }
+                if (ImGui::CollapsingHeader("Audio Resources")) {
+                    ImGui::TextWrapped("To use custom sounds, place these in the Resources folder:");
+                    ImGui::BulletText("warning.wav - device in warning zone");
+                    ImGui::BulletText("disobedience.wav - device exceeds bounds");
+                    ImGui::BulletText("success.wav - device returns to safe zone");
+                    ImGui::BulletText("lock.wav / unlock.wav - on lock / unlock");
+                    ImGui::BulletText("countdown.wav - during countdown timer");
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+        }
+
         if (changed) {
             SaveConfig();
         }
@@ -2696,10 +3261,7 @@ namespace StayPutVR {
         }
         
         ImGui::PushID("ConfigSection");
-        
-        ImGui::Text("Configuration");
-        ImGui::Separator();
-        
+
         // Load configuration
         if (!config_files.empty()) {
             static int selected_config = -1;
@@ -3049,14 +3611,15 @@ namespace StayPutVR {
                 // Status column
                 ImGui::TableNextColumn();
                 
-                // Show movement indicator
-                float movement = 0.0f;
-                for (int i = 0; i < 3; i++) {
-                    movement += std::abs(device.position[i] - device.previous_position[i]);
-                }
-                
-                if (movement > 0.001f && !device.locked && !(device.include_in_locking && global_lock_active_)) {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[MOVING]");
+                // Movement heat meter — for identifying which physical tracker is
+                // which: wiggle it in SteamVR and its bar spikes red, then cools.
+                {
+                    float h = device.movement_heat;
+                    ImVec4 heat_col(0.25f + 0.75f * h, 0.30f, 0.95f * (1.0f - h), 1.0f); // blue (idle) -> red (hot)
+                    const char* lbl = (h > 0.5f) ? "MOVING" : (h > 0.12f) ? "moving" : "idle";
+                    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, heat_col);
+                    ImGui::ProgressBar(h, ImVec2(90, 0), lbl);
+                    ImGui::PopStyleColor();
                 }
                 
                 if (device.include_in_locking && global_lock_active_) {
@@ -3700,6 +4263,31 @@ namespace StayPutVR {
                     Logger::Info("Bite triggered via OSC");
                 }
                 TriggerBiteActions();
+            }
+        );
+
+        OSCManager::GetInstance().SetAvatarChangeCallback(
+            [this]() {
+                HandleAvatarChange();
+            }
+        );
+
+        OSCManager::GetInstance().SetShockCallback(
+            [this](bool triggered) {
+                bool enabled; float intensity, duration;
+                {
+                    auto cfg_lock = config_.ReadLock();
+                    enabled = config_.osc_shock_enabled;
+                    intensity = config_.osc_shock_intensity;
+                    duration = config_.osc_shock_duration;
+                }
+                if (!enabled) {
+                    return;
+                }
+                if (Logger::IsInitialized()) {
+                    Logger::Info("Shock param triggered via OSC");
+                }
+                TriggerExternalShock(intensity, duration, "Shock param");
             }
         );
         
@@ -4586,6 +5174,14 @@ namespace StayPutVR {
     }
 
     void UIManager::TriggerBiteActions() {
+        // Issue #7: no shocking while emergency stop is active.
+        if (emergency_stop_active_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("Bite trigger ignored - emergency stop is active");
+            }
+            return;
+        }
+
         if (Logger::IsInitialized()) {
             Logger::Info("Triggering bite disobedience actions with " + std::to_string(BITE_DURATION) + "s timer");
         }
@@ -4609,19 +5205,15 @@ namespace StayPutVR {
             }
         }
         
-        // Trigger PiShock disobedience actions if enabled
-        if (Logger::IsInitialized()) {
-            Logger::Info("Triggering PiShock disobedience actions for bite");
+        // Fire a direct shock on all configured shockers at the bite intensity/
+        // duration (issue #7). Replaces the old beep+vibrate+shock disobedience.
+        float bite_intensity, bite_duration;
+        {
+            auto cfg_lock = config_.ReadLock();
+            bite_intensity = config_.osc_bite_intensity;
+            bite_duration = config_.osc_bite_duration;
         }
-        TriggerPiShockDisobedience("BITE");
-        
-        // Trigger OpenShock disobedience actions if enabled
-        if (openshock_manager_ && openshock_manager_->IsEnabled()) {
-            if (Logger::IsInitialized()) {
-                Logger::Info("Triggering OpenShock disobedience actions for bite");
-            }
-            openshock_manager_->TriggerDisobedienceActions("BITE");
-        }
+        TriggerExternalShock(bite_intensity, bite_duration, "Bite");
         
         // Update all device statuses to show out-of-bounds
         for (auto& device : device_positions_) {
@@ -4640,11 +5232,79 @@ namespace StayPutVR {
         if (!emergency_stop_active_) {
             return;
         }
-        
+
         emergency_stop_active_ = false;
-        
+
         if (Logger::IsInitialized()) {
             Logger::Info("Emergency stop mode reset - normal operation resumed");
+        }
+    }
+
+    void UIManager::HandleAvatarChange() {
+        // Issue #6: switching avatars should unlock and reset everything so a
+        // stale locked/shocked status doesn't carry over to the new avatar.
+        //
+        // NOTE: we deliberately do NOT clear emergency stop here. VRChat sends
+        // /avatar/change on every avatar load/reload (incl. world joins), so
+        // clearing the EStop safety latch on this event would silently re-enable
+        // shocks without the user's intent. EStop stays latched until the user
+        // explicitly resets it. (Devices are already unlocked while EStop is active.)
+        if (Logger::IsInitialized()) {
+            Logger::Info("Avatar changed (/avatar/change) - unlocking and resetting all devices");
+        }
+
+        // Release the global lock and any individually-locked devices.
+        ActivateGlobalLock(false);
+        for (auto& device : device_positions_) {
+            if (device.locked) {
+                LockDevicePosition(device.serial, false);
+            }
+        }
+
+        // Reset every status param to Unlocked so none retain a stale
+        // locked/shocked value (covers param slots even if a device isn't
+        // currently tracked, e.g. on the headless/dev build).
+        const OSCDeviceType allDevices[] = {
+            OSCDeviceType::HMD, OSCDeviceType::ControllerLeft, OSCDeviceType::ControllerRight,
+            OSCDeviceType::FootLeft, OSCDeviceType::FootRight, OSCDeviceType::Hip
+        };
+        for (OSCDeviceType d : allDevices) {
+            OSCManager::GetInstance().SendDeviceStatus(d, DeviceStatus::Unlocked);
+        }
+    }
+
+    void UIManager::TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason) {
+        // Issue #7: bite and the Shock param fire a direct shock on all shockers,
+        // never while emergency stop is active.
+        if (emergency_stop_active_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning(reason + " shock ignored - emergency stop is active");
+            }
+            return;
+        }
+
+        // Read the mode under a brief lock, then release before calling the
+        // managers (which take their own ReadLock) to avoid nested shared locks.
+        Config::PiShockMode mode;
+        {
+            auto cfg_lock = config_.ReadLock();
+            mode = config_.pishock_mode;
+        }
+
+        // PiShock (legacy or WebSocket v2, per the configured mode).
+        if (mode == Config::PiShockMode::LEGACY_API) {
+            if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+                pishock_manager_->TriggerShock(intensity, duration_seconds, reason);
+            }
+        } else {
+            if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
+                pishock_ws_manager_->TriggerShock(intensity, duration_seconds, reason);
+            }
+        }
+
+        // OpenShock.
+        if (openshock_manager_ && openshock_manager_->IsEnabled()) {
+            openshock_manager_->TriggerShock(intensity, duration_seconds, reason);
         }
     }
 

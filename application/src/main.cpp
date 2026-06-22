@@ -10,7 +10,7 @@
 #include "resource.h"
 #endif
 #include "../../common/OSCManager.hpp"
-#include "UI/UIManager.hpp"
+#include "ui/UIManager.hpp"
 #include "../../common/Logger.hpp"
 #include "../../common/PathUtils.hpp"
 #include "../../common/Audio.hpp"
@@ -19,12 +19,24 @@
 
 std::atomic<bool> g_running = true;
 
+static int RunStayPutVR();
+
+#ifdef _WIN32
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+    return RunStayPutVR();
+}
+#else
+int main(int /*argc*/, char** /*argv*/) {
+    return RunStayPutVR();
+}
+#endif
+
+static int RunStayPutVR() {
     try {
         std::string appDataPath = StayPutVR::GetAppDataPath();
-        std::string logPath = appDataPath + "\\logs";
-        std::string configPath = appDataPath + "\\config";
-        std::string resourcesPath = appDataPath + "\\resources";
+        std::string logPath = appDataPath + "/logs";
+        std::string configPath = appDataPath + "/config";
+        std::string resourcesPath = appDataPath + "/resources";
         
         // Create all required directories if they don't exist
         try {

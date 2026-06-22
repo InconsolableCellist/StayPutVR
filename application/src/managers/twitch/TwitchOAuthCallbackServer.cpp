@@ -1,8 +1,12 @@
 #include "TwitchOAuthCallbackServer.hpp"
 #include "../../../../common/Logger.hpp"
 
+#ifdef _WIN32
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#else
+#include "../../../../common/WinsockCompat.hpp"
+#endif
 #include <chrono>
 
 namespace StayPutVR {
