@@ -41,6 +41,7 @@
 #include "panels/PiShockPanel.hpp"
 #include "panels/OpenShockPanel.hpp"
 #include "panels/ButtplugPanel.hpp"
+#include "SplashScreen.hpp"
 
 namespace StayPutVR {
 
@@ -165,6 +166,14 @@ namespace StayPutVR {
         // receive port to VRChat and discovers VRChat's OSC port for sends.
         std::unique_ptr<OSCQueryServer> osc_query_server_;
 
+        // Startup splash / Welcome+About overlay and the What's New window.
+        std::unique_ptr<SplashScreen> splash_;
+        std::string assets_path_;            // resources dir (logo, whats_new.md, supporters)
+        bool show_whats_new_ = false;
+        bool whats_new_loaded_ = false;      // lazy-load whats_new.md once
+        bool whats_new_checked_ = false;     // auto-show evaluated once per launch
+        std::string whats_new_text_;
+
         // Devices > Visual assignment view state.
         unsigned int effigy_tex_ = 0;        // GL texture id (0 = none/not loaded)
         int effigy_tex_w_ = 0, effigy_tex_h_ = 0;
@@ -197,6 +206,11 @@ namespace StayPutVR {
         void RenderIntegrationsTab();
         // OSC Triggers sub-tab: bite/shock enable + intensity/duration (paths live in Settings > OSC).
         void RenderOSCTriggersTab();
+
+        // Startup splash + What's New overlays (see SplashScreen / UIManager_WhatsNew.cpp).
+        void OpenWhatsNew();
+        void RenderWhatsNew();
+        void RenderSplashOverlay(); // draws splash + What's New on top of the main window
         
         // Apply the custom ImGui style/theme (rounded frames, soft-blue palette).
         void ApplyTheme();

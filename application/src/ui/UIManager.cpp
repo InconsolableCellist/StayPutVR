@@ -181,7 +181,23 @@ namespace StayPutVR {
         
         // Load configuration
         LoadConfig();
-        
+
+        // Resolve the resources directory (logo, whats_new.md, supporters json),
+        // mirroring the font/effigy lookup: AppData first, dev build dir fallback.
+        assets_path_ = GetAppDataPath() + "/resources";
+        if (!std::filesystem::exists(assets_path_ + "/logo.png") &&
+            std::filesystem::exists("./resources/logo.png")) {
+            assets_path_ = "./resources";
+        }
+
+        // Startup splash / Welcome overlay. Shows on every launch; auto-close
+        // is opt-in and persisted in config.
+        splash_ = std::make_unique<SplashScreen>();
+        splash_->SetAssetsPath(assets_path_);
+        splash_->LoadLogo();
+        splash_->LoadSupporters();
+        splash_->SetAutoClose(config_.splash_auto_close);
+
         // Automatically connect to OSC if it was previously enabled
         if (config_.osc_enabled) {
             if (Logger::IsInitialized()) {
@@ -545,8 +561,11 @@ namespace StayPutVR {
                 RenderSettingsTab();
                 break;
         }
-        
+
         ImGui::End();
+
+        // Splash + What's New overlays draw on top of the main window.
+        RenderSplashOverlay();
     }
     
 

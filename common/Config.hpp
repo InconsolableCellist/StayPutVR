@@ -48,6 +48,10 @@ public:
     std::string log_level;
     float ui_font_scale = 1.0f; // UI font size multiplier (Settings > Display)
 
+    // Splash / What's New (see SplashScreen + UIManager_WhatsNew).
+    bool splash_auto_close = false;          // auto-dismiss the startup splash after a brief delay
+    std::string whats_new_seen_version = ""; // last app version whose What's New the user dismissed
+
     // OSC Settings
     bool osc_enabled = false;
     std::string osc_address = "127.0.0.1";

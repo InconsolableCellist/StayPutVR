@@ -442,7 +442,9 @@ bool Config::LoadFromFile(const std::string& filename) {
         // Load logging settings
         log_level = j.value("log_level", "WARNING");
         ui_font_scale = j.value("ui_font_scale", 1.0f);
-        
+        splash_auto_close = j.value("splash_auto_close", false);
+        whats_new_seen_version = j.value("whats_new_seen_version", std::string(""));
+
         // Load boundary settings
         warning_threshold = j.value("warning_threshold", 0.1f);
         bounds_threshold = j.value("bounds_threshold", 0.2f);
@@ -838,7 +840,9 @@ bool Config::SaveToFile(const std::string& filename) const {
         // Logging settings
         j["log_level"] = log_level;
         j["ui_font_scale"] = ui_font_scale;
-        
+        j["splash_auto_close"] = splash_auto_close;
+        j["whats_new_seen_version"] = whats_new_seen_version;
+
         // Boundary settings
         j["warning_threshold"] = warning_threshold;
         j["bounds_threshold"] = bounds_threshold;

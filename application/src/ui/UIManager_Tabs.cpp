@@ -41,7 +41,24 @@ namespace StayPutVR {
     void UIManager::RenderMainTab() {
         ImGui::Text("StayPutVR Status");
         ImGui::Separator();
-        
+
+        // Splash / What's New recall + auto-close preference.
+        if (ImGui::SmallButton("Welcome / About")) {
+            if (splash_) splash_->Reshow();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("What's New")) {
+            OpenWhatsNew();
+        }
+        ImGui::SameLine();
+        bool auto_close = config_.splash_auto_close;
+        if (ImGui::Checkbox("Auto-close splash", &auto_close)) {
+            config_.splash_auto_close = auto_close;
+            if (splash_) splash_->SetAutoClose(auto_close);
+            SaveConfig();
+        }
+        ImGui::Separator();
+
         // Connection status panel at the top. Auto-resize height so the
         // not-connected content (message + retry button) always shows in full
         // instead of scrolling inside a fixed 60px box.
