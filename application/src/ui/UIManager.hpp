@@ -192,6 +192,10 @@ namespace StayPutVR {
         
         // Tab content rendering methods
         void RenderMainTab();
+        // Connection Status section on the Status tab: one row per enabled
+        // communication integration (OSC, PiShock, OpenShock, Twitch) showing
+        // live link state, detail, last error, and a manual reconnect button.
+        void RenderConnectionStatusPanel();
         void RenderDevicesTab();
         void RenderBoundariesTab();
         void RenderNotificationsTab();

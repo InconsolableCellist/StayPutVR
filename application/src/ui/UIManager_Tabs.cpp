@@ -19,8 +19,12 @@
 #endif
 #include <thread> // For std::this_thread::sleep_for
 #include "../../../common/OSCManager.hpp"
+#include "../../../common/OSCQueryServer.hpp"
+#include "../../../common/LinkStatus.hpp"
 #include "../../common/HttpClient.hpp"
 #include "../../../common/Version.hpp"
+// TwitchManager / PiShock* / OpenShock manager headers come transitively via
+// UIManager.hpp; LinkStatus.hpp (above) is the only one not already included.
 
 // Windows-specific includes for icon handling
 #ifdef _WIN32
@@ -38,6 +42,126 @@ using json = nlohmann::json;
 extern std::atomic<bool> g_running;
 
 namespace StayPutVR {
+
+    namespace {
+        // Color for a link state: green=Connected, yellow=Connecting,
+        // orange=Degraded, red=Failed, gray=Disabled.
+        ImVec4 LinkStateColor(LinkState state) {
+            switch (state) {
+                case LinkState::Connected:  return ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+                case LinkState::Connecting: return ImVec4(1.0f, 1.0f, 0.0f, 1.0f);
+                case LinkState::Degraded:   return ImVec4(1.0f, 0.6f, 0.0f, 1.0f);
+                case LinkState::Failed:     return ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+                case LinkState::Disabled:   return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            }
+            return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+        }
+
+        // Render one integration row: "● Name  state — detail" with the error
+        // (if any) on the following dim line.
+        void RenderLinkRow(const char* name, const LinkStatus& status) {
+            ImVec4 color = LinkStateColor(status.state);
+            ImGui::TextColored(color, "%s", "\xE2\x97\x8F"); // bullet dot (U+25CF)
+            ImGui::SameLine();
+            ImGui::Text("%-12s", name);
+            ImGui::SameLine();
+            if (status.detail.empty()) {
+                ImGui::TextColored(color, "%s", ToString(status.state));
+            } else {
+                ImGui::TextColored(color, "%s  -  %s", ToString(status.state), status.detail.c_str());
+            }
+            if (!status.last_error.empty()) {
+                ImGui::Indent(20.0f);
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Error: %s", status.last_error.c_str());
+                ImGui::Unindent(20.0f);
+            }
+        }
+    } // namespace
+
+    void UIManager::RenderConnectionStatusPanel() {
+        ImGui::BeginChild("ConnectionStatusPanel", ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        ImGui::SeparatorText("Connection Status");
+
+        // --- OSC (manual + OSCQuery discovery) ---
+        {
+            LinkStatus s;
+            if (!osc_enabled_) {
+                s.state = LinkState::Disabled;
+                s.detail = "OSC off";
+            } else if (config_.osc_query_enabled && osc_query_server_) {
+                if (!osc_query_server_->IsRunning()) {
+                    s.state = LinkState::Failed;
+                    s.detail = "OSCQuery server not running";
+                } else if (!osc_query_server_->IsAdvertising()) {
+                    s.state = LinkState::Degraded;
+                    s.detail = "mDNS unavailable (UDP 5353 in use) - VRChat may not discover us";
+                } else if (!osc_query_server_->IsVRChatConnected()) {
+                    s.state = LinkState::Connecting;
+                    s.detail = "advertising; discovering VRChat...";
+                } else {
+                    s.state = LinkState::Connected;
+                    auto port = osc_query_server_->GetVRChatOSCPort();
+                    s.detail = port ? ("VRChat OSC port " + std::to_string(*port)) : "VRChat discovered";
+                }
+            } else {
+                // Manual mode: UDP is connectionless, so the best we can say for
+                // now is that we are listening. Liveness tracking is added later.
+                s.state = LinkState::Connected;
+                s.detail = "listening (manual UDP)";
+            }
+            RenderLinkRow("OSC", s);
+        }
+
+        // --- PiShock (WebSocket v2 or Legacy HTTP, per config) ---
+        if (config_.pishock_enabled) {
+            LinkStatus s;
+            if (config_.pishock_mode == Config::PiShockMode::WEBSOCKET_V2 && pishock_ws_manager_) {
+                if (pishock_ws_manager_->IsConnected()) {
+                    s.state = LinkState::Connected;
+                    s.detail = pishock_ws_manager_->GetConnectionStatus();
+                } else {
+                    s.state = LinkState::Failed;
+                    s.detail = pishock_ws_manager_->GetConnectionStatus();
+                    s.last_error = pishock_ws_manager_->GetLastError();
+                }
+                RenderLinkRow("PiShock (WS)", s);
+            } else if (pishock_manager_) {
+                // Legacy is stateless HTTP: no live link, status reflects config.
+                std::string cs = pishock_manager_->GetConnectionStatus();
+                s.state = (cs == "Ready") ? LinkState::Connected : LinkState::Disabled;
+                s.detail = (cs == "Ready") ? "configured (HTTP, status updates on send)" : cs;
+                s.last_error = pishock_manager_->GetLastError();
+                RenderLinkRow("PiShock", s);
+            }
+        }
+
+        // --- OpenShock (stateless HTTP) ---
+        if (config_.openshock_enabled && openshock_manager_) {
+            LinkStatus s;
+            std::string cs = openshock_manager_->GetConnectionStatus();
+            s.state = (cs == "Ready") ? LinkState::Connected : LinkState::Disabled;
+            s.detail = (cs == "Ready") ? "configured (HTTP, status updates on send)" : cs;
+            s.last_error = openshock_manager_->GetLastError();
+            RenderLinkRow("OpenShock", s);
+        }
+
+        // --- Twitch (IRC chat + EventSub) ---
+        if (config_.twitch_enabled && twitch_manager_) {
+            LinkStatus s;
+            if (twitch_manager_->IsConnected()) {
+                s.state = LinkState::Connected;
+                s.detail = twitch_manager_->GetConnectionStatus();
+            } else {
+                s.state = LinkState::Failed;
+                s.detail = twitch_manager_->GetConnectionStatus();
+                s.last_error = twitch_manager_->GetLastError();
+            }
+            RenderLinkRow("Twitch", s);
+        }
+
+        ImGui::EndChild();
+    }
 
     void UIManager::RenderMainTab() {
         ImGui::Text("StayPutVR Status");
@@ -127,6 +251,9 @@ namespace StayPutVR {
         ImGuiHelpers::HelpTooltip("Fire a shock from avatar parameters. Tune intensity/duration in "
             "Integrations > OSC Triggers; change parameter paths in Settings > OSC.");
         ImGui::EndChild();
+
+        // Communication health for every enabled integration.
+        RenderConnectionStatusPanel();
 
         // Emergency Stop Status Panel
         if (emergency_stop_active_) {
