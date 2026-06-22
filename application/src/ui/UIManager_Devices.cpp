@@ -1076,15 +1076,18 @@ namespace StayPutVR {
         LoadEffigyTexture();
 
         struct Slot { DeviceRole role; const char* label; float ux, uy; };
-        // Slot positions normalized to the effigy image (front-facing; viewer-left
+        // Slot positions normalized to the effigy image (back-facing; viewer-left
         // = "Left" so the user's left tracker maps to the left of the screen).
+        // Derived from pixel coords on the 630x1261 effigy.png:
+        //   neck 290,240  CL 88,595  CR 482,606  FL 200,990  FR 346,999
+        // Hip is intentionally omitted: it's unused and not exposed in the Unity
+        // prefab. The role stays assignable via the device dropdown.
         static const Slot kSlots[] = {
-            { DeviceRole::HMD,             "Collar/HMD", 0.49f, 0.27f },
-            { DeviceRole::LeftController,  "L Hand",     0.16f, 0.56f },
-            { DeviceRole::RightController, "R Hand",     0.84f, 0.56f },
-            { DeviceRole::Hip,             "Hip",        0.49f, 0.52f },
-            { DeviceRole::LeftFoot,        "L Foot",     0.38f, 0.94f },
-            { DeviceRole::RightFoot,       "R Foot",     0.63f, 0.94f },
+            { DeviceRole::HMD,             "Collar/HMD", 0.460f, 0.190f },
+            { DeviceRole::LeftController,  "L Hand",     0.140f, 0.472f },
+            { DeviceRole::RightController, "R Hand",     0.765f, 0.481f },
+            { DeviceRole::LeftFoot,        "L Foot",     0.317f, 0.785f },
+            { DeviceRole::RightFoot,       "R Foot",     0.549f, 0.792f },
         };
 
         const float effigyH = 380.0f;
@@ -1096,7 +1099,7 @@ namespace StayPutVR {
         {
             ImVec2 box = ImGui::GetContentRegionAvail();
             float imgH = box.y - 4.0f;
-            float aspect = (effigy_tex_h_ > 0) ? (float)effigy_tex_w_ / (float)effigy_tex_h_ : 0.56f;
+            float aspect = (effigy_tex_h_ > 0) ? (float)effigy_tex_w_ / (float)effigy_tex_h_ : 0.50f;
             float imgW = imgH * aspect;
             ImVec2 origin = ImGui::GetCursorScreenPos();
             float xpad = (box.x - imgW) * 0.5f; if (xpad < 0.0f) xpad = 0.0f;
@@ -1283,15 +1286,7 @@ namespace StayPutVR {
         ImGui::Separator();
 
         if (ImGui::BeginTabBar("DevicesSubTabs")) {
-            // Classic: the existing per-device table (kept as the reliable fallback).
-            if (ImGui::BeginTabItem("Classic")) {
-                RenderDeviceList();
-                ImGui::EndTabItem();
-            }
-
-            // Visual: the new avatar-effigy assignment view (work in progress).
-            // Phase 1 shows the scaled zone map; effigy + drag-drop + heat meter
-            // land in later phases.
+            // Visual: the avatar-effigy assignment view; shown first as the default.
             if (ImGui::BeginTabItem("Visual")) {
                 RenderVisualAssignment();
                 ImGui::Spacing();
@@ -1300,6 +1295,12 @@ namespace StayPutVR {
                 ImGui::BeginChild("VisualZoneMap", ImVec2(0, 300), true);
                 RenderZoneMap();
                 ImGui::EndChild();
+                ImGui::EndTabItem();
+            }
+
+            // Classic: the existing per-device table (kept as the reliable fallback).
+            if (ImGui::BeginTabItem("Classic")) {
+                RenderDeviceList();
                 ImGui::EndTabItem();
             }
 
