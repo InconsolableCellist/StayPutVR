@@ -12,6 +12,7 @@
 #include "../../../common/WebSocketClient.hpp"
 #include "../../../common/HttpClient.hpp"
 #include "../../../common/AsyncWorkQueue.hpp"
+#include "../../../common/LinkStatus.hpp"
 #include <nlohmann/json.hpp>
 
 namespace StayPutVR {
@@ -47,6 +48,12 @@ namespace StayPutVR {
         bool Connect();
         void Disconnect();
         bool IsConnected() const;
+
+        // Clear the reconnect backoff / give-up state and re-arm auto-reconnect
+        // so Update() resumes attempts immediately. Wired to the Status tab
+        // "Reconnect now" button.
+        void RequestReconnect() { want_connected_ = true; connect_backoff_.Resume(); }
+        bool ReconnectGaveUp() const { return connect_backoff_.GaveUp(); }
         
         // Configuration validation
         bool ValidateConfiguration() const;
@@ -89,6 +96,13 @@ namespace StayPutVR {
         std::atomic<bool> enabled_;
         std::atomic<bool> user_agreement_;
         std::atomic<bool> connected_;
+
+        // Auto-reconnect: want_connected_ records that the user asked to be
+        // connected (set by Connect(), cleared by Disconnect()), so Update()
+        // only retries a link that should be up. connect_backoff_ governs the
+        // retry cadence; both are only touched from the main/UI thread.
+        std::atomic<bool> want_connected_{false};
+        ReconnectBackoff connect_backoff_;
         
         // Rate limiting
         mutable std::chrono::steady_clock::time_point last_action_time_;

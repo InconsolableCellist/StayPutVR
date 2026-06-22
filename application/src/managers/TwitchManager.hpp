@@ -11,6 +11,7 @@
 #include "../../../common/Config.hpp"
 #include "../../../common/Logger.hpp"
 #include "../../../common/HttpClient.hpp"
+#include "../../../common/LinkStatus.hpp"
 #include "twitch/TwitchOAuthCallbackServer.hpp"
 
 namespace StayPutVR {
@@ -51,6 +52,11 @@ namespace StayPutVR {
         void DisconnectFromTwitch();
         bool IsConnected() const { return connected_; }
         bool ConnectToChatDelayed();
+
+        // Clear the chat reconnect backoff / give-up state so Update() resumes
+        // attempts immediately. Wired to the Status tab "Reconnect now" button.
+        void RequestChatReconnect() { chat_backoff_.Resume(); }
+        bool ChatReconnectGaveUp() const { return chat_backoff_.GaveUp(); }
         
         // OAuth authentication
         std::string GenerateOAuthURL();
@@ -100,6 +106,11 @@ namespace StayPutVR {
         std::atomic<bool> connected_;
         std::atomic<bool> chat_connected_;
         std::atomic<bool> eventsub_connected_;
+
+        // Backoff governing chat reconnect attempts in Update(). Only touched
+        // from the main/UI thread (Update + the Status tab button), so it needs
+        // no extra locking.
+        ReconnectBackoff chat_backoff_;
         
         // Authentication tokens — guarded by token_mutex_. Written on the main
         // thread (OAuth callback, Update/RefreshAccessToken) and read from the

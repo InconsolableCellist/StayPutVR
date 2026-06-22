@@ -57,9 +57,10 @@ namespace StayPutVR {
             return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
         }
 
-        // Render one integration row: "● Name  state — detail" with the error
-        // (if any) on the following dim line.
-        void RenderLinkRow(const char* name, const LinkStatus& status) {
+        // Render one integration row: "● Name  state — detail  [Reconnect]" with
+        // the error (if any) on the following dim line. When show_reconnect is
+        // set, a trailing button is drawn; returns true the frame it is clicked.
+        bool RenderLinkRow(const char* name, const LinkStatus& status, bool show_reconnect = false) {
             ImVec4 color = LinkStateColor(status.state);
             ImGui::TextColored(color, "%s", "\xE2\x97\x8F"); // bullet dot (U+25CF)
             ImGui::SameLine();
@@ -70,11 +71,19 @@ namespace StayPutVR {
             } else {
                 ImGui::TextColored(color, "%s  -  %s", ToString(status.state), status.detail.c_str());
             }
+            bool clicked = false;
+            if (show_reconnect) {
+                ImGui::SameLine();
+                ImGui::PushID(name);
+                clicked = ImGui::SmallButton("Reconnect");
+                ImGui::PopID();
+            }
             if (!status.last_error.empty()) {
                 ImGui::Indent(20.0f);
                 ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Error: %s", status.last_error.c_str());
                 ImGui::Unindent(20.0f);
             }
+            return clicked;
         }
     } // namespace
 
@@ -120,12 +129,20 @@ namespace StayPutVR {
                 if (pishock_ws_manager_->IsConnected()) {
                     s.state = LinkState::Connected;
                     s.detail = pishock_ws_manager_->GetConnectionStatus();
+                    RenderLinkRow("PiShock (WS)", s);
                 } else {
                     s.state = LinkState::Failed;
                     s.detail = pishock_ws_manager_->GetConnectionStatus();
+                    if (pishock_ws_manager_->ReconnectGaveUp()) {
+                        s.detail += " (gave up - click Reconnect)";
+                    } else {
+                        s.detail += " (auto-reconnecting...)";
+                    }
                     s.last_error = pishock_ws_manager_->GetLastError();
+                    if (RenderLinkRow("PiShock (WS)", s, /*show_reconnect=*/true)) {
+                        pishock_ws_manager_->RequestReconnect();
+                    }
                 }
-                RenderLinkRow("PiShock (WS)", s);
             } else if (pishock_manager_) {
                 // Legacy is stateless HTTP: no live link, status reflects config.
                 std::string cs = pishock_manager_->GetConnectionStatus();
@@ -152,12 +169,18 @@ namespace StayPutVR {
             if (twitch_manager_->IsConnected()) {
                 s.state = LinkState::Connected;
                 s.detail = twitch_manager_->GetConnectionStatus();
+                RenderLinkRow("Twitch", s);
             } else {
                 s.state = LinkState::Failed;
                 s.detail = twitch_manager_->GetConnectionStatus();
                 s.last_error = twitch_manager_->GetLastError();
+                // Reconnect re-runs the full Twitch connect (token validate +
+                // chat), and clears any chat-reconnect give-up state.
+                if (RenderLinkRow("Twitch", s, /*show_reconnect=*/true)) {
+                    twitch_manager_->RequestChatReconnect();
+                    twitch_manager_->ConnectToTwitch();
+                }
             }
-            RenderLinkRow("Twitch", s);
         }
 
         ImGui::EndChild();

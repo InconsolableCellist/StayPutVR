@@ -58,18 +58,37 @@ namespace StayPutVR {
 
     void PiShockWebSocketManager::Update() {
         if (!ws_client_) return;
-        
-        // Process WebSocket messages
+
+        // Process WebSocket messages (may fire connect/disconnect callbacks)
         ws_client_->Update();
-        
-        // Send periodic ping if connected
-        if (connected_) {
+
+        if (IsConnected()) {
+            // Healthy: clear backoff and send periodic keepalive pings.
+            connect_backoff_.OnSuccess();
+
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_ping_time_);
-            
             if (elapsed.count() >= PING_INTERVAL_SECONDS) {
                 SendPing();
                 last_ping_time_ = now;
+            }
+        } else if (want_connected_ && IsFullyConfigured()) {
+            // We were connected (or the user asked to connect) but the link is
+            // down. Retry with capped exponential backoff, then give up until a
+            // manual reconnect. connected_ flips true asynchronously via the
+            // OnWebSocketConnected callback, so the provisional failure recorded
+            // here is cleared by OnSuccess() above once the link comes up.
+            auto now = std::chrono::steady_clock::now();
+            if (connect_backoff_.ShouldAttempt(now)) {
+                Logger::Info("Auto-reconnecting PiShock WebSocket (" +
+                             std::to_string(connect_backoff_.Failures()) + " prior failures)");
+                Connect();
+                connect_backoff_.OnAttempt(std::chrono::steady_clock::now());
+                connect_backoff_.OnFailure();
+                if (connect_backoff_.GaveUp()) {
+                    Logger::Warning("Giving up PiShock WebSocket reconnect after repeated failures; "
+                                    "use Reconnect on the Status tab to retry.");
+                }
             }
         }
     }
@@ -79,6 +98,10 @@ namespace StayPutVR {
             SetError("Invalid configuration - cannot connect");
             return false;
         }
+
+        // Record the intent to be connected so Update() will auto-reconnect if
+        // the link later drops. Cleared by an explicit Disconnect().
+        want_connected_ = true;
 
         if (connected_) {
             Logger::Info("Already connected to PiShock WebSocket");
@@ -112,6 +135,10 @@ namespace StayPutVR {
     }
 
     void PiShockWebSocketManager::Disconnect() {
+        // User-initiated disconnect: drop the auto-reconnect intent and reset
+        // backoff so a later Connect() starts clean.
+        want_connected_ = false;
+        connect_backoff_.Resume();
         if (ws_client_ && connected_) {
             Logger::Info("Disconnecting from PiShock WebSocket");
             ws_client_->Disconnect();

@@ -90,20 +90,34 @@ namespace StayPutVR {
             ConnectToChatDelayed();
         }
 
-        // If we have a valid token but chat isn't connected, try to connect
+        // If we have a valid token but chat isn't connected, retry with
+        // exponential backoff (capped), then give up until a manual reconnect.
         if (connected_ && IsTokenValid() && !chat_connected_ && config_->twitch_chat_enabled) {
-            static auto last_chat_attempt = std::chrono::steady_clock::now();
             auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_chat_attempt).count();
-            
-            // Try to connect to chat every 30 seconds if it's not connected
-            if (elapsed >= 30) {
+            if (chat_backoff_.ShouldAttempt(now)) {
                 if (Logger::IsInitialized()) {
-                    Logger::Info("Attempting periodic chat connection with valid token");
+                    Logger::Info("Attempting Twitch chat reconnect (" +
+                                 std::to_string(chat_backoff_.Failures()) + " prior failures)");
                 }
-                ConnectToChatDelayed();
-                last_chat_attempt = now;
+                // ConnectToChatDelayed() blocks up to ~5s while the worker
+                // establishes the IRC connection, so schedule the next slot
+                // relative to when the attempt finishes (not when it started)
+                // to avoid back-to-back UI stalls.
+                bool ok = ConnectToChatDelayed();
+                chat_backoff_.OnAttempt(std::chrono::steady_clock::now());
+                if (ok) {
+                    chat_backoff_.OnSuccess();
+                } else {
+                    chat_backoff_.OnFailure();
+                    if (chat_backoff_.GaveUp() && Logger::IsInitialized()) {
+                        Logger::Warning("Giving up Twitch chat reconnect after repeated failures; "
+                                        "use Reconnect on the Status tab to retry.");
+                    }
+                }
             }
+        } else if (chat_connected_) {
+            // Healthy: clear accumulated backoff so the next drop retries promptly.
+            chat_backoff_.OnSuccess();
         }
 
         // Process any pending events or maintenance tasks
@@ -226,6 +240,9 @@ namespace StayPutVR {
         ClearTokens();
 
         connected_ = false;
+
+        // Reset reconnect backoff so a later user-initiated connect starts clean.
+        chat_backoff_.Resume();
 
         if (Logger::IsInitialized()) {
             Logger::Info("Disconnected from Twitch");
@@ -1124,6 +1141,23 @@ namespace StayPutVR {
                     if (Logger::IsInitialized()) {
                         Logger::Info("Processing IRC message #" + std::to_string(message_count) + ": " + message);
                     }
+
+                    // Reply to server keep-alive PINGs immediately. Twitch drops
+                    // the connection if the client doesn't PONG within its ping
+                    // timeout, so this must happen here in the worker loop where
+                    // the socket is in scope (ProcessIRCMessage has no socket).
+                    if (message.find("PING") == 0) {
+                        size_t colonPos = message.find(':');
+                        std::string token = (colonPos != std::string::npos)
+                            ? message.substr(colonPos) : std::string(":tmi.twitch.tv");
+                        std::string pongMsg = "PONG " + token + "\r\n";
+                        send(ircSocket, pongMsg.c_str(), static_cast<int>(pongMsg.size()), 0);
+                        if (Logger::IsInitialized()) {
+                            Logger::Debug("Sent PONG keepalive: " + pongMsg.substr(0, pongMsg.size() - 2));
+                        }
+                        continue;
+                    }
+
                     ProcessIRCMessage(message);
                 }
             }
@@ -1149,17 +1183,9 @@ namespace StayPutVR {
             Logger::Debug("ProcessIRCMessage: " + irc_message);
         }
 
-        // Handle PING messages (keep-alive)
+        // Keep-alive PINGs are answered in the ChatWorker read loop (which holds
+        // the socket); nothing to do here beyond ignoring them.
         if (irc_message.find("PING") == 0) {
-            // Extract the ping token and send PONG
-            size_t colonPos = irc_message.find(':');
-            if (colonPos != std::string::npos) {
-                std::string pongMsg = "PONG " + irc_message.substr(colonPos) + "\r\n";
-                // Send PONG back (would need socket reference, for now just log)
-                if (Logger::IsInitialized()) {
-                    Logger::Info("Sending PONG response");
-                }
-            }
             return;
         }
 
