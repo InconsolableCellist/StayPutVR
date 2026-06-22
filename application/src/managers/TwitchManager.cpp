@@ -440,11 +440,11 @@ namespace StayPutVR {
 
         if (success) {
             if (Logger::IsInitialized()) {
-                Logger::Info("✅ Chat message sent successfully");
+                Logger::Info("Chat message sent successfully");
             }
         } else {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ Failed to send chat message");
+                Logger::Error("Failed to send chat message");
             }
         }
 
@@ -798,7 +798,7 @@ namespace StayPutVR {
         
         if (!HttpClient::SendHttpRequest("https://id.twitch.tv/oauth2/validate", "GET", headers, "", response)) {
             if (Logger::IsInitialized()) {
-                Logger::Warning("🔧 Failed to validate token scopes");
+                Logger::Warning("Failed to validate token scopes");
             }
             return false;
         }
@@ -818,7 +818,7 @@ namespace StayPutVR {
                         if (!scope_list.empty()) scope_list += ", ";
                         scope_list += scope;
                     }
-                    Logger::Info("🔧 Token scopes: " + scope_list);
+                    Logger::Info("Token scopes: " + scope_list);
                 }
                 
                 // Check for required IRC chat scopes
@@ -827,13 +827,13 @@ namespace StayPutVR {
                 
                 if (!has_chat_read || !has_chat_edit) {
                     if (Logger::IsInitialized()) {
-                        Logger::Warning("❌ Token missing required IRC chat scopes (chat:read, chat:edit)");
-                        Logger::Warning("❌ Current token was authorized with old scopes - re-authorization needed");
+                        Logger::Warning("Token missing required IRC chat scopes (chat:read, chat:edit)");
+                        Logger::Warning("Current token was authorized with old scopes - re-authorization needed");
                     }
                     return false;
                 } else {
                     if (Logger::IsInitialized()) {
-                        Logger::Info("✅ Token has required IRC chat scopes");
+                        Logger::Info("Token has required IRC chat scopes");
                     }
                     return true;
                 }
@@ -885,17 +885,17 @@ namespace StayPutVR {
         }
 
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 ChatWorker: Starting IRC connection process");
-            Logger::Info("🔧 Bot username: " + bot_username);
-            Logger::Info("🔧 Channel: #" + channel_name);
-            Logger::Info("🔧 Access token length: " + std::to_string(access_token.length()));
+            Logger::Info("ChatWorker: Starting IRC connection process");
+            Logger::Info("Bot username: " + bot_username);
+            Logger::Info("Channel: #" + channel_name);
+            Logger::Info("Access token length: " + std::to_string(access_token.length()));
         }
 
         // IRC connection setup
         WSADATA wsaData;
         if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ WSAStartup failed for IRC connection");
+                Logger::Error("WSAStartup failed for IRC connection");
             }
             return;
         }
@@ -903,7 +903,7 @@ namespace StayPutVR {
         SOCKET ircSocket = socket(AF_INET, SOCK_STREAM, 0);
         if (ircSocket == INVALID_SOCKET) {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ Failed to create IRC socket");
+                Logger::Error("Failed to create IRC socket");
             }
             WSACleanup();
             return;
@@ -915,14 +915,14 @@ namespace StayPutVR {
         serverAddr.sin_port = htons(6667);
         
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Resolving irc.chat.twitch.tv...");
+            Logger::Info("Resolving irc.chat.twitch.tv...");
         }
         
         // Resolve irc.chat.twitch.tv
         hostent* host = gethostbyname("irc.chat.twitch.tv");
         if (!host) {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ Failed to resolve irc.chat.twitch.tv");
+                Logger::Error("Failed to resolve irc.chat.twitch.tv");
             }
             closesocket(ircSocket);
             WSACleanup();
@@ -932,12 +932,12 @@ namespace StayPutVR {
         memcpy(&serverAddr.sin_addr, host->h_addr, host->h_length);
 
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Connecting to Twitch IRC server...");
+            Logger::Info("Connecting to Twitch IRC server...");
         }
 
         if (connect(ircSocket, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ Failed to connect to Twitch IRC: " + std::to_string(WSAGetLastError()));
+                Logger::Error("Failed to connect to Twitch IRC: " + std::to_string(WSAGetLastError()));
             }
             closesocket(ircSocket);
             WSACleanup();
@@ -945,7 +945,7 @@ namespace StayPutVR {
         }
 
         if (Logger::IsInitialized()) {
-            Logger::Info("✅ Connected to Twitch IRC server");
+            Logger::Info("Connected to Twitch IRC server");
         }
 
         // IRC authentication (bot_username and channel_name already snapshotted above)
@@ -953,7 +953,7 @@ namespace StayPutVR {
         // Make sure we have a valid token before authenticating
         if (access_token.empty()) {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ No access token available for IRC authentication");
+                Logger::Error("No access token available for IRC authentication");
             }
             closesocket(ircSocket);
             WSACleanup();
@@ -963,17 +963,17 @@ namespace StayPutVR {
         // Validate token freshness before using it for IRC
         if (!IsTokenValid()) {
             if (Logger::IsInitialized()) {
-                Logger::Warning("🔧 Token appears expired, but proceeding with IRC auth anyway");
+                Logger::Warning("Token appears expired, but proceeding with IRC auth anyway");
             }
         } else {
             if (Logger::IsInitialized()) {
-                Logger::Info("✅ Token is valid for IRC authentication");
+                Logger::Info("Token is valid for IRC authentication");
             }
         }
 
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Starting IRC authentication for user: " + bot_username);
-            Logger::Info("🔧 Using access token (first 10 chars): " + access_token.substr(0, 10) + "...");
+            Logger::Info("Starting IRC authentication for user: " + bot_username);
+            Logger::Info("Using access token (first 10 chars): " + access_token.substr(0, 10) + "...");
         }
 
         std::string pass_msg = "PASS oauth:" + access_token + "\r\n";
@@ -983,12 +983,12 @@ namespace StayPutVR {
 
         // Send IRC commands
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Sending IRC capability request...");
+            Logger::Info("Sending IRC capability request...");
         }
         send(ircSocket, caps_msg.c_str(), (int)caps_msg.length(), 0);
         
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Sending IRC authentication...");
+            Logger::Info("Sending IRC authentication...");
         }
         send(ircSocket, pass_msg.c_str(), (int)pass_msg.length(), 0);
         send(ircSocket, nick_msg.c_str(), (int)nick_msg.length(), 0);
@@ -1008,7 +1008,7 @@ namespace StayPutVR {
         bool auth_successful = false;
         
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Waiting for IRC authentication response...");
+            Logger::Info("Waiting for IRC authentication response...");
         }
         
         while (select(0, &readfds, nullptr, nullptr, &timeout) > 0) {
@@ -1018,12 +1018,12 @@ namespace StayPutVR {
                 std::string auth_response(auth_buffer);
                 
                 if (Logger::IsInitialized()) {
-                    Logger::Info("🔧 IRC Auth Response: " + auth_response);
+                    Logger::Info("IRC Auth Response: " + auth_response);
                 }
                 
                 if (auth_response.find("Login unsuccessful") != std::string::npos) {
                     if (Logger::IsInitialized()) {
-                        Logger::Error("❌ IRC authentication failed - token may be invalid or expired");
+                        Logger::Error("IRC authentication failed - token may be invalid or expired");
                     }
                     closesocket(ircSocket);
                     WSACleanup();
@@ -1032,7 +1032,7 @@ namespace StayPutVR {
                           auth_response.find("001") != std::string::npos) {
                     auth_successful = true;
                     if (Logger::IsInitialized()) {
-                        Logger::Info("✅ IRC authentication successful!");
+                        Logger::Info("IRC authentication successful!");
                     }
                     break;
                 }
@@ -1047,7 +1047,7 @@ namespace StayPutVR {
         
         if (!auth_successful) {
             if (Logger::IsInitialized()) {
-                Logger::Error("❌ IRC authentication timeout or failed");
+                Logger::Error("IRC authentication timeout or failed");
             }
             closesocket(ircSocket);
             WSACleanup();
@@ -1056,15 +1056,15 @@ namespace StayPutVR {
         
         // Now join the channel
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Joining channel: #" + config_->twitch_channel_name);
+            Logger::Info("Joining channel: #" + channel_name);
         }
         send(ircSocket, join_msg.c_str(), (int)join_msg.length(), 0);
 
         chat_connected_ = true;
         
         if (Logger::IsInitialized()) {
-            Logger::Info("✅ Successfully joined Twitch chat channel: #" + config_->twitch_channel_name);
-            Logger::Info("🔧 Starting message reading loop...");
+            Logger::Info("Successfully joined Twitch chat channel: #" + channel_name);
+            Logger::Info("Starting message reading loop...");
         }
 
         // Main chat reading loop
@@ -1085,7 +1085,7 @@ namespace StayPutVR {
             int result = select(0, &readfds, nullptr, nullptr, &timeout);
             if (result == SOCKET_ERROR || !chat_connected_) {
                 if (Logger::IsInitialized()) {
-                    Logger::Error("❌ IRC select error or connection closed");
+                    Logger::Error("IRC select error or connection closed");
                 }
                 break;
             } else if (result == 0) {
@@ -1097,7 +1097,7 @@ namespace StayPutVR {
             int bytesReceived = recv(ircSocket, buffer, sizeof(buffer) - 1, 0);
             if (bytesReceived <= 0) {
                 if (Logger::IsInitialized()) {
-                    Logger::Info("❌ IRC connection closed (recv returned " + std::to_string(bytesReceived) + ")");
+                    Logger::Info("IRC connection closed (recv returned " + std::to_string(bytesReceived) + ")");
                 }
                 break;
             }
@@ -1107,7 +1107,7 @@ namespace StayPutVR {
             incomplete_message.clear();
 
             if (Logger::IsInitialized()) {
-                Logger::Debug("🔧 IRC Raw Data (" + std::to_string(bytesReceived) + " bytes): " + received_data);
+                Logger::Debug("IRC Raw Data (" + std::to_string(bytesReceived) + " bytes): " + received_data);
             }
 
             // Process complete IRC messages (split by \r\n)
@@ -1119,7 +1119,7 @@ namespace StayPutVR {
                 if (!message.empty()) {
                     message_count++;
                     if (Logger::IsInitialized()) {
-                        Logger::Info("🔧 Processing IRC message #" + std::to_string(message_count) + ": " + message);
+                        Logger::Info("Processing IRC message #" + std::to_string(message_count) + ": " + message);
                     }
                     ProcessIRCMessage(message);
                 }
@@ -1137,13 +1137,13 @@ namespace StayPutVR {
         WSACleanup();
 
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Chat worker thread stopped (processed " + std::to_string(message_count) + " messages)");
+            Logger::Info("Chat worker thread stopped (processed " + std::to_string(message_count) + " messages)");
         }
     }
 
     void TwitchManager::ProcessIRCMessage(const std::string& irc_message) {
         if (Logger::IsInitialized()) {
-            Logger::Debug("🔧 ProcessIRCMessage: " + irc_message);
+            Logger::Debug("ProcessIRCMessage: " + irc_message);
         }
 
         // Handle PING messages (keep-alive)
@@ -1154,7 +1154,7 @@ namespace StayPutVR {
                 std::string pongMsg = "PONG " + irc_message.substr(colonPos) + "\r\n";
                 // Send PONG back (would need socket reference, for now just log)
                 if (Logger::IsInitialized()) {
-                    Logger::Info("🔧 Sending PONG response");
+                    Logger::Info("Sending PONG response");
                 }
             }
             return;
@@ -1165,7 +1165,7 @@ namespace StayPutVR {
         // Format without tags: :username!username@username.tmi.twitch.tv PRIVMSG #channel :message
         if (irc_message.find("PRIVMSG") != std::string::npos) {
             if (Logger::IsInitialized()) {
-                Logger::Info("🔧 Found PRIVMSG in IRC message");
+                Logger::Info("Found PRIVMSG in IRC message");
             }
             
             // Find the actual IRC message part (after tags if present)
@@ -1177,7 +1177,7 @@ namespace StayPutVR {
                 if (space_pos != std::string::npos) {
                     message_part = irc_message.substr(space_pos + 1);
                     if (Logger::IsInitialized()) {
-                        Logger::Debug("🔧 Stripped tags, message part: " + message_part);
+                        Logger::Debug("Stripped tags, message part: " + message_part);
                     }
                 }
             }
@@ -1186,7 +1186,7 @@ namespace StayPutVR {
             size_t exclamPos = message_part.find('!');
             if (exclamPos == std::string::npos || message_part[0] != ':') {
                 if (Logger::IsInitialized()) {
-                    Logger::Warning("🔧 Invalid PRIVMSG format - missing username in: " + message_part);
+                    Logger::Warning("Invalid PRIVMSG format - missing username in: " + message_part);
                 }
                 return;
             }
@@ -1197,7 +1197,7 @@ namespace StayPutVR {
             size_t messageStart = message_part.find(" :", message_part.find("PRIVMSG"));
             if (messageStart == std::string::npos) {
                 if (Logger::IsInitialized()) {
-                    Logger::Warning("🔧 Invalid PRIVMSG format - missing message content in: " + message_part);
+                    Logger::Warning("Invalid PRIVMSG format - missing message content in: " + message_part);
                 }
                 return;
             }
@@ -1206,7 +1206,7 @@ namespace StayPutVR {
             std::string message_content = message_part.substr(messageStart);
             
             if (Logger::IsInitialized()) {
-                Logger::Info("✅ Chat message from " + username + ": " + message_content);
+                Logger::Info("Chat message from " + username + ": " + message_content);
             }
 
             // Check if it's a command
@@ -1222,8 +1222,8 @@ namespace StayPutVR {
                 }
 
                 if (Logger::IsInitialized()) {
-                    Logger::Info("✅ Found chat command: '" + command + "' (args: '" + args + "') from " + username);
-                    Logger::Info("🔧 Configured commands - lock: '" + lock_cmd +
+                    Logger::Info("Found chat command: '" + command + "' (args: '" + args + "') from " + username);
+                    Logger::Info("Configured commands - lock: '" + lock_cmd +
                                "', unlock: '" + unlock_cmd +
                                "', status: '" + status_cmd + "'");
                 }
@@ -1231,120 +1231,120 @@ namespace StayPutVR {
                 // Handle the command
                 if (command == lock_cmd) {
                     if (Logger::IsInitialized()) {
-                        Logger::Info("🔧 Executing LOCK command");
+                        Logger::Info("Executing LOCK command");
                     }
                     HandleLockCommand(username, args);
                 } else if (command == unlock_cmd) {
                     if (Logger::IsInitialized()) {
-                        Logger::Info("🔧 Executing UNLOCK command");
+                        Logger::Info("Executing UNLOCK command");
                     }
                     HandleUnlockCommand(username, args);
                 } else if (command == status_cmd) {
                     if (Logger::IsInitialized()) {
-                        Logger::Info("🔧 Executing STATUS command");
+                        Logger::Info("Executing STATUS command");
                     }
                     HandleStatusCommand(username, args);
                 } else {
                     if (Logger::IsInitialized()) {
-                        Logger::Info("🔧 Unknown command: " + command);
+                        Logger::Info("Unknown command: " + command);
                     }
                 }
 
                 // Also call the callback if set
                 if (chat_command_callback_) {
                     if (Logger::IsInitialized()) {
-                        Logger::Info("🔧 Calling chat command callback");
+                        Logger::Info("Calling chat command callback");
                     }
                     chat_command_callback_(username, command, args);
                 } else {
                     if (Logger::IsInitialized()) {
-                        Logger::Warning("🔧 No chat command callback set");
+                        Logger::Warning("No chat command callback set");
                     }
                 }
             } else {
                 if (Logger::IsInitialized()) {
-                    Logger::Debug("🔧 Message is not a command (prefix: '" + config_->twitch_command_prefix + "')");
+                    Logger::Debug("Message is not a command (prefix: '" + config_->twitch_command_prefix + "')");
                 }
             }
         } else {
             if (Logger::IsInitialized()) {
-                Logger::Debug("🔧 IRC message is not a PRIVMSG");
+                Logger::Debug("IRC message is not a PRIVMSG");
             }
         }
     }
 
     void TwitchManager::HandleLockCommand(const std::string& username, const std::string& args) {
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 HandleLockCommand: Executing lock command from " + username);
+            Logger::Info("HandleLockCommand: Executing lock command from " + username);
         }
 
         // Send confirmation message to chat
         std::string response = "@" + username + " Locking devices!";
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Sending lock response: " + response);
+            Logger::Info("Sending lock response: " + response);
         }
         SendChatMessage(response);
 
         // Trigger the actual lock via callback (this will call UIManager's lock logic)
         if (chat_command_callback_) {
             if (Logger::IsInitialized()) {
-                Logger::Info("🔧 Calling lock callback");
+                Logger::Info("Calling lock callback");
             }
             chat_command_callback_(username, config_->twitch_lock_command, args);
         } else {
             if (Logger::IsInitialized()) {
-                Logger::Warning("🔧 No callback set for lock command");
+                Logger::Warning("No callback set for lock command");
             }
         }
     }
 
     void TwitchManager::HandleUnlockCommand(const std::string& username, const std::string& args) {
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 HandleUnlockCommand: Executing unlock command from " + username);
+            Logger::Info("HandleUnlockCommand: Executing unlock command from " + username);
         }
 
         // Send confirmation message to chat
         std::string response = "@" + username + " Unlocking devices!";
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Sending unlock response: " + response);
+            Logger::Info("Sending unlock response: " + response);
         }
         SendChatMessage(response);
 
         // Trigger the actual unlock via callback
         if (chat_command_callback_) {
             if (Logger::IsInitialized()) {
-                Logger::Info("🔧 Calling unlock callback");
+                Logger::Info("Calling unlock callback");
             }
             chat_command_callback_(username, config_->twitch_unlock_command, args);
         } else {
             if (Logger::IsInitialized()) {
-                Logger::Warning("🔧 No callback set for unlock command");
+                Logger::Warning("No callback set for unlock command");
             }
         }
     }
 
     void TwitchManager::HandleStatusCommand(const std::string& username, const std::string& args) {
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 HandleStatusCommand: Executing status command from " + username);
+            Logger::Info("HandleStatusCommand: Executing status command from " + username);
         }
 
         // For now, just send a generic status message
         // In a full implementation, this would check actual device lock states
         std::string response = "@" + username + " StayPutVR is running and monitoring devices!";
         if (Logger::IsInitialized()) {
-            Logger::Info("🔧 Sending status response: " + response);
+            Logger::Info("Sending status response: " + response);
         }
         SendChatMessage(response);
 
         // Trigger the status callback
         if (chat_command_callback_) {
             if (Logger::IsInitialized()) {
-                Logger::Info("🔧 Calling status callback");
+                Logger::Info("Calling status callback");
             }
             chat_command_callback_(username, config_->twitch_status_command, args);
         } else {
             if (Logger::IsInitialized()) {
-                Logger::Warning("🔧 No callback set for status command");
+                Logger::Warning("No callback set for status command");
             }
         }
     }
