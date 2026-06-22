@@ -5,6 +5,24 @@ project(StayPutVR VERSION 1.4.0)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Generate git_hash.h (STAYPUTVR_GIT_HASH) for the build string shown in the
+# splash and Settings > About. Generate once at configure time so the header
+# exists for the first compile, then refresh it on every build via a target.
+set(STAYPUTVR_GIT_HASH_HEADER "${CMAKE_BINARY_DIR}/git_hash.h")
+execute_process(COMMAND ${CMAKE_COMMAND}
+    -DSRC_DIR=${CMAKE_SOURCE_DIR}
+    -DOUT_FILE=${STAYPUTVR_GIT_HASH_HEADER}
+    -P "${CMAKE_SOURCE_DIR}/cmake/GitHash.cmake")
+add_custom_target(git_hash_header ALL
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC_DIR=${CMAKE_SOURCE_DIR}
+        -DOUT_FILE=${STAYPUTVR_GIT_HASH_HEADER}
+        -P "${CMAKE_SOURCE_DIR}/cmake/GitHash.cmake"
+    BYPRODUCTS "${STAYPUTVR_GIT_HASH_HEADER}"
+    COMMENT "Updating git hash header")
+# Make the generated header reachable as #include "git_hash.h" everywhere.
+include_directories(${CMAKE_BINARY_DIR})
+
 # Enforce consistent runtime library settings across all targets
 if(MSVC)
     # Use dynamic runtime (/MD or /MDd) for both Debug and Release
@@ -72,6 +90,7 @@ if(WIN32)
     add_subdirectory(common)
     add_subdirectory(driver)
     add_subdirectory(application)
+    add_dependencies(stayputvr_app git_hash_header)
 
     # Create a simple batch file to launch the application
     file(WRITE "${CMAKE_BINARY_DIR}/launch_stayputvr.bat"
@@ -205,4 +224,5 @@ else()
     # Build only the shared library and the GUI application (no driver).
     add_subdirectory(common)
     add_subdirectory(application)
+    add_dependencies(stayputvr_app git_hash_header)
 endif()

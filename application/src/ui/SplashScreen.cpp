@@ -167,7 +167,7 @@ namespace StayPutVR {
         }
         ImGui::BeginGroup();
         ImGui::TextColored(ImVec4(0.45f, 0.72f, 1.0f, 1.0f), "StayPutVR");
-        ImGui::Text("v%s", STAYPUTVR_VERSION);
+        ImGui::Text("v%s (%s)", STAYPUTVR_VERSION, STAYPUTVR_GIT_HASH);
         ImGui::TextDisabled("Lock yourself in place in VR");
         ImGui::EndGroup();
 
@@ -175,9 +175,8 @@ namespace StayPutVR {
 
         // ---- Welcome ----
         ImGui::TextWrapped(
-            "Thanks for using StayPutVR! Lock yourself or your friends into "
-            "positions in VR, with consequences for straying. Questions, ideas, "
-            "or bugs? Come say hi. -Foxipso");
+            "Thanks for your support! This version adds lots of fixes! "
+            "Questions, ideas, or bugs? Join my Discord or X/Twitter! -Foxipso");
         ImGui::Spacing();
         ImGui::TextLinkOpenURL("foxipso.com", FOXIPSO_URL);
 

@@ -20,6 +20,7 @@
 #include <thread> // For std::this_thread::sleep_for
 #include "../../../common/OSCManager.hpp"
 #include "../../common/HttpClient.hpp"
+#include "../../../common/Version.hpp"
 
 // Windows-specific includes for icon handling
 #ifdef _WIN32
@@ -627,7 +628,7 @@ namespace StayPutVR {
         }
 
         // ---- First-class: About ----
-        ImGui::Text("StayPutVR 1.4");
+        ImGui::Text("StayPutVR %s (%s)", STAYPUTVR_VERSION, STAYPUTVR_GIT_HASH);
         ImGui::SameLine();
         ImGui::TextDisabled("(c) 2026 Foxipso");
         ImGui::SameLine();
