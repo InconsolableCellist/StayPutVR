@@ -113,6 +113,36 @@ Config::Config()
 {
 }
 
+namespace {
+    // True if the name already carries an explicit directory component (a caller
+    // passing a full path); in that case we use it verbatim.
+    bool HasDirComponent(const std::string& p) {
+        return p.find('/') != std::string::npos || p.find('\\') != std::string::npos;
+    }
+
+    // Canonical home for the main config: %APPDATA%/StayPutVR/config/<file> on
+    // Windows (XDG equivalent on Linux). This is where the app now reads/writes
+    // and where Settings > Folders > "Open Settings Folder" points.
+    std::string CanonicalConfigPath(const std::string& filename) {
+        return GetAppDataPath() + "/config/" + filename;
+    }
+
+    // Resolve where to READ an existing config from. Older builds opened the bare
+    // filename relative to the working directory (which, depending on launch,
+    // could be the install dir or elsewhere), so honor those legacy locations to
+    // migrate a user's settings instead of silently starting fresh. First hit
+    // wins; returns the canonical path if nothing exists yet.
+    std::string ResolveConfigForRead(const std::string& filename) {
+        std::error_code ec;
+        std::string canonical = CanonicalConfigPath(filename);
+        if (std::filesystem::exists(canonical, ec)) return canonical;
+        if (std::filesystem::exists(filename, ec)) return filename;            // CWD (legacy)
+        std::string exeLocal = GetExecutableDir() + "/" + filename;
+        if (std::filesystem::exists(exeLocal, ec)) return exeLocal;            // exe dir (legacy)
+        return canonical;
+    }
+}
+
 bool Config::CreateDefaultConfigFile(const std::string& filename) {
     try {
         // Create the default config using the current default values
@@ -129,12 +159,18 @@ bool Config::CreateDefaultConfigFile(const std::string& filename) {
 bool Config::LoadFromFile(const std::string& filename) {
     try {
         auto lock = WriteLock();
-        std::ifstream file(filename);
+        // Resolve a bare filename to the canonical store, falling back to legacy
+        // locations so an existing config is migrated rather than ignored.
+        std::string path = HasDirComponent(filename) ? filename : ResolveConfigForRead(filename);
+        std::ifstream file(path);
         if (!file.is_open()) {
             if (Logger::IsInitialized()) {
-                Logger::Error("Failed to open config file: " + filename);
+                Logger::Error("Failed to open config file: " + path);
             }
             return false;
+        }
+        if (Logger::IsInitialized()) {
+            Logger::Info("Loading config from: " + path);
         }
 
         nlohmann::json j;
@@ -478,15 +514,18 @@ bool Config::LoadFromFile(const std::string& filename) {
         device_names.clear();
         device_settings.clear();
         device_roles.clear();
-        device_shock_ids.clear();
+        device_pishock_ids.clear();
+        device_openshock_ids.clear();
         device_vibration_ids.clear();
         
         // Load device names, settings, and roles from new format (direct properties)
         if (j.contains("device_names") && j["device_names"].is_object()) {
             for (auto& [serial, name] : j["device_names"].items()) {
-                device_names[serial] = name.get<std::string>();
+                std::string n = name.get<std::string>();
+                if (n.empty() || n == "Unknown Device") continue; // drop placeholder pollution
+                device_names[serial] = n;
                 if (Logger::IsInitialized()) {
-                    Logger::Debug("Loaded device name from direct property: " + serial + " -> " + name.get<std::string>());
+                    Logger::Debug("Loaded device name from direct property: " + serial + " -> " + n);
                 }
             }
         }
@@ -511,21 +550,38 @@ bool Config::LoadFromFile(const std::string& filename) {
             }
         }
         
-        if (j.contains("device_shock_ids") && j["device_shock_ids"].is_object()) {
-            for (auto& [serial, shock_ids_json] : j["device_shock_ids"].items()) {
-                if (shock_ids_json.is_array() && shock_ids_json.size() >= 5) {
-                    std::array<bool, 5> shock_ids;
-                    for (size_t i = 0; i < 5; ++i) {
-                        shock_ids[i] = shock_ids_json[i].get<bool>();
-                    }
-                    device_shock_ids[serial] = shock_ids;
-                    if (Logger::IsInitialized()) {
-                        Logger::Debug("Loaded device shock IDs for " + serial);
-                    }
+        // Helper: load a serial -> array<bool,5> map from a JSON object.
+        auto load_bool5_map = [](const nlohmann::json& obj,
+                                 std::unordered_map<std::string, std::array<bool, 5>>& out) {
+            for (auto& [serial, arr] : obj.items()) {
+                if (arr.is_array() && arr.size() >= 5) {
+                    std::array<bool, 5> vals;
+                    for (size_t i = 0; i < 5; ++i) vals[i] = arr[i].get<bool>();
+                    out[serial] = vals;
                 }
             }
+        };
+
+        // New split maps (PiShock and OpenShock are bound to devices separately).
+        if (j.contains("device_pishock_ids") && j["device_pishock_ids"].is_object())
+            load_bool5_map(j["device_pishock_ids"], device_pishock_ids);
+        if (j.contains("device_openshock_ids") && j["device_openshock_ids"].is_object())
+            load_bool5_map(j["device_openshock_ids"], device_openshock_ids);
+
+        // Migration: older configs stored a single shared "device_shock_ids" that
+        // drove both PiShock and OpenShock. Seed both split maps from it so users
+        // keep their existing per-device bindings.
+        if (j.contains("device_shock_ids") && j["device_shock_ids"].is_object()) {
+            std::unordered_map<std::string, std::array<bool, 5>> legacy;
+            load_bool5_map(j["device_shock_ids"], legacy);
+            for (const auto& [serial, vals] : legacy) {
+                if (device_pishock_ids.find(serial) == device_pishock_ids.end())
+                    device_pishock_ids[serial] = vals;
+                if (device_openshock_ids.find(serial) == device_openshock_ids.end())
+                    device_openshock_ids[serial] = vals;
+            }
         }
-        
+
         if (j.contains("device_vibration_ids") && j["device_vibration_ids"].is_object()) {
             for (auto& [serial, vibration_ids_json] : j["device_vibration_ids"].items()) {
                 if (vibration_ids_json.is_array() && vibration_ids_json.size() >= 5) {
@@ -549,12 +605,15 @@ bool Config::LoadFromFile(const std::string& filename) {
             
             std::string serial = device.value("serial", "Unknown Device");
             
-            // Load device name if present and not already loaded
+            // Load device name if present and not already loaded. Ignore the old
+            // "Unknown Device" placeholder so the real serial shows through.
             if (device.contains("name") && device_names.find(serial) == device_names.end()) {
-                std::string name = device.value("name", "Unknown Device");
-                device_names[serial] = name;
-                if (Logger::IsInitialized()) {
-                    Logger::Debug("Loaded device name from devices array: " + serial + " -> " + name);
+                std::string name = device.value("name", "");
+                if (!name.empty() && name != "Unknown Device") {
+                    device_names[serial] = name;
+                    if (Logger::IsInitialized()) {
+                        Logger::Debug("Loaded device name from devices array: " + serial + " -> " + name);
+                    }
                 }
             }
             
@@ -872,11 +931,12 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["show_notifications"] = show_notifications;
         
         // Save device names and settings directly at the root level
-        // Create JSON objects for device_roles, device_settings, and device_shock_ids
+        // Create JSON objects for device_roles, device_settings, and shock/vibe IDs
         nlohmann::json device_roles_json = nlohmann::json::object();
         nlohmann::json device_settings_json = nlohmann::json::object();
         nlohmann::json device_names_json = nlohmann::json::object();
-        nlohmann::json device_shock_ids_json = nlohmann::json::object();
+        nlohmann::json device_pishock_ids_json = nlohmann::json::object();
+        nlohmann::json device_openshock_ids_json = nlohmann::json::object();
         nlohmann::json device_vibration_ids_json = nlohmann::json::object();
         
         // Populate device roles
@@ -897,15 +957,20 @@ bool Config::SaveToFile(const std::string& filename) const {
         }
         j["device_names"] = device_names_json;
         
-        // Populate device shock IDs
-        for (const auto& [serial, shock_ids] : device_shock_ids) {
-            nlohmann::json shock_ids_array = nlohmann::json::array();
-            for (bool enabled : shock_ids) {
-                shock_ids_array.push_back(enabled);
-            }
-            device_shock_ids_json[serial] = shock_ids_array;
+        // Populate device PiShock + OpenShock slot bindings (now separate).
+        for (const auto& [serial, ids] : device_pishock_ids) {
+            nlohmann::json arr = nlohmann::json::array();
+            for (bool enabled : ids) arr.push_back(enabled);
+            device_pishock_ids_json[serial] = arr;
         }
-        j["device_shock_ids"] = device_shock_ids_json;
+        j["device_pishock_ids"] = device_pishock_ids_json;
+
+        for (const auto& [serial, ids] : device_openshock_ids) {
+            nlohmann::json arr = nlohmann::json::array();
+            for (bool enabled : ids) arr.push_back(enabled);
+            device_openshock_ids_json[serial] = arr;
+        }
+        j["device_openshock_ids"] = device_openshock_ids_json;
         
         // Populate device vibration IDs
         for (const auto& [serial, vibration_ids] : device_vibration_ids) {
@@ -924,7 +989,8 @@ bool Config::SaveToFile(const std::string& filename) const {
         for (const auto& [serial, _] : device_names) all_serials.insert(serial);
         for (const auto& [serial, _] : device_settings) all_serials.insert(serial);
         for (const auto& [serial, _] : device_roles) all_serials.insert(serial);
-        for (const auto& [serial, _] : device_shock_ids) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_pishock_ids) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_openshock_ids) all_serials.insert(serial);
         for (const auto& [serial, _] : device_vibration_ids) all_serials.insert(serial);
         
         // Create device objects
@@ -932,12 +998,13 @@ bool Config::SaveToFile(const std::string& filename) const {
             nlohmann::json device;
             device["serial"] = serial;
             
-            // Add name if available
+            // Add name only if a real custom name exists. Writing a placeholder
+            // like "Unknown Device" here used to get read back as the device's
+            // name on the next load, masking the real SteamVR serial.
             auto name_it = device_names.find(serial);
-            if (name_it != device_names.end()) {
+            if (name_it != device_names.end() && !name_it->second.empty() &&
+                name_it->second != "Unknown Device") {
                 device["name"] = name_it->second;
-            } else {
-                device["name"] = "Unknown Device";
             }
             
             // Add include_in_locking if available
@@ -958,19 +1025,25 @@ bool Config::SaveToFile(const std::string& filename) const {
         }
         j["devices"] = devices;
         
+        // Resolve a bare filename to the canonical AppData store and make sure
+        // its directory exists, so saves always land in one well-known place.
+        std::string path = HasDirComponent(filename) ? filename : CanonicalConfigPath(filename);
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
+
         // Write the JSON to file
-        std::ofstream file(filename);
+        std::ofstream file(path);
         if (!file.is_open()) {
             if (Logger::IsInitialized()) {
-                Logger::Error("Failed to open config file for writing: " + filename);
+                Logger::Error("Failed to open config file for writing: " + path);
             }
             return false;
         }
 
         file << j.dump(4);
-        
+
         if (Logger::IsInitialized()) {
-            Logger::Info("Saved config file: " + filename);
+            Logger::Info("Saved config file: " + path);
             Logger::Debug("Saved " + std::to_string(device_roles.size()) + " device roles, " + 
                          std::to_string(device_settings.size()) + " device settings, and " + 
                          std::to_string(device_names.size()) + " device names");

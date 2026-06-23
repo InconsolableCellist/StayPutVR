@@ -120,10 +120,7 @@ namespace StayPutVR {
         // vendored under thirdparty/imgui/misc/fonts and shipped in resources/.
         // ImGui 1.92 builds the atlas texture lazily; just AddFontFromFileTTF.
         {
-            std::string fontPath = GetAppDataPath() + "/resources/DroidSans.ttf";
-            if (!std::filesystem::exists(fontPath) && std::filesystem::exists("./resources/DroidSans.ttf")) {
-                fontPath = "./resources/DroidSans.ttf"; // dev fallback (running from build dir)
-            }
+            std::string fontPath = GetResourcesPath() + "/DroidSans.ttf";
             if (std::filesystem::exists(fontPath)) {
                 static const ImWchar ranges[] = {
                     0x0020, 0x00FF, // Basic Latin + Latin-1 Supplement
@@ -183,12 +180,8 @@ namespace StayPutVR {
         LoadConfig();
 
         // Resolve the resources directory (logo, whats_new.md, supporters json),
-        // mirroring the font/effigy lookup: AppData first, dev build dir fallback.
-        assets_path_ = GetAppDataPath() + "/resources";
-        if (!std::filesystem::exists(assets_path_ + "/logo.png") &&
-            std::filesystem::exists("./resources/logo.png")) {
-            assets_path_ = "./resources";
-        }
+        // shared with the font/effigy lookup (exe dir, then AppData).
+        assets_path_ = GetResourcesPath();
 
         // Startup splash / Welcome overlay. Shows on every launch; auto-close
         // is opt-in and persisted in config.
@@ -705,7 +698,7 @@ namespace StayPutVR {
             bool result = config_.LoadFromFile(config_file_);
             if (result) {
                 UpdateUIFromConfig();
-                
+
                 // Set default OSC ports if they're not set
                 if (config_.osc_send_port <= 0) {
                     config_.osc_send_port = 9000;
@@ -713,7 +706,14 @@ namespace StayPutVR {
                 if (config_.osc_receive_port <= 0) {
                     config_.osc_receive_port = 9001;
                 }
-                
+
+                // Migrate: write the freshly-loaded settings to the canonical
+                // AppData location. If the config was read from a legacy spot
+                // (older builds wrote next to the working dir), this moves it to
+                // where the app and the Folders tab now expect it -- without
+                // losing any of the user's existing settings.
+                config_.SaveToFile(config_file_);
+
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Info("UIManager: Config loaded successfully");
                 }

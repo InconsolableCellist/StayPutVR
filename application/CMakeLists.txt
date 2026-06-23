@@ -87,3 +87,13 @@ else()
         RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}/bin"
     )
 endif()
+
+# Stage the resources (logo, fonts, whats_new.md, effigy, *.wav) next to the
+# built executable so running straight from the build tree -- without the
+# installer -- finds them. GetResourcesPath() checks <exe dir>/resources first.
+add_custom_command(TARGET stayputvr_app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources"
+        "$<TARGET_FILE_DIR:stayputvr_app>/resources"
+    COMMENT "Staging resources next to stayputvr_app"
+)

@@ -109,6 +109,7 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 - Reorganized the interface into Status / Devices / Integrations / Settings tabs; OSC enable and Bite/Shock triggers are now reachable from the Status tab without digging into OSC settings
 - OSC is now enabled by default, with the advanced path settings collapsed behind clearer defaults and per-section reset buttons
 - Settings now auto-save instantly (no more "Save All Settings" button) and include an adjustable UI font scale
+- Fixed config location: settings now always load and save from `%APPDATA%\StayPutVR\config` (existing configs are migrated automatically), and the Settings > Folders buttons now open the correct config/log/resources folders
 - Refreshed the application theme
 - Updated Dear ImGui
 - Added a Linux development build (GUI + OSC simulation, no SteamVR driver) for avatar prefab iteration

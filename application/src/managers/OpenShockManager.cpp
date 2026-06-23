@@ -176,7 +176,7 @@ namespace StayPutVR {
                 server_url = config_->openshock_server_url;
                 api_token = config_->openshock_api_token;
                 device_ids = config_->openshock_device_ids;
-                device_shock_map = config_->device_shock_ids;
+                device_shock_map = config_->device_openshock_ids;
                 use_individual_disob = config_->openshock_use_individual_disobedience_intensities;
                 use_individual_warn = config_->openshock_use_individual_warning_intensities;
                 individual_disob_intensities = config_->openshock_individual_disobedience_intensities;
@@ -204,14 +204,14 @@ namespace StayPutVR {
                     }
                 }
 
-                if (device_ids_to_use.empty() && !device_ids[0].empty()) {
-                    device_ids_to_use.push_back(device_ids[0]);
-                    device_indices.push_back(0);
-                }
+                // No fall-back to the master device for a specific serial: a
+                // device bound only to PiShock (or nothing) must NOT fire
+                // OpenShock. Empty binding => fire nothing (handled below).
             }
 
             if (device_ids_to_use.empty()) {
-                SetError("No shock devices configured");
+                if (device_serial.empty()) SetError("No shock devices configured");
+                else Logger::Debug("OpenShock: device " + device_serial + " has no OpenShock binding; skipping");
                 return;
             }
 
@@ -285,7 +285,7 @@ namespace StayPutVR {
                 server_url = config_->openshock_server_url;
                 api_token = config_->openshock_api_token;
                 device_ids = config_->openshock_device_ids;
-                device_shock_map = config_->device_shock_ids;
+                device_shock_map = config_->device_openshock_ids;
                 use_individual_disob = config_->openshock_use_individual_disobedience_intensities;
                 use_individual_warn = config_->openshock_use_individual_warning_intensities;
                 individual_disob_intensities = config_->openshock_individual_disobedience_intensities;
@@ -313,14 +313,14 @@ namespace StayPutVR {
                     }
                 }
 
-                if (device_ids_to_use.empty() && !device_ids[0].empty()) {
-                    device_ids_to_use.push_back(device_ids[0]);
-                    device_indices.push_back(0);
-                }
+                // No fall-back to the master device for a specific serial: a
+                // device bound only to PiShock (or nothing) must NOT fire
+                // OpenShock. Empty binding => fire nothing (handled below).
             }
 
             if (device_ids_to_use.empty()) {
-                SetError("No shock devices configured");
+                if (device_serial.empty()) SetError("No shock devices configured");
+                else Logger::Debug("OpenShock: device " + device_serial + " has no OpenShock binding; skipping");
                 return;
             }
 
@@ -548,7 +548,7 @@ namespace StayPutVR {
                 server_url = config_->openshock_server_url;
                 api_token = config_->openshock_api_token;
                 device_ids = config_->openshock_device_ids;
-                device_shock_map = config_->device_shock_ids;
+                device_shock_map = config_->device_openshock_ids;
             }
 
             std::vector<std::string> device_ids_to_use;
@@ -567,9 +567,7 @@ namespace StayPutVR {
                     }
                 }
 
-                if (device_ids_to_use.empty() && !device_ids[0].empty()) {
-                    device_ids_to_use.push_back(device_ids[0]);
-                }
+                // No fall-back to the master device for a specific serial (see above).
             }
 
             if (device_ids_to_use.empty()) {

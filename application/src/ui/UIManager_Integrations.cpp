@@ -229,9 +229,9 @@ namespace StayPutVR {
         if (config_.twitch_enabled && twitch_manager_) {
             std::string status = twitch_manager_->GetConnectionStatus();
             if (twitch_manager_->IsConnected()) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), ("✓ " + status).c_str());
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[OK] %s", status.c_str());
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ("✗ " + status).c_str());
+                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "[X] %s", status.c_str());
                 std::string error = twitch_manager_->GetLastError();
                 if (!error.empty()) {
                     ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), ("Error: " + error).c_str());
@@ -513,7 +513,7 @@ namespace StayPutVR {
         if (twitch_manager_) {
             // Check if we already have tokens
             if (!config_.twitch_access_token.empty()) {
-                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "✅ OAuth tokens available");
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "[OK] OAuth tokens available");
                 
                 if (ImGui::Button("Test Connection")) {
                     twitch_manager_->ConnectToTwitch();
@@ -526,7 +526,7 @@ namespace StayPutVR {
                     SaveConfig();
                 }
             } else {
-                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "⚠️ OAuth setup required");
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "OAuth setup required");
                 
                 if (!oauth_server_running) {
                     if (ImGui::Button("Start OAuth Setup")) {
@@ -536,7 +536,7 @@ namespace StayPutVR {
                         oauth_server_running = true;
                     }
                 } else {
-                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "🌐 OAuth server running on localhost:8080");
+                    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "OAuth server running on localhost:8080");
                     
                     if (ImGui::Button("Stop OAuth Server")) {
                         twitch_manager_->StopOAuthServer();
@@ -552,7 +552,7 @@ namespace StayPutVR {
             ImGui::Spacing();
             ImGui::TextWrapped("Step 1: Click the button below to open Twitch authorization in your browser:");
             
-            if (ImGui::Button("🌐 Open Twitch Authorization", ImVec2(300, 30))) {
+            if (ImGui::Button("Open Twitch Authorization", ImVec2(300, 30))) {
                 // Open URL in default browser
                 std::string command = "start \"\" \"" + oauth_url + "\"";
                 system(command.c_str());

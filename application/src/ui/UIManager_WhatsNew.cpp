@@ -23,6 +23,7 @@ namespace StayPutVR {
 
     void UIManager::OpenWhatsNew() {
         show_whats_new_ = true;
+        whats_new_focus_ = true; // re-focus so a repeat click brings it back to front
     }
 
     // Draws the splash and What's New overlays on top of the main window.
@@ -35,6 +36,7 @@ namespace StayPutVR {
             whats_new_checked_ = true;
             if (config_.whats_new_seen_version != STAYPUTVR_VERSION) {
                 show_whats_new_ = true;
+                whats_new_focus_ = true;
             }
         }
 
@@ -69,9 +71,17 @@ namespace StayPutVR {
             ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
                    viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
             ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        float w = std::min(620.0f, viewport->WorkSize.x * 0.9f);
-        float h = std::min(560.0f, viewport->WorkSize.y * 0.9f);
+        float w = (std::min)(620.0f, viewport->WorkSize.x * 0.9f);
+        float h = (std::min)(560.0f, viewport->WorkSize.y * 0.9f);
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Appearing);
+
+        // Bring the window to the front when (re)opened. Without this a repeat
+        // click on the "What's New" button focuses the main window and buries
+        // this one behind it, so it looks like it vanished for good.
+        if (whats_new_focus_) {
+            ImGui::SetNextWindowFocus();
+            whats_new_focus_ = false;
+        }
 
         bool open = true;
         char title[80];

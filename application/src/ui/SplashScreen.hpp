@@ -51,7 +51,7 @@ namespace StayPutVR {
         bool auto_close_dirty_ = false;
         std::chrono::steady_clock::time_point shown_at_{};
         bool timer_running_ = false;
-        static constexpr float AUTO_CLOSE_DELAY = 4.0f; // seconds
+        static constexpr float AUTO_CLOSE_DELAY = 2.0f; // seconds
 
         // Supporter names, populated by the background fetch.
         std::mutex supporters_mutex_;

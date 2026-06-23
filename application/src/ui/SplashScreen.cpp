@@ -128,8 +128,8 @@ namespace StayPutVR {
         const float ui_scale = ImGui::GetFontSize() / 16.0f;
         const float max_w = 560.0f * ui_scale;
         const float max_h = 560.0f * ui_scale;
-        ImVec2 win_size(std::min(viewport.x * 0.85f, max_w),
-                        std::min(viewport.y * 0.9f, max_h));
+        ImVec2 win_size((std::min)(viewport.x * 0.85f, max_w),
+                        (std::min)(viewport.y * 0.9f, max_h));
         ImVec2 win_pos((viewport.x - win_size.x) * 0.5f,
                        (viewport.y - win_size.y) * 0.5f);
 
@@ -178,7 +178,7 @@ namespace StayPutVR {
             "Thanks for your support! This version adds lots of fixes! "
             "Questions, ideas, or bugs? Join my Discord or X/Twitter! -Foxipso");
         ImGui::Spacing();
-        ImGui::TextLinkOpenURL("foxipso.com", FOXIPSO_URL);
+        ImGui::TextLinkOpenURL("foxipso.com##welcome_link", FOXIPSO_URL);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -274,7 +274,7 @@ namespace StayPutVR {
         ImGui::TextUnformatted("(C) Foxipso 2026 -");
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextLinkOpenURL("foxipso.com", FOXIPSO_URL);
+        ImGui::TextLinkOpenURL("foxipso.com##footer_link", FOXIPSO_URL);
 
         ImGui::End();
     }

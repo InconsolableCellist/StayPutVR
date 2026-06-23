@@ -2,6 +2,7 @@
 
 #include <string>
 #include <iostream>
+#include <filesystem>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -73,5 +74,47 @@ namespace StayPutVR {
         return "./StayPutVR";
     }
 #endif
+
+    // Directory containing the running executable (NOT the current working
+    // directory, which depends on how the app was launched). Used to locate
+    // resources bundled next to the binary in a build/dev tree.
+    inline std::string GetExecutableDir() {
+#ifdef _WIN32
+        wchar_t buf[MAX_PATH];
+        DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+        if (n == 0 || n == MAX_PATH) return ".";
+        std::wstring w(buf, n);
+        size_t slash = w.find_last_of(L"\\/");
+        std::wstring dir = (slash == std::wstring::npos) ? L"." : w.substr(0, slash);
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, dir.c_str(), -1, nullptr, 0, nullptr, nullptr);
+        std::string result(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, dir.c_str(), -1, &result[0], size_needed, nullptr, nullptr);
+        if (!result.empty() && result.back() == '\0') result.pop_back();
+        return result;
+#else
+        char buf[4096];
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n <= 0) return ".";
+        buf[n] = '\0';
+        std::string p(buf);
+        size_t slash = p.find_last_of('/');
+        return (slash == std::string::npos) ? "." : p.substr(0, slash);
+#endif
+    }
+
+    // Resolve the resources directory (logo.png, whats_new.md, effigy.png,
+    // DroidSans.ttf, *.wav, ...). Search order, first hit wins:
+    //   1. <exe dir>/resources  - dev/build runs and any portable layout
+    //   2. AppData/StayPutVR/resources - the installed copy
+    //   3. ./resources          - last-resort CWD fallback
+    // Returns option 2 even if missing so callers log a consistent path.
+    inline std::string GetResourcesPath() {
+        std::error_code ec;
+        std::string exeRes = GetExecutableDir() + "/resources";
+        if (std::filesystem::exists(exeRes, ec)) return exeRes;
+        std::string appRes = GetAppDataPath() + "/resources";
+        if (std::filesystem::exists(appRes, ec)) return appRes;
+        return appRes;
+    }
 
 } // namespace StayPutVR

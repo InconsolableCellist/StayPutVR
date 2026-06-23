@@ -12,8 +12,8 @@ namespace StayPutVR {
     void AudioManager::Initialize() {
         if (initialized_) return;
 
-        // Set the resources path to be relative to the executable
-        resources_path_ = GetAppDataPath() + "/resources";
+        // Resolve resources next to the executable first, then AppData.
+        resources_path_ = GetResourcesPath();
 
         // Check if resources directory exists
         if (!std::filesystem::exists(resources_path_)) {

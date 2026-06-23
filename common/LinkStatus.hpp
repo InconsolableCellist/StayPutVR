@@ -116,9 +116,9 @@ namespace StayPutVR {
 
         // base * 2^failures, clamped to cap.
         std::chrono::milliseconds CurrentDelay() const {
-            int shift = std::min(failures_, 20); // avoid shift overflow
+            int shift = (std::min)(failures_, 20); // avoid shift overflow
             long long ms = base_.count() * (1LL << shift);
-            return std::chrono::milliseconds(std::min<long long>(ms, cap_.count()));
+            return std::chrono::milliseconds((std::min<long long>)(ms, cap_.count()));
         }
 
     private:

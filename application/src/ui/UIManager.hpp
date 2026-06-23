@@ -92,9 +92,11 @@ namespace StayPutVR {
         bool exceeds_threshold = false;
         bool in_warning_zone = false;
         
-        // OpenShock/PiShock device selection - which shock IDs should be used for this device
-        std::array<bool, 5> shock_device_enabled = {false, false, false, false, false};
-        
+        // PiShock / OpenShock device selection - which shocker slots this device uses.
+        // Tracked separately so a device can bind PiShock and OpenShock independently.
+        std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+
         // Buttplug device selection - which vibration IDs should be used for this device
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
@@ -170,6 +172,7 @@ namespace StayPutVR {
         std::unique_ptr<SplashScreen> splash_;
         std::string assets_path_;            // resources dir (logo, whats_new.md, supporters)
         bool show_whats_new_ = false;
+        bool whats_new_focus_ = false;       // bring the window to front next frame
         bool whats_new_loaded_ = false;      // lazy-load whats_new.md once
         bool whats_new_checked_ = false;     // auto-show evaluated once per launch
         std::string whats_new_text_;
@@ -225,16 +228,23 @@ namespace StayPutVR {
 
         // Devices > Visual assignment view (effigy + drag-drop + per-slot config).
         void RenderVisualAssignment();
+        void RenderShockerPalette();
+        void ApplyIdBindingToDevice(DevicePosition& d, const char* code, bool enable);
+        void ApplyIdBindingToRole(DeviceRole role, const char* code);
+        void ApplyIdBindingToAllCuffs(const char* code, bool enable);
         void RenderSlotConfig(DeviceRole role);
         void LoadEffigyTexture();
         void AssignRoleToSerial(const std::string& serial, DeviceRole role);
         std::string SerialForRole(DeviceRole role) const;
         static const char* RoleName(DeviceRole role);
+        static const char* ShortRoleName(DeviceRole role);
 
         // Original UI elements (to be migrated to tabs)
         void RenderDeviceList();
         void RenderConfigControls();
         void RenderLockControls();
+        void RenderGlobalLockControls();
+        void RenderDeviceStatusTable();
         
         // Flag for window closing
         std::atomic<bool>* running_ptr_;

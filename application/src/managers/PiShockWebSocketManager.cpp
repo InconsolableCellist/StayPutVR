@@ -735,8 +735,8 @@ namespace StayPutVR {
                 }
             } else {
                 // Look up which shock devices are enabled for this device
-                auto shock_it = config_->device_shock_ids.find(device_serial);
-                if (shock_it != config_->device_shock_ids.end()) {
+                auto shock_it = config_->device_pishock_ids.find(device_serial);
+                if (shock_it != config_->device_pishock_ids.end()) {
                     for (int i = 0; i < 5; ++i) {
                         if (shock_it->second[i] && config_->pishock_shocker_ids[i] != 0) {
                             shocker_ids_to_use.push_back(config_->pishock_shocker_ids[i]);
@@ -745,23 +745,20 @@ namespace StayPutVR {
                     }
                 }
                 
-                // If no specific shock devices are configured for this device, use ALL configured devices as fallback
-                if (shocker_ids_to_use.empty()) {
-                    for (int i = 0; i < 5; ++i) {
-                        if (config_->pishock_shocker_ids[i] != 0) {
-                            shocker_ids_to_use.push_back(config_->pishock_shocker_ids[i]);
-                            device_indices.push_back(i);
-                        }
-                    }
-                }
+                // No fall-back to "all shockers" for a specific device: a device
+                // bound only to OpenShock (or nothing) must NOT fire PiShock. If
+                // there's no PiShock binding for this serial, shocker_ids_to_use
+                // stays empty and we return without firing below.
             }
             
             if (shocker_ids_to_use.empty()) {
-                SetError("No shocker devices configured");
+                if (device_serial.empty()) SetError("No shocker devices configured");
+                else Logger::Debug("PiShock: device " + device_serial + " has no PiShock binding; skipping");
                 return;
             }
 
-            Logger::Info("Sending PiShock Beep to " + std::to_string(shocker_ids_to_use.size()) + " device(s)");
+            Logger::Info("PiShock fire for device '" + (device_serial.empty() ? std::string("ALL") : device_serial) +
+                         "' -> " + std::to_string(shocker_ids_to_use.size()) + " shocker(s)");
 
             // Send command to all selected devices using multiple entries in a single message
             int duration_ms = (std::max)(1, (std::min)(15, duration)) * 1000;
@@ -805,8 +802,8 @@ namespace StayPutVR {
                 }
             } else {
                 // Look up which shock devices are enabled for this device
-                auto shock_it = config_->device_shock_ids.find(device_serial);
-                if (shock_it != config_->device_shock_ids.end()) {
+                auto shock_it = config_->device_pishock_ids.find(device_serial);
+                if (shock_it != config_->device_pishock_ids.end()) {
                     for (int i = 0; i < 5; ++i) {
                         if (shock_it->second[i] && config_->pishock_shocker_ids[i] != 0) {
                             shocker_ids_to_use.push_back(config_->pishock_shocker_ids[i]);
@@ -815,19 +812,15 @@ namespace StayPutVR {
                     }
                 }
                 
-                // If no specific shock devices are configured for this device, use ALL configured devices as fallback
-                if (shocker_ids_to_use.empty()) {
-                    for (int i = 0; i < 5; ++i) {
-                        if (config_->pishock_shocker_ids[i] != 0) {
-                            shocker_ids_to_use.push_back(config_->pishock_shocker_ids[i]);
-                            device_indices.push_back(i);
-                        }
-                    }
-                }
+                // No fall-back to "all shockers" for a specific device: a device
+                // bound only to OpenShock (or nothing) must NOT fire PiShock. If
+                // there's no PiShock binding for this serial, shocker_ids_to_use
+                // stays empty and we return without firing below.
             }
             
             if (shocker_ids_to_use.empty()) {
-                SetError("No shocker devices configured");
+                if (device_serial.empty()) SetError("No shocker devices configured");
+                else Logger::Debug("PiShock: device " + device_serial + " has no PiShock binding; skipping");
                 return;
             }
 
@@ -934,8 +927,8 @@ namespace StayPutVR {
                 }
             } else {
                 // Look up which shock devices are enabled for this device
-                auto shock_it = config_->device_shock_ids.find(device_serial);
-                if (shock_it != config_->device_shock_ids.end()) {
+                auto shock_it = config_->device_pishock_ids.find(device_serial);
+                if (shock_it != config_->device_pishock_ids.end()) {
                     for (int i = 0; i < 5; ++i) {
                         if (shock_it->second[i] && config_->pishock_shocker_ids[i] != 0) {
                             shocker_ids_to_use.push_back(config_->pishock_shocker_ids[i]);
@@ -944,19 +937,15 @@ namespace StayPutVR {
                     }
                 }
                 
-                // If no specific shock devices are configured for this device, use ALL configured devices as fallback
-                if (shocker_ids_to_use.empty()) {
-                    for (int i = 0; i < 5; ++i) {
-                        if (config_->pishock_shocker_ids[i] != 0) {
-                            shocker_ids_to_use.push_back(config_->pishock_shocker_ids[i]);
-                            device_indices.push_back(i);
-                        }
-                    }
-                }
+                // No fall-back to "all shockers" for a specific device: a device
+                // bound only to OpenShock (or nothing) must NOT fire PiShock. If
+                // there's no PiShock binding for this serial, shocker_ids_to_use
+                // stays empty and we return without firing below.
             }
             
             if (shocker_ids_to_use.empty()) {
-                SetError("No shocker devices configured");
+                if (device_serial.empty()) SetError("No shocker devices configured");
+                else Logger::Debug("PiShock: device " + device_serial + " has no PiShock binding; skipping");
                 return;
             }
 

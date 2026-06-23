@@ -298,7 +298,8 @@ public:
     std::unordered_map<std::string, std::string> device_names; // serial -> name
     std::unordered_map<std::string, bool> device_settings; // serial -> include_in_locking
     std::unordered_map<std::string, int> device_roles; // serial -> role (stored as int)
-    std::unordered_map<std::string, std::array<bool, 5>> device_shock_ids; // serial -> which shock IDs to use (for PiShock/OpenShock)
+    std::unordered_map<std::string, std::array<bool, 5>> device_pishock_ids;   // serial -> which PiShock shocker slots to use
+    std::unordered_map<std::string, std::array<bool, 5>> device_openshock_ids; // serial -> which OpenShock device slots to use
     std::unordered_map<std::string, std::array<bool, 5>> device_vibration_ids; // serial -> which vibration IDs to use (for Buttplug)
 };
 

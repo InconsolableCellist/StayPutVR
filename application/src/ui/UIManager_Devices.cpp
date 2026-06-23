@@ -4,6 +4,7 @@
 #include <string>
 #include <format>
 #include <algorithm>
+#include <cstdio>
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -94,11 +95,20 @@ namespace StayPutVR {
                 if (settingIt != config_.device_settings.end()) {
                     pos.include_in_locking = settingIt->second;
                     if (StayPutVR::Logger::IsInitialized()) {
-                        StayPutVR::Logger::Info("Applied include_in_locking setting for device: " + serial + " -> " + 
+                        StayPutVR::Logger::Info("Applied include_in_locking setting for device: " + serial + " -> " +
                                                 (pos.include_in_locking ? "true" : "false"));
                     }
                 }
-                
+
+                // Apply per-device shocker/vibrator bindings so the Visual view
+                // and managers see the saved selection immediately.
+                if (auto it2 = config_.device_pishock_ids.find(serial); it2 != config_.device_pishock_ids.end())
+                    pos.pishock_enabled = it2->second;
+                if (auto it2 = config_.device_openshock_ids.find(serial); it2 != config_.device_openshock_ids.end())
+                    pos.openshock_enabled = it2->second;
+                if (auto it2 = config_.device_vibration_ids.find(serial); it2 != config_.device_vibration_ids.end())
+                    pos.vibration_device_enabled = it2->second;
+
                 // Apply device role if available in config
                 auto roleIt = config_.device_roles.find(serial);
                 if (roleIt != config_.device_roles.end()) {
@@ -338,7 +348,7 @@ namespace StayPutVR {
             // Start countdown by playing countdown.wav once
             // The countdown.wav is a 3-second sound
             if (config_.audio.enabled) {
-                std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\countdown.wav";
+                std::string filePath = StayPutVR::GetResourcesPath() + "/countdown.wav";
                 if (std::filesystem::exists(filePath)) {
                     // Set timeout for the lock activation
                     countdown_active_ = true;
@@ -675,7 +685,7 @@ namespace StayPutVR {
             // Special case for success sound: Always play immediately when triggered, 
             // regardless of cooldown or other playing sounds
             if (success_triggered) {
-                std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\success.wav";
+                std::string filePath = StayPutVR::GetResourcesPath() + "/success.wav";
                 if (std::filesystem::exists(filePath)) {
                     if (StayPutVR::Logger::IsInitialized()) {
                         StayPutVR::Logger::Debug("Playing success.wav for return to safe zone");
@@ -703,7 +713,7 @@ namespace StayPutVR {
                 
                 // Out of bounds sound (disobedience.wav)
                 if (out_of_bounds_triggered && config_.audio.out_of_bounds) {
-                    std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+                    std::string filePath = StayPutVR::GetResourcesPath() + "/disobedience.wav";
                     if (std::filesystem::exists(filePath)) {
                         if (StayPutVR::Logger::IsInitialized()) {
                             StayPutVR::Logger::Debug("Playing disobedience.wav for out of bounds");
@@ -932,7 +942,7 @@ namespace StayPutVR {
         // (clamped to the rim so a far-out device renders at the edge, not off
         // screen). Center = each device's locked origin.
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        float canvas_size = std::min(avail.x, avail.y);
+        float canvas_size = (std::min)(avail.x, avail.y);
         if (canvas_size < 80.0f) canvas_size = 80.0f;
 
         ImVec2 canvas_pos = ImGui::GetCursorScreenPos();
@@ -977,16 +987,10 @@ namespace StayPutVR {
 
             draw_list->AddCircleFilled(device_pos, 5.0f, device_color);
 
-            std::string label = device.device_name;
-            if (label.empty()) {
-                switch (device.type) {
-                    case DeviceType::HMD: label = "HMD"; break;
-                    case DeviceType::CONTROLLER: label = "CTRL"; break;
-                    case DeviceType::TRACKER: label = "TRK"; break;
-                    case DeviceType::TRACKING_REFERENCE: label = "BASE"; break;
-                    default: label = "UNK"; break;
-                }
-            }
+            // Prefer the assigned role (HMD, R Hand, ...) over the raw device
+            // name/serial so the map reads clearly.
+            std::string label = ShortRoleName(device.role);
+            if (label.empty()) label = device.device_name.empty() ? device.serial : device.device_name;
             draw_list->AddText(ImVec2(device_pos.x + 7, device_pos.y - 7), device_color, label.c_str());
         }
 
@@ -1012,6 +1016,19 @@ namespace StayPutVR {
         }
     }
 
+    // Compact role label for the zone map / tight UI.
+    const char* UIManager::ShortRoleName(DeviceRole role) {
+        switch (role) {
+            case DeviceRole::HMD: return "HMD";
+            case DeviceRole::LeftController: return "L Hand";
+            case DeviceRole::RightController: return "R Hand";
+            case DeviceRole::Hip: return "Hip";
+            case DeviceRole::LeftFoot: return "L Foot";
+            case DeviceRole::RightFoot: return "R Foot";
+            default: return "";
+        }
+    }
+
     std::string UIManager::SerialForRole(DeviceRole role) const {
         if (role == DeviceRole::None) return "";
         for (const auto& d : device_positions_)
@@ -1033,6 +1050,28 @@ namespace StayPutVR {
             if (d.serial == serial) {
                 d.role = role;
                 config_.device_roles[serial] = static_cast<int>(role);
+
+                if (role != DeviceRole::None) {
+                    // Default a newly-assigned device to participate in Lock All,
+                    // unless the user has already chosen a setting for it.
+                    if (config_.device_settings.find(serial) == config_.device_settings.end()) {
+                        d.include_in_locking = true;
+                        config_.device_settings[serial] = true;
+                    }
+                    // Default to all configured PiShock shockers, only on first
+                    // assignment so manual edits stick.
+                    if (config_.device_pishock_ids.find(serial) == config_.device_pishock_ids.end()) {
+                        for (int i = 0; i < 5; ++i)
+                            if (config_.pishock_shocker_ids[i] != 0) d.pishock_enabled[i] = true;
+                        config_.device_pishock_ids[serial] = d.pishock_enabled;
+                    }
+                    // And to all configured OpenShock devices.
+                    if (config_.device_openshock_ids.find(serial) == config_.device_openshock_ids.end()) {
+                        for (int i = 0; i < 5; ++i)
+                            if (!config_.openshock_device_ids[i].empty()) d.openshock_enabled[i] = true;
+                        config_.device_openshock_ids[serial] = d.openshock_enabled;
+                    }
+                }
             }
         }
         SaveConfig();
@@ -1042,10 +1081,7 @@ namespace StayPutVR {
         if (effigy_load_attempted_) return;
         effigy_load_attempted_ = true;
 
-        std::string path = GetAppDataPath() + "/resources/effigy.png";
-        if (!std::filesystem::exists(path) && std::filesystem::exists("./resources/effigy.png")) {
-            path = "./resources/effigy.png";
-        }
+        std::string path = GetResourcesPath() + "/effigy.png";
         if (!std::filesystem::exists(path)) {
             if (Logger::IsInitialized()) Logger::Info("UIManager: effigy.png not found; Visual tab uses a wireframe placeholder");
             return;
@@ -1072,6 +1108,102 @@ namespace StayPutVR {
         effigy_tex_h_ = h;
     }
 
+    // Palette of draggable ID chips for the Visual tab, grouped by integration:
+    // PiShock (blue) and OpenShock (red) bind independently even when they share a
+    // slot number; Buttplug/BPIO (purple) is separate. Each category also has an
+    // "All" chip. Drag a chip onto a body slot to bind that ID to the slot's
+    // device. Payload code: category 'P'/'O'/'V' + index '0'..'4' or 'A' for all.
+    void UIManager::RenderShockerPalette() {
+        auto chip = [&](const char* label, const char* code, ImVec4 color) {
+            ImGui::PushStyleColor(ImGuiCol_Button, color);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                  ImVec4(color.x + 0.12f, color.y + 0.12f, color.z + 0.12f, 1.0f));
+            ImGui::SmallButton(label);
+            ImGui::PopStyleColor(2);
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                ImGui::SetDragDropPayload("SPVR_SHOCKID", code, 3);
+                ImGui::Text("Bind %s", label);
+                ImGui::EndDragDropSource();
+            }
+        };
+        const ImVec4 blue(0.20f, 0.45f, 0.85f, 1.0f);
+        const ImVec4 red(0.80f, 0.25f, 0.25f, 1.0f);
+        const ImVec4 purple(0.55f, 0.30f, 0.80f, 1.0f);
+
+        // One category row: a colored header, a chip per configured slot (0-based
+        // label to match the PiShock/OpenShock panels), then an "All" chip.
+        auto category = [&](const char* name, char cat, ImVec4 color, const char* prefix,
+                            auto configured) {
+            ImGui::TextColored(color, "%s:", name);
+            bool any = false;
+            for (int i = 0; i < 5; ++i) {
+                if (!configured(i)) continue;
+                any = true;
+                ImGui::SameLine();
+                char lbl[8]; std::snprintf(lbl, sizeof(lbl), "%s%d", prefix, i);
+                char code[3] = { cat, (char)('0' + i), 0 };
+                ImGui::PushID((int)cat * 100 + i);
+                chip(lbl, code, color);
+                ImGui::PopID();
+            }
+            if (any) {
+                ImGui::SameLine();
+                char code[3] = { cat, 'A', 0 };
+                ImGui::PushID((int)cat * 100 + 99);
+                chip("All", code, color);
+                ImGui::PopID();
+            } else {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(none configured)");
+            }
+        };
+
+        category("PiShock", 'P', blue, "S",
+                 [&](int i){ return config_.pishock_shocker_ids[i] != 0; });
+        category("OpenShock", 'O', red, "S",
+                 [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+        category("BPIO", 'V', purple, "V",
+                 [&](int i){ return config_.buttplug_device_indices[i] >= 0; });
+    }
+
+    // Bind (enable=true) or unbind (enable=false) a dragged ID chip (payload
+    // code) on one device. Updates the device flags and the matching config map.
+    void UIManager::ApplyIdBindingToDevice(DevicePosition& d, const char* code, bool enable) {
+        if (!code) return;
+        const char cat = code[0], sel = code[1];
+        auto set = [&](std::array<bool, 5>& arr, auto configured) {
+            if (sel == 'A') { for (int i = 0; i < 5; ++i) if (configured(i)) arr[i] = enable; }
+            else { int i = sel - '0'; if (i >= 0 && i < 5 && configured(i)) arr[i] = enable; }
+        };
+        if (cat == 'P') {
+            set(d.pishock_enabled, [&](int i){ return config_.pishock_shocker_ids[i] != 0; });
+            config_.device_pishock_ids[d.serial] = d.pishock_enabled;
+        } else if (cat == 'O') {
+            set(d.openshock_enabled, [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+            config_.device_openshock_ids[d.serial] = d.openshock_enabled;
+        } else if (cat == 'V') {
+            set(d.vibration_device_enabled, [&](int i){ return config_.buttplug_device_indices[i] >= 0; });
+            config_.device_vibration_ids[d.serial] = d.vibration_device_enabled;
+        }
+    }
+
+    // Apply a dragged ID chip to the device assigned to a slot.
+    void UIManager::ApplyIdBindingToRole(DeviceRole role, const char* code) {
+        std::string serial = SerialForRole(role);
+        if (serial.empty()) return;
+        for (auto& x : device_positions_)
+            if (x.serial == serial) { ApplyIdBindingToDevice(x, code, true); break; }
+        SaveConfig();
+    }
+
+    // Apply/remove a dragged ID chip across every assigned cuff (device with a
+    // role) at once.
+    void UIManager::ApplyIdBindingToAllCuffs(const char* code, bool enable) {
+        for (auto& x : device_positions_)
+            if (x.role != DeviceRole::None) ApplyIdBindingToDevice(x, code, enable);
+        SaveConfig();
+    }
+
     void UIManager::RenderVisualAssignment() {
         LoadEffigyTexture();
 
@@ -1090,8 +1222,13 @@ namespace StayPutVR {
             { DeviceRole::RightFoot,       "R Foot",     0.549f, 0.792f },
         };
 
-        const float effigyH = 380.0f;
-        float effigyW = ImGui::GetContentRegionAvail().x * 0.42f;
+        // Take all remaining vertical space; reserve room for the slot-config
+        // panel below when a slot is selected.
+        float avail_h = ImGui::GetContentRegionAvail().y;
+        float config_h = (selected_slot_role_ != DeviceRole::None) ? 175.0f : 0.0f;
+        float effigyH = avail_h - config_h - 8.0f;
+        if (effigyH < 240.0f) effigyH = 240.0f;
+        float effigyW = ImGui::GetContentRegionAvail().x * 0.50f;
         if (effigyW < 160.0f) effigyW = 160.0f;
 
         // ---- LEFT: effigy + slot hotspots ----
@@ -1102,9 +1239,20 @@ namespace StayPutVR {
             float aspect = (effigy_tex_h_ > 0) ? (float)effigy_tex_w_ / (float)effigy_tex_h_ : 0.50f;
             float imgW = imgH * aspect;
             ImVec2 origin = ImGui::GetCursorScreenPos();
+            ImVec2 paneOrigin = origin; // child top-left, before centering the image
             float xpad = (box.x - imgW) * 0.5f; if (xpad < 0.0f) xpad = 0.0f;
             origin.x += xpad;
             ImDrawList* dl = ImGui::GetWindowDrawList();
+
+            // Outlined text so labels/IDs stay legible over the busy effigy art.
+            auto drawOutlined = [&](ImVec2 p, ImU32 col, const char* t) {
+                const ImU32 sh = IM_COL32(0, 0, 0, 230);
+                dl->AddText(ImVec2(p.x + 1, p.y), sh, t);
+                dl->AddText(ImVec2(p.x - 1, p.y), sh, t);
+                dl->AddText(ImVec2(p.x, p.y + 1), sh, t);
+                dl->AddText(ImVec2(p.x, p.y - 1), sh, t);
+                dl->AddText(p, col, t);
+            };
 
             if (effigy_tex_ != 0) {
                 dl->AddImage((ImTextureID)(intptr_t)effigy_tex_, origin, ImVec2(origin.x + imgW, origin.y + imgH));
@@ -1132,6 +1280,9 @@ namespace StayPutVR {
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_DEVICE")) {
                         std::string serial(static_cast<const char*>(p->Data));
                         AssignRoleToSerial(serial, s.role);
+                    }
+                    if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID")) {
+                        ApplyIdBindingToRole(s.role, static_cast<const char*>(p->Data));
                     }
                     ImGui::EndDragDropTarget();
                 }
@@ -1166,28 +1317,110 @@ namespace StayPutVR {
                 bool label_left = (s.ux < 0.45f);
                 ImVec2 tpos = label_left ? ImVec2(c.x - hot/2 - 3 - tsz.x, c.y - 7)
                                          : ImVec2(c.x + hot/2 + 3, c.y - 7);
-                ImU32 label_col = filled ? status_col : IM_COL32(170, 180, 200, 200);
-                dl->AddText(tpos, label_col, s.label);
+                ImU32 label_col = filled ? status_col : IM_COL32(190, 200, 220, 230);
+                drawOutlined(tpos, label_col, s.label);
+
+                // Bound shocker/vibrator IDs drawn above the circle: blue = PiShock,
+                // red = OpenShock, purple = BPIO.
+                if (filled) {
+                    const DevicePosition* dev = nullptr;
+                    for (const auto& d : device_positions_) if (d.serial == serial) { dev = &d; break; }
+                    if (dev) {
+                        const ImU32 cb = IM_COL32(120, 190, 255, 255); // PiShock (bright blue)
+                        const ImU32 cr = IM_COL32(255, 120, 120, 255); // OpenShock (bright red)
+                        const ImU32 cp = IM_COL32(220, 150, 255, 255); // BPIO (bright purple)
+                        auto forTokens = [&](auto emit) {
+                            for (int i = 0; i < 5; ++i)
+                                if (dev->pishock_enabled[i] && config_.pishock_shocker_ids[i] != 0) {
+                                    char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cb);
+                                }
+                            for (int i = 0; i < 5; ++i)
+                                if (dev->openshock_enabled[i] && !config_.openshock_device_ids[i].empty()) {
+                                    char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cr);
+                                }
+                            for (int i = 0; i < 5; ++i)
+                                if (dev->vibration_device_enabled[i] && config_.buttplug_device_indices[i] >= 0) {
+                                    char t[6]; std::snprintf(t, 6, "V%d", i); emit(t, cp);
+                                }
+                        };
+                        float tw = 0.0f;
+                        forTokens([&](const char* t, ImU32){ tw += ImGui::CalcTextSize(t).x + 4.0f; });
+                        if (tw > 0.0f) {
+                            float sx = c.x - tw * 0.5f;
+                            float sy = c.y - hot/2 - 16.0f;
+                            if (sy < origin.y + 1.0f) sy = c.y + hot/2 + 2.0f; // top slot: draw below
+                            forTokens([&](const char* t, ImU32 col){
+                                drawOutlined(ImVec2(sx, sy), col, t);
+                                sx += ImGui::CalcTextSize(t).x + 4.0f;
+                            });
+                        }
+                    }
+                }
             }
+            // Top-left drop targets: bind/unbind a dragged ID across every
+            // assigned cuff at once (in addition to dropping on a single slot).
+            ImGui::SetCursorScreenPos(ImVec2(paneOrigin.x + 2.0f, paneOrigin.y + 2.0f));
+            ImGui::BeginGroup();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.72f, 0.34f, 1.0f));
+            ImGui::Button("All Cuffs");
+            ImGui::PopStyleColor(2);
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID"))
+                    ApplyIdBindingToAllCuffs(static_cast<const char*>(p->Data), true);
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 0.95f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.28f, 0.28f, 1.0f));
+            ImGui::Button("Remove From All Cuffs");
+            ImGui::PopStyleColor(2);
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID"))
+                    ApplyIdBindingToAllCuffs(static_cast<const char*>(p->Data), false);
+                ImGui::EndDragDropTarget();
+            }
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.88f, 0.95f, 1.0f));
+            ImGui::TextUnformatted("(drag IDs into here");
+            ImGui::TextUnformatted("or onto individual devices)");
+            ImGui::PopStyleColor();
+            ImGui::EndGroup();
+
             ImGui::SetCursorScreenPos(origin);
             ImGui::Dummy(box);
+
+            // Click on empty effigy space (no slot/button under the cursor)
+            // deselects the current slot and closes the config panel below.
+            if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() &&
+                ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                selected_slot_role_ = DeviceRole::None;
+            }
         }
         ImGui::EndChild();
 
         ImGui::SameLine();
 
-        // ---- RIGHT: detected devices with heat + drag source ----
-        ImGui::BeginChild("DeviceListPane", ImVec2(0, effigyH), true);
-        ImGui::TextWrapped("Drag a device onto an avatar slot to assign it. Wiggle a tracker in "
-                           "SteamVR to find it (its heat bar lights up). Click a slot to configure it.");
-        ImGui::Separator();
+        // ---- RIGHT (neutral space): ID palette on top, device list below ----
+        ImGui::BeginChild("RightPane", ImVec2(0, effigyH), false);
+        ImGui::TextWrapped("Drag a device onto a body slot to assign it. Drag an ID chip onto a "
+                           "body slot to bind a shocker/vibrator. Click a device or slot to configure it.");
+        ImGui::SeparatorText("Available IDs (drag onto a body slot)");
+        RenderShockerPalette();
+
+        ImGui::SeparatorText("Devices");
+        ImGui::BeginChild("DeviceList", ImVec2(0, 0), true);
         if (device_positions_.empty()) {
             ImGui::TextDisabled("No devices detected (SteamVR not connected?).");
         }
         for (auto& d : device_positions_) {
             ImGui::PushID(d.serial.c_str());
             std::string row = d.device_name.empty() ? d.serial : d.device_name;
-            ImGui::Selectable(row.c_str(), false, 0, ImVec2(ImGui::GetContentRegionAvail().x * 0.45f, 0));
+
+            // Name selectable: drag source to assign to a slot; click selects the
+            // device's slot for configuration.
+            bool is_sel = (d.role != DeviceRole::None && d.role == selected_slot_role_);
+            if (ImGui::Selectable(row.c_str(), is_sel, 0, ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0))) {
+                if (d.role != DeviceRole::None) selected_slot_role_ = d.role;
+            }
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
                 ImGui::SetDragDropPayload("SPVR_DEVICE", d.serial.c_str(), d.serial.size() + 1);
                 ImGui::Text("Assign %s", row.c_str());
@@ -1207,6 +1440,7 @@ namespace StayPutVR {
             ImGui::PopID();
         }
         ImGui::EndChild();
+        ImGui::EndChild();
 
         // ---- Per-slot configure panel ----
         if (selected_slot_role_ != DeviceRole::None) {
@@ -1217,6 +1451,11 @@ namespace StayPutVR {
 
     void UIManager::RenderSlotConfig(DeviceRole role) {
         ImGui::Text("Configure slot: %s", RoleName(role));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Close")) {
+            selected_slot_role_ = DeviceRole::None;
+            return;
+        }
         std::string serial = SerialForRole(role);
         if (serial.empty()) {
             ImGui::TextDisabled("No device assigned. Drag one onto this slot.");
@@ -1234,35 +1473,72 @@ namespace StayPutVR {
             return;
         }
 
+        // Lock/unlock just this device.
+        if (dev->locked) {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
+            if (ImGui::Button("Unlock This Device")) {
+                LockDevicePosition(serial, false);
+                if (config_.audio.enabled && config_.audio.unlock)
+                    AudioManager::PlayUnlockSound(config_.audio.volume);
+            }
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.5f, 1.0f, 1.0f));
+            if (ImGui::Button("Lock This Device")) {
+                LockDevicePosition(serial, true);
+                if (config_.audio.enabled && config_.audio.lock)
+                    AudioManager::PlayLockSound(config_.audio.volume);
+            }
+            ImGui::PopStyleColor();
+        }
+
         bool inc = dev->include_in_locking;
-        if (ImGui::Checkbox("Include in locking", &inc)) {
+        if (ImGui::Checkbox("Include in Lock All", &inc)) {
             dev->include_in_locking = inc;
             config_.device_settings[serial] = inc;
             SaveConfig();
         }
 
-        // Shockers — reuse the existing 5 configured PiShock/OpenShock slots.
-        ImGui::Text("Shockers:");
-        bool any_shock = false;
+        // PiShock — the configured shocker slots (0-based to match the panel).
+        ImGui::TextColored(ImVec4(0.45f, 0.65f, 1.0f, 1.0f), "PiShock:");
+        bool any_ps = false;
         for (int i = 0; i < 5; ++i) {
-            bool has = (config_.pishock_shocker_ids[i] != 0) || !config_.openshock_device_ids[i].empty();
-            if (!has) continue;
-            any_shock = true;
+            if (config_.pishock_shocker_ids[i] == 0) continue;
+            any_ps = true;
             ImGui::SameLine();
             ImGui::PushID(1000 + i);
-            bool on = dev->shock_device_enabled[i];
-            std::string lbl = std::to_string(i + 1);
+            bool on = dev->pishock_enabled[i];
+            std::string lbl = std::to_string(i);
             if (ImGui::Checkbox(lbl.c_str(), &on)) {
-                dev->shock_device_enabled[i] = on;
-                config_.device_shock_ids[serial] = dev->shock_device_enabled;
+                dev->pishock_enabled[i] = on;
+                config_.device_pishock_ids[serial] = dev->pishock_enabled;
                 SaveConfig();
             }
             ImGui::PopID();
         }
-        if (!any_shock) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+        if (!any_ps) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
+        // OpenShock — the configured device slots.
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "OpenShock:");
+        bool any_os = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.openshock_device_ids[i].empty()) continue;
+            any_os = true;
+            ImGui::SameLine();
+            ImGui::PushID(1500 + i);
+            bool on = dev->openshock_enabled[i];
+            std::string lbl = std::to_string(i);
+            if (ImGui::Checkbox(lbl.c_str(), &on)) {
+                dev->openshock_enabled[i] = on;
+                config_.device_openshock_ids[serial] = dev->openshock_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_os) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
 
         // Vibration — the 5 configured Buttplug device indices.
-        ImGui::Text("Vibration:");
+        ImGui::Text("Vibration (Buttplug / BPIO):");
         bool any_vibe = false;
         for (int i = 0; i < 5; ++i) {
             if (config_.buttplug_device_indices[i] < 0) continue;
@@ -1270,7 +1546,7 @@ namespace StayPutVR {
             ImGui::SameLine();
             ImGui::PushID(2000 + i);
             bool on = dev->vibration_device_enabled[i];
-            std::string lbl = std::to_string(i + 1);
+            std::string lbl = std::to_string(i);
             if (ImGui::Checkbox(lbl.c_str(), &on)) {
                 dev->vibration_device_enabled[i] = on;
                 config_.device_vibration_ids[serial] = dev->vibration_device_enabled;
@@ -1289,12 +1565,6 @@ namespace StayPutVR {
             // Visual: the avatar-effigy assignment view; shown first as the default.
             if (ImGui::BeginTabItem("Visual")) {
                 RenderVisualAssignment();
-                ImGui::Spacing();
-                ImGui::Separator();
-                ImGui::Text("Live boundary zones (distance from each device's locked origin):");
-                ImGui::BeginChild("VisualZoneMap", ImVec2(0, 300), true);
-                RenderZoneMap();
-                ImGui::EndChild();
                 ImGui::EndTabItem();
             }
 
@@ -1601,52 +1871,21 @@ namespace StayPutVR {
                 ImGui::TableNextColumn();
                 ImGui::PushID(("lockControls" + device.serial).c_str());
                 
-                // Include in locking toggle button
-                if (device.include_in_locking) {
-                    // Green "Will Lock" button
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.9f, 0.3f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.7f, 0.1f, 1.0f));
-                    
-                    if (ImGui::Button("Will Lock", ImVec2(80, 25))) {
-                        device.include_in_locking = false;
-                        
-                        // Update the setting in config directly
-                        config_.device_settings[device.serial] = false;
-                        
-                        // Save the setting immediately
-                        if (StayPutVR::Logger::IsInitialized()) {
-                            StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to false");
-                        }
-                        SaveConfig();
+                // "Include in Lock All" checkbox: whether the Status tab's
+                // Lock All (and the OSC global lock) affects this device. Clearer
+                // than the old Will/Won't Lock toggle button.
+                bool include = device.include_in_locking;
+                if (ImGui::Checkbox("Include in Lock All", &include)) {
+                    device.include_in_locking = include;
+                    config_.device_settings[device.serial] = include;
+                    if (StayPutVR::Logger::IsInitialized()) {
+                        StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to " +
+                                                (include ? "true" : "false"));
                     }
-                    
-                    ImGui::PopStyleColor(3);
-                } else {
-                    // Red "Won't Lock" button
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.3f, 0.3f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.7f, 0.1f, 0.1f, 1.0f));
-                    
-                    if (ImGui::Button("Won't Lock", ImVec2(80, 25))) {
-                        device.include_in_locking = true;
-                        
-                        // Update the setting in config directly
-                        config_.device_settings[device.serial] = true;
-                        
-                        // Save the setting immediately
-                        if (StayPutVR::Logger::IsInitialized()) {
-                            StayPutVR::Logger::Info("Device " + device.serial + " include_in_locking set to true");
-                        }
-                        SaveConfig();
-                    }
-                    
-                    ImGui::PopStyleColor(3);
+                    SaveConfig();
                 }
-                
-                // Individual lock/unlock button on the same line
-                ImGui::SameLine();
-                
+
+                // Individual lock/unlock button for this device.
                 if (device.locked) {
                     // Orange "Unlock" button
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(1.0f, 0.5f, 0.0f, 1.0f));
@@ -1693,69 +1932,58 @@ namespace StayPutVR {
                 
                 ImGui::PopID();
                 
-                // Shock Devices column - NEW ADDITION
+                // Shock Devices column: PiShock and OpenShock, bound separately.
                 ImGui::TableNextColumn();
                 ImGui::PushID(("shockDevices" + device.serial).c_str());
-                
-                // Load device shock settings from config
-                auto shock_it = config_.device_shock_ids.find(device.serial);
-                if (shock_it != config_.device_shock_ids.end()) {
-                    device.shock_device_enabled = shock_it->second;
+
+                // Sync in-memory selection from config.
+                {
+                    auto ps_it = config_.device_pishock_ids.find(device.serial);
+                    if (ps_it != config_.device_pishock_ids.end()) device.pishock_enabled = ps_it->second;
+                    auto os_it = config_.device_openshock_ids.find(device.serial);
+                    if (os_it != config_.device_openshock_ids.end()) device.openshock_enabled = os_it->second;
                 }
-                
-                // Small buttons for shock device selection (1-5)
-                ImGui::Text("Shock IDs:");
-                for (int i = 0; i < 5; ++i) {
-                    // Show button if either OpenShock or PiShock device is configured
-                    bool has_device = !config_.openshock_device_ids[i].empty() || config_.pishock_shocker_ids[i] != 0;
-                    if (has_device) {
+
+                // One toggle row for a category (configured() gates which slots
+                // show; on_color tints enabled buttons). 0-based labels.
+                auto shock_row = [&](const char* name, std::array<bool, 5>& sel,
+                                     std::unordered_map<std::string, std::array<bool, 5>>& store,
+                                     ImVec4 on_color, auto configured) {
+                    ImGui::TextUnformatted(name);
+                    ImGui::SameLine();
+                    bool any = false;
+                    for (int i = 0; i < 5; ++i) {
+                        if (!configured(i)) continue;
+                        any = true;
                         ImGui::PushID(i);
-                        
-                        // Color the button based on whether it's enabled
-                        if (device.shock_device_enabled[i]) {
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.9f, 0.3f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.7f, 0.1f, 1.0f));
+                        if (sel[i]) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, on_color);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                ImVec4(on_color.x + 0.1f, on_color.y + 0.1f, on_color.z + 0.1f, 1.0f));
                         } else {
                             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
                         }
-                        
-                        if (ImGui::Button(std::to_string(i + 1).c_str(), ImVec2(25, 25))) {
-                            device.shock_device_enabled[i] = !device.shock_device_enabled[i];
-                            config_.device_shock_ids[device.serial] = device.shock_device_enabled;
+                        if (ImGui::Button(std::to_string(i).c_str(), ImVec2(25, 22))) {
+                            sel[i] = !sel[i];
+                            store[device.serial] = sel;
                             SaveConfig();
                         }
-                        
-                        ImGui::PopStyleColor(3);
+                        ImGui::PopStyleColor(2);
                         ImGui::PopID();
-                        
-                        if (i < 4) ImGui::SameLine();
+                        ImGui::SameLine();
                     }
-                }
-                
-                // All/None buttons
-                ImGui::NewLine();
-                if (ImGui::Button("All", ImVec2(40, 20))) {
-                    for (int i = 0; i < 5; ++i) {
-                        bool has_device = !config_.openshock_device_ids[i].empty() || config_.pishock_shocker_ids[i] != 0;
-                        if (has_device) {
-                            device.shock_device_enabled[i] = true;
-                        }
-                    }
-                    config_.device_shock_ids[device.serial] = device.shock_device_enabled;
-                    SaveConfig();
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("None", ImVec2(40, 20))) {
-                    for (int i = 0; i < 5; ++i) {
-                        device.shock_device_enabled[i] = false;
-                    }
-                    config_.device_shock_ids[device.serial] = device.shock_device_enabled;
-                    SaveConfig();
-                }
-                
+                    if (!any) { ImGui::TextDisabled("(none)"); }
+                    else      { ImGui::NewLine(); }
+                };
+
+                shock_row("PiShock  ", device.pishock_enabled, config_.device_pishock_ids,
+                          ImVec4(0.20f, 0.45f, 0.85f, 1.0f),
+                          [&](int i){ return config_.pishock_shocker_ids[i] != 0; });
+                shock_row("OpenShock", device.openshock_enabled, config_.device_openshock_ids,
+                          ImVec4(0.80f, 0.25f, 0.25f, 1.0f),
+                          [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+
                 ImGui::PopID();
                 
                 // Vibration Devices column - for Buttplug integration

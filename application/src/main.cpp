@@ -97,14 +97,12 @@ static int RunStayPutVR() {
         StayPutVR::Logger::Info("Initializing audio system");
         StayPutVR::AudioManager::Initialize();
         
-        // Initialize OSC manager if enabled
-        if (config.osc_enabled) {
-            if (!StayPutVR::OSCManager::GetInstance().Initialize(config.osc_address, config.osc_send_port, config.osc_receive_port)) {
-                StayPutVR::Logger::Error("Failed to initialize OSC manager");
-                return 1;
-            }
-        }
-        
+        // OSC is initialized by UIManager::Initialize(), which binds an ephemeral
+        // receive port when OSCQuery is enabled (so it coexists with other OSC apps
+        // already holding 9001) and degrades gracefully on failure. Do NOT init it
+        // here: a fixed-port bind would either abort startup on a port conflict, or
+        // succeed and short-circuit (initialized_ guard) the proper ephemeral bind.
+
         // Create an instance of the UI manager
         StayPutVR::Logger::Info("Creating UIManager instance");
         StayPutVR::UIManager ui_manager;

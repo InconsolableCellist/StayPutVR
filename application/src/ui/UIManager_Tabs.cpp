@@ -57,13 +57,16 @@ namespace StayPutVR {
             return ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
         }
 
-        // Render one integration row: "● Name  state — detail  [Reconnect]" with
-        // the error (if any) on the following dim line. When show_reconnect is
-        // set, a trailing button is drawn; returns true the frame it is clicked.
+        // Render one integration row: "<dot> Name  state - detail  [Reconnect]"
+        // with the error (if any) on the following dim line. When show_reconnect
+        // is set, a trailing button is drawn; returns true the frame it's clicked.
         bool RenderLinkRow(const char* name, const LinkStatus& status, bool show_reconnect = false) {
             ImVec4 color = LinkStateColor(status.state);
-            ImGui::TextColored(color, "%s", "\xE2\x97\x8F"); // bullet dot (U+25CF)
-            ImGui::SameLine();
+            // Status dot drawn via ImGui::Bullet() (a rendered glyph, not a font
+            // codepoint) so it shows regardless of the loaded font's ranges.
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::Bullet(); // Bullet() ends with an implicit SameLine()
+            ImGui::PopStyleColor();
             ImGui::Text("%-12s", name);
             ImGui::SameLine();
             if (status.detail.empty()) {
@@ -241,9 +244,12 @@ namespace StayPutVR {
         
         ImGui::EndChild();
 
-        // OSC quick controls so users don't need to open Settings > OSC just to
-        // start listening. Mirrors the enable/disable button on the OSC sub-tab.
-        ImGui::BeginChild("OSCQuickPanel", ImVec2(0, 0),
+        // OSC quick controls (left) sit next to the Global Lock controls (right)
+        // so the lock buttons stay visible near the top instead of being pushed
+        // off the bottom of the tab. Users don't need to open Settings > OSC just
+        // to start listening; this mirrors the enable/disable on the OSC sub-tab.
+        float quick_row_w = ImGui::GetContentRegionAvail().x;
+        ImGui::BeginChild("OSCQuickPanel", ImVec2(quick_row_w * 0.55f, 0),
                           ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
         ImGui::Text("OSC");
         ImGui::SameLine();
@@ -278,6 +284,13 @@ namespace StayPutVR {
             "Integrations > OSC Triggers; change parameter paths in Settings > OSC.");
         ImGui::EndChild();
 
+        // Global Lock controls, to the right of the OSC controls.
+        ImGui::SameLine();
+        ImGui::BeginChild("GlobalLockPanel", ImVec2(0, 0),
+                          ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+        RenderGlobalLockControls();
+        ImGui::EndChild();
+
         // Communication health for every enabled integration.
         RenderConnectionStatusPanel();
 
@@ -287,7 +300,7 @@ namespace StayPutVR {
             ImGui::BeginChild("EmergencyStopPanel", ImVec2(0, 80), true);
             
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.2f, 0.2f, 1.0f)); // Red text
-            ImGui::Text("⚠️ EMERGENCY STOP MODE ACTIVE ⚠️");
+            ImGui::Text("!! EMERGENCY STOP MODE ACTIVE !!");
             ImGui::PopStyleColor();
             
             ImGui::Text("All locking and disobedience actions are disabled.");
@@ -420,60 +433,106 @@ namespace StayPutVR {
         
         ImGui::Columns(1);
         
-        // Device visualization with all boundary rings
+        // Device visualization (left) with a per-device status table (right).
         ImGui::BeginChild("DeviceVisualization", ImVec2(0, 300), true);
         ImGui::Text("Device Positions:");
         ImGui::Separator();
-        
+
+        float map_w = ImGui::GetContentRegionAvail().x * 0.5f;
+        ImGui::BeginChild("ZoneMapPane", ImVec2(map_w, 0), false);
         RenderZoneMap();
-        
         ImGui::EndChild();
-        
-        // Add the lock button at the bottom of the Main tab
-        ImGui::Separator();
-        ImGui::Text("Global Lock Controls:");
-        ImGui::TextWrapped("This affects all devices marked as 'Will Lock' in the Devices tab. Individual devices can be locked/unlocked in the Devices tab.");
+
+        ImGui::SameLine();
+
+        ImGui::BeginChild("DeviceStatusTable", ImVec2(0, 0), false);
+        RenderDeviceStatusTable();
+        ImGui::EndChild();
+
+        ImGui::EndChild();
+    }
+
+    // Per-device status table shown beside the zone map on the Status tab: role,
+    // lock state, and live distance from the locked origin.
+    void UIManager::RenderDeviceStatusTable() {
+        if (ImGui::BeginTable("StatusTable", 3,
+                ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+            ImGui::TableSetupColumn("Device");
+            ImGui::TableSetupColumn("State");
+            ImGui::TableSetupColumn("Dist");
+            ImGui::TableHeadersRow();
+
+            for (const auto& device : device_positions_) {
+                bool active = device.locked || (device.include_in_locking && global_lock_active_);
+                if (!active && device.role == DeviceRole::None) continue;
+
+                ImGui::TableNextRow();
+
+                // Device: role name if assigned, else the serial.
+                ImGui::TableNextColumn();
+                const char* role = ShortRoleName(device.role);
+                if (role[0] != '\0') ImGui::TextUnformatted(role);
+                else ImGui::TextUnformatted(device.device_name.empty() ? device.serial.c_str()
+                                                                       : device.device_name.c_str());
+
+                // State + live distance from the locked origin.
+                float dist = 0.0f;
+                if (active) {
+                    float dx = device.position[0] - device.original_position[0];
+                    float dz = device.position[2] - device.original_position[2];
+                    dist = std::sqrt(dx * dx + dz * dz);
+                }
+                const char* state; ImVec4 col;
+                if (!active) { state = "unlocked"; col = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); }
+                else if (dist > position_threshold_) { state = "out"; col = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); }
+                else if (dist > warning_threshold_)  { state = "warning"; col = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); }
+                else { state = "locked"; col = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); }
+
+                ImGui::TableNextColumn();
+                ImGui::TextColored(col, "%s", state);
+                ImGui::TableNextColumn();
+                if (active) ImGui::TextColored(col, "%.2f m", dist);
+                else ImGui::TextDisabled("-");
+            }
+            ImGui::EndTable();
+        }
+    }
+
+    // Compact "(Un)Lock All" control shown next to the OSC controls on the Status
+    // tab. Locks/unlocks every device whose "Include in Lock All" box is checked
+    // (Devices tab); individual devices can still be locked one at a time there.
+    void UIManager::RenderGlobalLockControls() {
+        ImGui::Text("Global Lock");
+
+        int included = 0;
+        for (const auto& device : device_positions_) {
+            if (device.include_in_locking) included++;
+        }
 
         if (!global_lock_active_) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f)); // Green
-            if (ImGui::Button("Lock All Included Devices", ImVec2(250, 40))) {
+            if (ImGui::Button("Lock All", ImVec2(120, 30))) {
                 ActivateGlobalLock(true);
             }
             ImGui::PopStyleColor();
-            
-            // Prompt to select devices if none are selected
-            int devices_to_lock = 0;
-            for (const auto& device : device_positions_) {
-                if (device.include_in_locking) {
-                    devices_to_lock++;
-                }
-            }
-            
-            if (devices_to_lock == 0) {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Select devices to lock in the Devices tab first");
+            ImGui::SameLine();
+            if (included == 0) {
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "No devices included");
             } else {
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.0f, 0.7f, 0.0f, 1.0f), "%d device(s) will be locked", devices_to_lock);
+                ImGui::TextDisabled("%d device(s) included", included);
             }
         } else {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f)); // Red
-            if (ImGui::Button("Unlock All Included Devices", ImVec2(250, 40))) {
+            if (ImGui::Button("Unlock All", ImVec2(120, 30))) {
                 ActivateGlobalLock(false);
             }
             ImGui::PopStyleColor();
-            
-            // Count locked devices
-            int locked_devices = 0;
-            for (const auto& device : device_positions_) {
-                if (device.include_in_locking) {
-                    locked_devices++;
-                }
-            }
-            
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "%d device(s) will be unlocked", locked_devices);
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Active (%d device(s))", included);
         }
+
+        ImGui::TextDisabled("Choose which devices via \"Include in Lock All\"");
+        ImGui::TextDisabled("in the Devices tab;");
     }
 
     void UIManager::RenderNotificationsTab() {
@@ -536,7 +595,7 @@ namespace StayPutVR {
         ImGui::SameLine();
         
         if (ImGui::Button("Test Disobedience Sound")) {
-            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+            std::string filePath = StayPutVR::GetResourcesPath() + "/disobedience.wav";
             if (std::filesystem::exists(filePath)) {
                 AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
             } else {
@@ -551,7 +610,7 @@ namespace StayPutVR {
         ImGui::SameLine();
         
         if (ImGui::Button("Test Success Sound")) {
-            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\success.wav";
+            std::string filePath = StayPutVR::GetResourcesPath() + "/success.wav";
             if (std::filesystem::exists(filePath)) {
                 AudioManager::PlaySound("success.wav", config_.audio.volume);
             } else {
@@ -577,7 +636,7 @@ namespace StayPutVR {
         ImGui::SameLine();
         
         if (ImGui::Button("Test Countdown Sound")) {
-            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\countdown.wav";
+            std::string filePath = StayPutVR::GetResourcesPath() + "/countdown.wav";
             if (std::filesystem::exists(filePath)) {
                 AudioManager::PlaySound("countdown.wav", config_.audio.volume);
             } else {
@@ -817,7 +876,7 @@ namespace StayPutVR {
                     std::string appDataPath = GetAppDataPath();
                     std::string logPath = appDataPath + "/logs";
                     std::string configPath = appDataPath + "/config";
-                    std::string resourcesPath = appDataPath + "/resources";
+                    std::string resourcesPath = GetResourcesPath();
                     ImGui::Text("Settings Path: %s", configPath.c_str());
                     ImGui::Text("Log Path: %s", logPath.c_str());
                     ImGui::Text("Resources Path: %s", resourcesPath.c_str());

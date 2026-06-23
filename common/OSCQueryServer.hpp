@@ -75,7 +75,8 @@ private:
 
     std::thread mdns_browse_thread_;
     std::thread mdns_listen_thread_;
-    int mdns_socket_ = -1;
+    std::mutex mdns_sockets_mutex_;
+    std::vector<int> mdns_sockets_; // one mDNS listen socket per local interface
     std::atomic<bool> mdns_advertising_{false};
 
     mutable std::mutex vrc_mutex_;

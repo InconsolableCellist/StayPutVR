@@ -929,7 +929,7 @@ namespace StayPutVR {
         
         // Play out-of-bounds audio if enabled
         if (config_.audio.out_of_bounds) {
-            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+            std::string filePath = StayPutVR::GetResourcesPath() + "/disobedience.wav";
             if (std::filesystem::exists(filePath)) {
                 if (Logger::IsInitialized()) {
                     Logger::Debug("Playing disobedience.wav for global out-of-bounds trigger");
@@ -976,7 +976,7 @@ namespace StayPutVR {
         
         // Play out-of-bounds audio if enabled
         if (config_.audio.out_of_bounds) {
-            std::string filePath = StayPutVR::GetAppDataPath() + "\\resources\\disobedience.wav";
+            std::string filePath = StayPutVR::GetResourcesPath() + "/disobedience.wav";
             if (std::filesystem::exists(filePath)) {
                 if (Logger::IsInitialized()) {
                     Logger::Debug("Playing disobedience.wav for bite trigger");

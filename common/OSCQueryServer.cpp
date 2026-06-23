@@ -24,6 +24,7 @@
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <cstring>
+#include <cstdio>
 #include <algorithm>
 
 namespace StayPutVR {
@@ -35,6 +36,7 @@ using json = nlohmann::json;
 static inline void LogInfo(const std::string& m)    { if (Logger::IsInitialized()) Logger::Info(m); }
 static inline void LogWarning(const std::string& m) { if (Logger::IsInitialized()) Logger::Warning(m); }
 static inline void LogError(const std::string& m)   { if (Logger::IsInitialized()) Logger::Error(m); }
+static inline void LogDebug(const std::string& m)   { if (Logger::IsInitialized()) Logger::Debug(m); }
 
 static std::string GetLocalHostname() {
     char buf[256] = {};
@@ -49,40 +51,69 @@ static std::string GetLocalHostname() {
     return name;
 }
 
-static std::string GetLocalIPv4() {
+// Rank an IPv4 by how likely it is to be the real LAN adapter a local client
+// (VRChat) can actually reach. The host often also has VPN (Tailscale CGNAT
+// 100.64/10), WSL/Docker/Hyper-V (172.16/12), and link-local (169.254)
+// addresses; advertising one of those as our OSCQuery A-record makes VRChat
+// unable to connect, so it never discovers us. Higher score wins; <=0 = skip.
+static int IPv4Score(const std::string& ip) {
+    int a = 0, b = 0, c = 0, d = 0;
+    if (std::sscanf(ip.c_str(), "%d.%d.%d.%d", &a, &b, &c, &d) != 4) return -1;
+    if (a == 127) return -1;                       // loopback
+    if (a == 169 && b == 254) return -1;           // link-local
+    if (a == 192 && b == 168) return 100;          // typical home LAN
+    if (a == 10) return 80;                        // private LAN
+    if (a == 172 && b >= 16 && b <= 31) return 20; // private, but often WSL/Docker/Hyper-V
+    if (a == 100 && b >= 64 && b <= 127) return 5; // CGNAT / Tailscale (last resort)
+    return 50;                                     // other routable
+}
+
+// All usable local IPv4 addresses (one per interface), best LAN first. We
+// advertise/browse on every one of these so discovery works regardless of which
+// interface VRChat is on -- and, crucially, so a VPN like Tailscale being the
+// OS default multicast interface can't hide us from the real LAN.
+static std::vector<std::string> EnumerateLocalIPv4() {
+    std::vector<std::string> ips;
+    auto add = [&](const std::string& s) {
+        if (IPv4Score(s) <= 0) return;
+        if (std::find(ips.begin(), ips.end(), s) == ips.end()) ips.push_back(s);
+    };
 #ifdef _WIN32
     char hostname[256];
-    if (gethostname(hostname, sizeof(hostname)) != 0) return "127.0.0.1";
+    if (gethostname(hostname, sizeof(hostname)) != 0) return ips;
     struct addrinfo hints{}, *result = nullptr;
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_DGRAM;
-    if (getaddrinfo(hostname, nullptr, &hints, &result) != 0) return "127.0.0.1";
-    std::string ip = "127.0.0.1";
+    if (getaddrinfo(hostname, nullptr, &hints, &result) != 0) return ips;
     for (auto* p = result; p; p = p->ai_next) {
         char buf[INET_ADDRSTRLEN];
         auto* addr = reinterpret_cast<sockaddr_in*>(p->ai_addr);
         inet_ntop(AF_INET, &addr->sin_addr, buf, sizeof(buf));
-        std::string s = buf;
-        if (s != "127.0.0.1") { ip = s; break; }
+        add(buf);
     }
     freeaddrinfo(result);
-    return ip;
 #else
     struct ifaddrs* ifaddr = nullptr;
-    if (getifaddrs(&ifaddr) == -1) return "127.0.0.1";
-    std::string ip = "127.0.0.1";
+    if (getifaddrs(&ifaddr) == -1) return ips;
     for (auto* ifa = ifaddr; ifa; ifa = ifa->ifa_next) {
         if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
         if (ifa->ifa_flags & IFF_LOOPBACK) continue;
         char buf[INET_ADDRSTRLEN];
         auto* addr = reinterpret_cast<sockaddr_in*>(ifa->ifa_addr);
         inet_ntop(AF_INET, &addr->sin_addr, buf, sizeof(buf));
-        ip = buf;
-        break;
+        add(buf);
     }
     freeifaddrs(ifaddr);
-    return ip;
 #endif
+    std::sort(ips.begin(), ips.end(), [](const std::string& a, const std::string& b){
+        return IPv4Score(a) > IPv4Score(b);
+    });
+    return ips;
+}
+
+static std::string GetLocalIPv4() {
+    auto ips = EnumerateLocalIPv4();
+    return ips.empty() ? "127.0.0.1" : ips.front();
 }
 
 static int FindAvailableTCPPort() {
@@ -161,9 +192,10 @@ void OSCQueryServer::Stop() {
         static_cast<httplib::Server*>(http_server_)->stop();
     }
 
-    if (mdns_socket_ >= 0) {
-        mdns_socket_close(mdns_socket_);
-        mdns_socket_ = -1;
+    {
+        std::lock_guard<std::mutex> lock(mdns_sockets_mutex_);
+        for (int s : mdns_sockets_) if (s >= 0) mdns_socket_close(s);
+        mdns_sockets_.clear();
     }
 
     if (http_thread_.joinable()) http_thread_.join();
@@ -313,6 +345,8 @@ void OSCQueryServer::HTTPThread() {
     http_server_ = server;
 
     server->Get("/", [this](const httplib::Request& req, httplib::Response& res) {
+        LogInfo("OSCQuery HTTP GET / " + std::string(req.has_param("HOST_INFO") ? "?HOST_INFO " : "") +
+                "from " + req.remote_addr + " (this means a client -- e.g. VRChat -- found us)");
         if (req.has_param("HOST_INFO")) {
             res.set_content(BuildHostInfo(), "application/json");
         } else {
@@ -322,6 +356,7 @@ void OSCQueryServer::HTTPThread() {
 
     server->Get(".*", [this](const httplib::Request& req, httplib::Response& res) {
         std::string path = req.path;
+        LogDebug("OSCQuery HTTP GET " + path + " from " + req.remote_addr);
         if (path == "/") return;
 
         if (req.has_param("HOST_INFO")) {
@@ -395,9 +430,20 @@ void OSCQueryServer::MDNSBrowseThread() {
     int consecutive_misses = 0;
 
     while (running_) {
-        int sock = mdns_socket_open_ipv4(nullptr);
-        if (sock < 0) {
-            LogWarning("OSCQuery: failed to open mDNS query socket");
+        // Query on every interface (bind each socket to a specific interface so
+        // the query egresses it), so we find VRChat regardless of which interface
+        // it advertises on -- not just the OS default (which a VPN can own).
+        std::vector<int> socks;
+        for (const auto& ip : EnumerateLocalIPv4()) {
+            struct sockaddr_in saddr{};
+            saddr.sin_family = AF_INET;
+            saddr.sin_port = 0; // ephemeral source port on this interface
+            inet_pton(AF_INET, ip.c_str(), &saddr.sin_addr);
+            int sock = mdns_socket_open_ipv4(&saddr);
+            if (sock >= 0) socks.push_back(sock);
+        }
+        if (socks.empty()) {
+            LogWarning("OSCQuery: failed to open any mDNS query socket");
             std::this_thread::sleep_for(std::chrono::seconds(5));
             continue;
         }
@@ -410,23 +456,24 @@ void OSCQueryServer::MDNSBrowseThread() {
             {MDNS_RECORDTYPE_PTR, MDNS_STRING_CONST("_osc._udp.local.")}
         };
 
-        mdns_multiquery_send(sock, queries, 2, buffer, sizeof(buffer), 0);
-
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-        while (std::chrono::steady_clock::now() < deadline && running_) {
+        for (int sock : socks) {
 #ifdef _WIN32
             DWORD tv = 200;
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 #else
-            struct timeval tv;
-            tv.tv_sec = 0;
-            tv.tv_usec = 200000;
+            struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 200000;
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
-            mdns_query_recv(sock, buffer, sizeof(buffer), MDNSBrowseCallback, &ctx, 0);
+            mdns_multiquery_send(sock, queries, 2, buffer, sizeof(buffer), 0);
         }
 
-        mdns_socket_close(sock);
+        auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+        while (std::chrono::steady_clock::now() < deadline && running_) {
+            for (int sock : socks)
+                mdns_query_recv(sock, buffer, sizeof(buffer), MDNSBrowseCallback, &ctx, 0);
+        }
+
+        for (int sock : socks) mdns_socket_close(sock);
 
         if (ctx.osc_port || ctx.query_port) {
             bool osc_port_changed = false;
@@ -538,6 +585,7 @@ static int MDNSListenCallback(int sock, const struct sockaddr* from, size_t addr
 
         mdns_query_answer_multicast(sock, sendbuf, sizeof(sendbuf),
                                      answer, nullptr, 0, additional, 2);
+        LogDebug("OSCQuery: answered mDNS query for _oscjson._tcp.local (asker wants our OSCQuery service)");
     }
 
     if (query_name.find("_osc._udp.local") != std::string::npos) {
@@ -566,157 +614,153 @@ static int MDNSListenCallback(int sock, const struct sockaddr* from, size_t addr
 
         mdns_query_answer_multicast(sock, sendbuf, sizeof(sendbuf),
                                      answer, nullptr, 0, additional, 2);
+        LogDebug("OSCQuery: answered mDNS query for _osc._udp.local");
     }
 
     return 0;
 }
 
+// Announce (or, with ttl 0, retract) our two services on one socket, using the
+// given interface address for the SRV target's A record.
+static void AnnounceOnSocket(int sock, const std::string& service_name,
+                             const std::string& hostname, int http_port, int osc_port,
+                             const struct sockaddr_in& local_addr, bool goodbye) {
+    char sendbuf[2048];
+    std::string oscjson_service = service_name + "._oscjson._tcp.local.";
+    std::string osc_service = service_name + "._osc._udp.local.";
+    std::string host = hostname + ".local.";
+    const uint32_t ttl = goodbye ? 0 : 120;
+
+    auto send_one = [&](const std::string& svc, int port) {
+        mdns_record_t answer = {};
+        answer.name = {svc.c_str(), svc.size()};
+        answer.type = MDNS_RECORDTYPE_SRV;
+        answer.data.srv.name = {host.c_str(), host.size()};
+        answer.data.srv.port = static_cast<uint16_t>(port);
+        answer.data.srv.priority = 0;
+        answer.data.srv.weight = 0;
+        answer.rclass = 0;
+        answer.ttl = ttl;
+
+        mdns_record_t additional = {};
+        additional.name = {host.c_str(), host.size()};
+        additional.type = MDNS_RECORDTYPE_A;
+        additional.data.a.addr = local_addr;
+        additional.rclass = 0;
+        additional.ttl = ttl;
+
+        if (goodbye)
+            mdns_goodbye_multicast(sock, sendbuf, sizeof(sendbuf), answer, nullptr, 0, &additional, 1);
+        else
+            mdns_announce_multicast(sock, sendbuf, sizeof(sendbuf), answer, nullptr, 0, &additional, 1);
+    };
+
+    send_one(oscjson_service, http_port);
+    send_one(osc_service, osc_port);
+}
+
 void OSCQueryServer::MDNSListenThread() {
     LogInfo("OSCQuery mDNS listen thread started");
 
-    struct sockaddr_in saddr{};
-    saddr.sin_family = AF_INET;
-    saddr.sin_port = htons(MDNS_PORT);
-    saddr.sin_addr.s_addr = INADDR_ANY;
-
-    std::string local_ip = GetLocalIPv4();
-    struct sockaddr_in local_addr{};
-    local_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, local_ip.c_str(), &local_addr.sin_addr);
-
-    // Retry the mDNS bind instead of giving up for the whole session: UDP 5353
-    // may be held transiently (e.g. avahi restarting, another OSC app starting
-    // first). Keep retrying every 5s while running so StayPutVR becomes
-    // discoverable as soon as the port frees up.
+    // Open one socket per local interface so the multicast announcement/answer
+    // egresses *every* interface (the mdns lib only pins IP_MULTICAST_IF when a
+    // socket is bound to a specific interface address). Binding INADDR_ANY would
+    // send out only the OS default interface -- which a VPN like Tailscale can
+    // own, hiding us from the real LAN where VRChat is.
     int bind_attempts = 0;
     while (running_) {
-        int sock = mdns_socket_open_ipv4(&saddr);
-        if (sock < 0) {
-            // Loud on the first failure, then periodic reminders so we don't
-            // spam the log every 5 seconds while the port stays busy.
+        std::vector<std::string> ips = EnumerateLocalIPv4();
+        std::vector<int> socks;
+        std::vector<ListenContext> ctxs;
+        ctxs.reserve(ips.size());
+
+        for (const auto& ip : ips) {
+            struct sockaddr_in saddr{};
+            saddr.sin_family = AF_INET;
+            saddr.sin_port = htons(MDNS_PORT);
+            inet_pton(AF_INET, ip.c_str(), &saddr.sin_addr);
+            int sock = mdns_socket_open_ipv4(&saddr);
+            if (sock < 0) continue;
+
+            ListenContext ctx{};
+            ctx.self = this;
+            ctx.sock = sock;
+            ctx.service_name = service_name_;
+            ctx.hostname = hostname_;
+            ctx.http_port = http_port_;
+            ctx.osc_port = osc_port_;
+            ctx.local_addr = saddr;
+            ctx.local_addr.sin_port = 0; // A record carries no port
+            socks.push_back(sock);
+            ctxs.push_back(ctx);
+        }
+
+        if (socks.empty()) {
             if (bind_attempts == 0) {
-                LogError("OSCQuery: could not bind the mDNS port (UDP 5353 is in use, e.g. by "
-                         "avahi/Bonjour or another OSC app). StayPutVR cannot advertise itself, so "
-                         "VRChat will NOT discover it. Turn off \"OSC Query\" to use the manual "
-                         "send/receive ports instead, or free UDP 5353. Retrying every 5s...");
+                LogError("OSCQuery: could not bind the mDNS port on any interface (UDP 5353 in use, "
+                         "e.g. by avahi/Bonjour or another OSC app). VRChat will NOT discover "
+                         "StayPutVR. Turn off \"OSC Query\" to use manual ports, or free UDP 5353. "
+                         "Retrying every 5s...");
             } else if (bind_attempts % 12 == 0) {
-                LogWarning("OSCQuery: still unable to bind mDNS UDP 5353; VRChat discovery remains "
-                           "unavailable. Will keep retrying.");
+                LogWarning("OSCQuery: still unable to bind mDNS UDP 5353; discovery unavailable.");
             }
             ++bind_attempts;
             mdns_advertising_ = false;
-            for (int i = 0; i < 50 && running_; i++) {
+            for (int i = 0; i < 50 && running_; i++)
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
             continue;
         }
 
-        if (bind_attempts > 0) {
-            LogInfo("OSCQuery: mDNS port bound after retry; advertising resumed");
-        }
+        if (bind_attempts > 0) LogInfo("OSCQuery: mDNS port bound after retry; advertising resumed");
         bind_attempts = 0;
-        mdns_socket_ = sock;
+        {
+            std::lock_guard<std::mutex> lock(mdns_sockets_mutex_);
+            mdns_sockets_ = socks;
+        }
         mdns_advertising_ = true;
 
-        ListenContext ctx{};
-        ctx.self = this;
-        ctx.sock = sock;
-        ctx.service_name = service_name_;
-        ctx.hostname = hostname_;
-        ctx.http_port = http_port_;
-        ctx.osc_port = osc_port_;
-        ctx.local_addr = local_addr;
+        std::string ip_list;
+        for (size_t i = 0; i < ips.size() && i < socks.size(); ++i)
+            ip_list += (i ? ", " : "") + ips[i];
+        LogInfo("OSCQuery: advertising as '" + service_name_ + "' host " + hostname_ + ".local on " +
+                std::to_string(socks.size()) + " interface(s) [" + ip_list + "] (oscjson tcp:" +
+                std::to_string(http_port_) + ", osc udp:" + std::to_string(osc_port_) +
+                "). Watch for an HTTP GET line when VRChat connects.");
 
-        // Initial announcement
-        {
-            char sendbuf[2048];
-            std::string oscjson_service = service_name_ + "._oscjson._tcp.local.";
-            std::string osc_service = service_name_ + "._osc._udp.local.";
-            std::string host = hostname_ + ".local.";
-
-            {
-                mdns_record_t answer = {};
-                answer.name = {oscjson_service.c_str(), oscjson_service.size()};
-                answer.type = MDNS_RECORDTYPE_SRV;
-                answer.data.srv.name = {host.c_str(), host.size()};
-                answer.data.srv.port = static_cast<uint16_t>(http_port_);
-                answer.data.srv.priority = 0;
-                answer.data.srv.weight = 0;
-                answer.rclass = 0;
-                answer.ttl = 120;
-
-                mdns_record_t additional = {};
-                additional.name = {host.c_str(), host.size()};
-                additional.type = MDNS_RECORDTYPE_A;
-                additional.data.a.addr = local_addr;
-                additional.rclass = 0;
-                additional.ttl = 120;
-
-                mdns_announce_multicast(sock, sendbuf, sizeof(sendbuf),
-                                        answer, nullptr, 0, &additional, 1);
-            }
-
-            {
-                mdns_record_t answer = {};
-                answer.name = {osc_service.c_str(), osc_service.size()};
-                answer.type = MDNS_RECORDTYPE_SRV;
-                answer.data.srv.name = {host.c_str(), host.size()};
-                answer.data.srv.port = static_cast<uint16_t>(osc_port_);
-                answer.data.srv.priority = 0;
-                answer.data.srv.weight = 0;
-                answer.rclass = 0;
-                answer.ttl = 120;
-
-                mdns_record_t additional = {};
-                additional.name = {host.c_str(), host.size()};
-                additional.type = MDNS_RECORDTYPE_A;
-                additional.data.a.addr = local_addr;
-                additional.rclass = 0;
-                additional.ttl = 120;
-
-                mdns_announce_multicast(sock, sendbuf, sizeof(sendbuf),
-                                        answer, nullptr, 0, &additional, 1);
-            }
-
-            LogInfo("OSCQuery: announced services (oscjson tcp:" + std::to_string(http_port_) +
-                    " osc udp:" + std::to_string(osc_port_) + ")");
-        }
-
+        // Initial announcement on every interface, then set a short recv timeout
+        // so the listen loop stays responsive to shutdown.
+        for (size_t i = 0; i < socks.size(); ++i) {
+            AnnounceOnSocket(socks[i], service_name_, hostname_, http_port_, osc_port_,
+                             ctxs[i].local_addr, /*goodbye=*/false);
 #ifdef _WIN32
-        DWORD tv = 500;
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+            DWORD tv = 250;
+            setsockopt(socks[i], SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 #else
-        struct timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 500000;
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 250000;
+            setsockopt(socks[i], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
+        }
+        LogInfo("OSCQuery: announced services (oscjson tcp:" + std::to_string(http_port_) +
+                " osc udp:" + std::to_string(osc_port_) + ")");
 
         char buffer[2048];
         while (running_) {
-            mdns_socket_listen(sock, buffer, sizeof(buffer), MDNSListenCallback, &ctx);
+            for (size_t i = 0; i < socks.size(); ++i)
+                mdns_socket_listen(socks[i], buffer, sizeof(buffer), MDNSListenCallback, &ctxs[i]);
         }
 
-        // Goodbye
+        // Retract + close. Take ownership under the lock so Stop() doesn't also
+        // close these (double-close), then say goodbye on each interface.
+        std::vector<int> to_close;
         {
-            char sendbuf[2048];
-            std::string oscjson_service = service_name_ + "._oscjson._tcp.local.";
-            std::string host = hostname_ + ".local.";
-
-            mdns_record_t answer = {};
-            answer.name = {oscjson_service.c_str(), oscjson_service.size()};
-            answer.type = MDNS_RECORDTYPE_SRV;
-            answer.data.srv.name = {host.c_str(), host.size()};
-            answer.data.srv.port = static_cast<uint16_t>(http_port_);
-            answer.rclass = 0;
-            answer.ttl = 0;
-
-            mdns_goodbye_multicast(sock, sendbuf, sizeof(sendbuf), answer, nullptr, 0, nullptr, 0);
+            std::lock_guard<std::mutex> lock(mdns_sockets_mutex_);
+            to_close.swap(mdns_sockets_);
         }
-
-        if (mdns_socket_ >= 0) {
-            mdns_socket_close(mdns_socket_);
-            mdns_socket_ = -1;
+        for (size_t i = 0; i < to_close.size(); ++i) {
+            struct sockaddr_in la = (i < ctxs.size()) ? ctxs[i].local_addr : sockaddr_in{};
+            AnnounceOnSocket(to_close[i], service_name_, hostname_, http_port_, osc_port_, la,
+                             /*goodbye=*/true);
+            mdns_socket_close(to_close[i]);
         }
         mdns_advertising_ = false;
         break; // running_ became false; leave the retry loop

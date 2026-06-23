@@ -23,6 +23,9 @@ recognition, to support my work, and for exclusives.
 - PiShock WebSocket v2 is now the default for new users
 - Device status is now sent as 3 bools per device (15 synced bits) instead of
   5 synced ints (40 bits) (Thanks Rayn for the suggestion)
+- Settings now always load and save from %APPDATA%\StayPutVR\config; existing
+  configs are migrated automatically, and the Settings > Folders buttons now
+  open the correct locations
 
 ## Interface
 - Redesigned Devices tab: drag-and-drop role assignment onto an avatar effigy,
