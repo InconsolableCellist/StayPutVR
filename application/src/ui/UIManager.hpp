@@ -279,8 +279,10 @@ namespace StayPutVR {
         void LockDevicePosition(const std::string& serial, bool lock);
         void ResetAllDevices();
         void ApplyLockedPositions();
-        void ActivateGlobalLock(bool activate);
-        void ActivateGlobalLockInternal(bool activate);
+        // play_sound=false suppresses the lock/unlock audio cue for automatic
+        // (non-user-initiated) transitions, e.g. unlocking on avatar change.
+        void ActivateGlobalLock(bool activate, bool play_sound = true);
+        void ActivateGlobalLockInternal(bool activate, bool play_sound = true);
         void CheckDevicePositionDeviations();
 
         // VRCFT JawOpen constraint. Reserved serial used to key its shocker /

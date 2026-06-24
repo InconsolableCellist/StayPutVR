@@ -1049,8 +1049,10 @@ namespace StayPutVR {
             Logger::Info("Avatar changed (/avatar/change) - unlocking and resetting all devices");
         }
 
-        // Release the global lock and any individually-locked devices.
-        ActivateGlobalLock(false);
+        // Release the global lock and any individually-locked devices. Suppress
+        // the unlock sound: this is an automatic transition triggered by VRChat's
+        // /avatar/change, not a user-initiated unlock, so the audio cue is spurious.
+        ActivateGlobalLock(false, /*play_sound=*/false);
         for (auto& device : device_positions_) {
             if (device.locked) {
                 LockDevicePosition(device.serial, false);

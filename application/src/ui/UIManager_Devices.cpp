@@ -347,7 +347,7 @@ namespace StayPutVR {
         }
     }
 
-    void UIManager::ActivateGlobalLock(bool activate) {
+    void UIManager::ActivateGlobalLock(bool activate, bool play_sound) {
         if (activate && config_.countdown_enabled) {
             // Start countdown by playing countdown.wav once
             // The countdown.wav is a 3-second sound
@@ -370,21 +370,21 @@ namespace StayPutVR {
                     if (StayPutVR::Logger::IsInitialized()) {
                         StayPutVR::Logger::Warning("countdown.wav not found, locking immediately");
                     }
-                    ActivateGlobalLockInternal(true);
+                    ActivateGlobalLockInternal(true, play_sound);
                 }
             } else {
                 // Audio disabled, activate lock immediately
-                ActivateGlobalLockInternal(true);
+                ActivateGlobalLockInternal(true, play_sound);
             }
             return; // Don't activate global lock yet, wait for countdown
         }
         
         // Direct activation/deactivation without countdown
-        ActivateGlobalLockInternal(activate);
+        ActivateGlobalLockInternal(activate, play_sound);
     }
 
     // Internal method to actually handle the lock activation
-    void UIManager::ActivateGlobalLockInternal(bool activate) {
+    void UIManager::ActivateGlobalLockInternal(bool activate, bool play_sound) {
         // Prevent locking during emergency stop mode (but allow unlocking)
         if (emergency_stop_active_ && activate) {
             if (Logger::IsInitialized()) {
@@ -427,7 +427,7 @@ namespace StayPutVR {
             }
             
             // Play lock sound if enabled
-            if (config_.audio.enabled && config_.audio.lock) {
+            if (play_sound && config_.audio.enabled && config_.audio.lock) {
                 AudioManager::PlayLockSound(config_.audio.volume);
             }
         } else {
@@ -457,7 +457,7 @@ namespace StayPutVR {
             }
             
             // Play unlock sound if enabled
-            if (config_.audio.enabled && config_.audio.unlock) {
+            if (play_sound && config_.audio.enabled && config_.audio.unlock) {
                 AudioManager::PlayUnlockSound(config_.audio.volume);
             }
         }
