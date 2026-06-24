@@ -221,12 +221,25 @@ namespace StayPutVR {
         
         bool isConnected = device_manager_ && device_manager_->IsConnected();
         
+        bool isRetrying = device_manager_ && device_manager_->IsReconnecting();
+        int reconnectAttempts = device_manager_ ? device_manager_->GetReconnectAttempts() : 0;
+
         if (isConnected) {
             ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Connected to driver");
+        } else if (isRetrying) {
+            // Animated ellipsis so it's obvious the app is actively working, not stuck.
+            const char* dots[] = {"", ".", "..", "..."};
+            int phase = (int)(ImGui::GetTime() * 2.0f) % 4;
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Connecting to driver%s", dots[phase]);
+            if (reconnectAttempts > 0) {
+                ImGui::Text("Retrying... (attempt %d)", reconnectAttempts);
+            } else {
+                ImGui::Text("Looking for the SteamVR driver...");
+            }
         } else {
             ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Not connected to driver");
             ImGui::Text("The driver is not running or could not be reached");
-            
+
             if (ImGui::Button("Retry Connection")) {
                 if (device_manager_) {
                     if (device_manager_->ManualReconnect()) {

@@ -9,10 +9,21 @@ namespace StayPutVR {
         last_connection_log_ = std::chrono::steady_clock::now() - LOG_THROTTLE_INTERVAL; // Allow immediate first log
         last_failure_log_ = std::chrono::steady_clock::now() - LOG_THROTTLE_INTERVAL;
         circuit_breaker_timeout_ = std::chrono::steady_clock::now();
+
+        // Manual-reset, initially non-signaled. Used to unblock the listener's
+        // ConnectNamedPipe wait when the server shuts down.
+        stop_event_ = CreateEvent(NULL, TRUE, FALSE, NULL);
+        if (stop_event_ == NULL) {
+            Logger::Error("IPCServer: Failed to create stop event: " + std::to_string(GetLastError()));
+        }
     }
 
     IPCServer::~IPCServer() {
         Shutdown();
+        if (stop_event_ != NULL) {
+            CloseHandle(stop_event_);
+            stop_event_ = NULL;
+        }
     }
     
     bool IPCServer::Initialize() {
@@ -27,7 +38,12 @@ namespace StayPutVR {
         if (!CreatePipe()) {
             return false;
         }
-        
+
+        // Clear any leftover stop signal from a previous run.
+        if (stop_event_ != NULL) {
+            ResetEvent(stop_event_);
+        }
+
         // Start the threads
         running_ = true;
         listener_thread_ = std::thread(&IPCServer::ListenerThread, this);
@@ -55,26 +71,31 @@ namespace StayPutVR {
         
         // Signal threads to exit
         running_ = false;
-        
+
+        // Break the listener out of its blocking ConnectNamedPipe wait.
+        if (stop_event_ != NULL) {
+            SetEvent(stop_event_);
+        }
+
         // Notify writer thread to wake up if it's sleeping
         {
             std::lock_guard<std::mutex> lock(mutex_);
             write_cv_.notify_all();
         }
-        
-        // Close pipe handle
-        if (pipe_handle_ != INVALID_HANDLE_VALUE) {
-            CloseHandle(pipe_handle_);
-            pipe_handle_ = INVALID_HANDLE_VALUE;
-        }
-        
-        // Wait for threads to exit
+
+        // Wait for threads to exit before tearing down the pipe handle they use.
         if (listener_thread_.joinable()) {
             listener_thread_.join();
         }
-        
+
         if (writer_thread_.joinable()) {
             writer_thread_.join();
+        }
+
+        // Close pipe handle now that no thread is using it.
+        if (pipe_handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(pipe_handle_);
+            pipe_handle_ = INVALID_HANDLE_VALUE;
         }
         
         connected_ = false;
@@ -212,16 +233,27 @@ namespace StayPutVR {
         Logger::Info("IPCServer: Listener thread started");
         
         while (running_) {
-            // Wait for a client connection
+            // Block until a client connects or shutdown is requested. The pipe
+            // stays in a pending ConnectNamedPipe state the whole time, so there
+            // is no dead window for the client to hit ERROR_PIPE_BUSY against.
             if (!WaitForConnection()) {
-                // Failed to accept connection, use throttled logging instead of spamming
+                if (!running_) {
+                    break; // Shutdown requested via stop_event_
+                }
+                // A false return while still running means a genuine error on
+                // this pipe instance. Recreate the pipe and retry shortly.
                 LogConnectionFailure();
-                
-                // Wait longer between retries when no client is available (normal case)
-                std::this_thread::sleep_for(std::chrono::seconds(10)); // Increased to 10 seconds when no client
+                if (pipe_handle_ != INVALID_HANDLE_VALUE) {
+                    CloseHandle(pipe_handle_);
+                    pipe_handle_ = INVALID_HANDLE_VALUE;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                if (running_ && !CreatePipe()) {
+                    std::this_thread::sleep_for(std::chrono::seconds(2));
+                }
                 continue;
             }
-            
+
             Logger::Info("IPCServer: Client connected");
             LogConnectionSuccess();
             connected_ = true;
@@ -327,25 +359,12 @@ namespace StayPutVR {
     
     bool IPCServer::CreatePipe() {
         Logger::Info("IPCServer: Creating pipe");
-        
-        // First check if the pipe already exists and try to close it
-        HANDLE existing_pipe = CreateFileA(
-            PIPE_NAME,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            NULL,
-            OPEN_EXISTING,
-            0,
-            NULL
-        );
-        
-        if (existing_pipe != INVALID_HANDLE_VALUE) {
-            Logger::Warning("IPCServer: Pipe already exists, attempting to close it");
-            CloseHandle(existing_pipe);
-            // Wait a bit before trying to create a new one
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        }
-        
+
+        // NOTE: do NOT probe the pipe by opening it as a client here. With a
+        // single instance that self-connect consumed the only slot and left the
+        // real client seeing ERROR_PIPE_BUSY. CreateNamedPipe below creates a
+        // fresh instance directly.
+
         // Create the named pipe with explicit security attributes to allow access
         SECURITY_ATTRIBUTES sa;
         SECURITY_DESCRIPTOR sd;
@@ -376,7 +395,8 @@ namespace StayPutVR {
             PIPE_TYPE_MESSAGE |             // Message type pipe
             PIPE_READMODE_MESSAGE |         // Message-read mode
             PIPE_WAIT,                      // Blocking mode
-            1,                              // Max instances
+            PIPE_UNLIMITED_INSTANCES,       // Tolerate a leaked prior client handle
+                                            // instead of locking everyone out at 1
             4096,                           // Output buffer size
             4096,                           // Input buffer size
             0,                              // Default time-out
@@ -412,12 +432,12 @@ namespace StayPutVR {
     
     bool IPCServer::WaitForConnection() {
         Logger::Info("IPCServer: Waiting for client connection");
-        
+
         if (pipe_handle_ == INVALID_HANDLE_VALUE) {
             return false;
         }
-        
-        // Connect the pipe with overlapped I/O
+
+        // Connect the pipe with overlapped I/O.
         OVERLAPPED connectOverlapped = {0};
         connectOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
         if (connectOverlapped.hEvent == NULL) {
@@ -425,64 +445,58 @@ namespace StayPutVR {
             Logger::Error("IPCServer: Failed to create event for overlapped connection: " + std::to_string(error));
             return false;
         }
-        
-        // Wait for a client to connect with overlap
+
         BOOL result = ConnectNamedPipe(pipe_handle_, &connectOverlapped);
         DWORD error = GetLastError();
-        
+
         if (result) {
-            // Immediate connection success (unusual)
+            // Immediate connection success (unusual with overlapped pipes).
             CloseHandle(connectOverlapped.hEvent);
             return true;
         }
-        
-        // Check error code
-        if (error == ERROR_IO_PENDING) {
-            // Connection is pending, wait for result
-            Logger::Debug("IPCServer: Connection pending, waiting for client");
-            
-            // Use a longer timeout here since this is just waiting for initial connection  
-            DWORD waitResult = WaitForSingleObject(connectOverlapped.hEvent, 2000); // 2 second timeout
-            
-            if (waitResult == WAIT_OBJECT_0) {
-                // Connection completed
-                DWORD unused;
-                if (GetOverlappedResult(pipe_handle_, &connectOverlapped, &unused, FALSE)) {
-                    CloseHandle(connectOverlapped.hEvent);
-                    return true;
-                }
-                
-                error = GetLastError();
-                Logger::Error("IPCServer: GetOverlappedResult failed for connection: " + std::to_string(error));
-                CloseHandle(connectOverlapped.hEvent);
-                return false;
-            }
-            else {
-                // Wait failed or timed out
-                Logger::Warning("IPCServer: Connection wait failed or timed out");
-                CancelIo(pipe_handle_);
-                CloseHandle(connectOverlapped.hEvent);
-                return false;
-            }
-        }
-        else if (error == ERROR_PIPE_CONNECTED) {
-            // Client already connected
+
+        if (error == ERROR_PIPE_CONNECTED) {
+            // A client connected in the gap between CreateNamedPipe and
+            // ConnectNamedPipe - that still counts as connected.
             CloseHandle(connectOverlapped.hEvent);
             return true;
         }
-        else {
-            // Connection failed
+
+        if (error != ERROR_IO_PENDING) {
+            // Genuine failure issuing the connect.
+            Logger::Error("IPCServer: ConnectNamedPipe failed: " + std::to_string(error));
             CloseHandle(connectOverlapped.hEvent);
-            
-            // Handle specific error codes gracefully
-            if (error == 232) { // ERROR_NO_DATA - no client connected yet, this is normal
-                // Don't log as error - this is expected when server starts before client
-                return false;
-            } else {
-                Logger::Error("IPCServer: ConnectNamedPipe failed: " + std::to_string(error));
-                return false;
-            }
+            return false;
         }
+
+        // Connection pending. Block until a client actually connects OR shutdown
+        // is requested. Keeping ConnectNamedPipe pending the entire time (rather
+        // than a 2s wait + CancelIo + 10s sleep) is what lets clients connect
+        // immediately instead of starving against a dead window.
+        Logger::Debug("IPCServer: Connection pending, waiting for client");
+        HANDLE waits[2] = { connectOverlapped.hEvent, stop_event_ };
+        DWORD waitResult = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
+
+        if (waitResult == WAIT_OBJECT_0) {
+            DWORD unused;
+            if (GetOverlappedResult(pipe_handle_, &connectOverlapped, &unused, FALSE)) {
+                CloseHandle(connectOverlapped.hEvent);
+                return true;
+            }
+            error = GetLastError();
+            Logger::Error("IPCServer: GetOverlappedResult failed for connection: " + std::to_string(error));
+            CloseHandle(connectOverlapped.hEvent);
+            return false;
+        }
+
+        // Stop event signaled (shutdown) or the wait itself failed: cancel the
+        // pending connect and bail. running_ tells the listener it was a stop.
+        if (waitResult != WAIT_OBJECT_0 + 1) {
+            Logger::Warning("IPCServer: Connection wait failed: " + std::to_string(GetLastError()));
+        }
+        CancelIo(pipe_handle_);
+        CloseHandle(connectOverlapped.hEvent);
+        return false;
     }
     
     bool IPCServer::ReadMessage(std::vector<uint8_t>& buffer) {

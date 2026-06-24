@@ -36,6 +36,9 @@ namespace StayPutVR {
         static constexpr const char* PIPE_NAME = "\\\\.\\pipe\\StayPutVR";
         
         HANDLE pipe_handle_ = INVALID_HANDLE_VALUE;
+        // Manual-reset event used to break the listener out of a blocking
+        // ConnectNamedPipe wait on shutdown (signaled by Shutdown()).
+        HANDLE stop_event_ = NULL;
         std::atomic<bool> connected_ = false;
         std::atomic<bool> running_ = false;
         std::atomic<bool> initialized_ = false;

@@ -26,7 +26,13 @@ namespace StayPutVR {
         
         // Manual reconnection (thread-safe, stops auto-reconnection temporarily)
         bool ManualReconnect();
-        
+
+        // Connection status for the UI. True while the background reconnect
+        // thread is actively trying to reach the driver.
+        bool IsReconnecting() const { return reconnect_thread_running_.load(); }
+        // Number of connection attempts made by the current reconnect session.
+        int GetReconnectAttempts() const { return reconnect_attempts_.load(); }
+
     private:
         IPCClient ipc_client_;
         std::vector<DevicePositionData> devices_;
@@ -35,6 +41,7 @@ namespace StayPutVR {
         // Auto-reconnection
         std::atomic<bool> auto_reconnect_enabled_ = true;
         std::atomic<bool> reconnect_thread_running_ = false;
+        std::atomic<int> reconnect_attempts_ = 0;
         std::thread reconnect_thread_;
         std::chrono::steady_clock::time_point last_reconnect_attempt_;
         static constexpr std::chrono::seconds RECONNECT_INTERVAL{5};

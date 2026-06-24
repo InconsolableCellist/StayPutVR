@@ -9,25 +9,29 @@ namespace StayPutVR {
             this->OnDeviceUpdate(devices);
         });
         
+        // Connect on the background reconnect thread rather than synchronously:
+        // a missing or busy driver pipe used to block here (up to 15s on
+        // WaitNamedPipe), freezing application/UI startup. The reconnect thread
+        // performs the (possibly blocking) attempts off the main thread.
+        if (auto_reconnect_enabled_) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("DeviceManager: Connecting to driver in background");
+            }
+            StartReconnectThread();
+            return true;
+        }
+
+        // Auto-reconnect disabled: caller wants a single synchronous attempt.
         if (ipc_client_.Connect()) {
             if (Logger::IsInitialized()) {
                 Logger::Info("DeviceManager: Successfully connected to driver IPC server");
             }
             return true;
         }
-        
-        if (auto_reconnect_enabled_) {
-            if (Logger::IsInitialized()) {
-                Logger::Warning("DeviceManager: Initial connection failed, starting auto-reconnection");
-            }
-            StartReconnectThread();
-            return true;
-        } else {
-            if (Logger::IsInitialized()) {
-                Logger::Error("DeviceManager: Failed to connect to driver IPC server and auto-reconnect is disabled");
-            }
-            return false;
+        if (Logger::IsInitialized()) {
+            Logger::Error("DeviceManager: Failed to connect to driver IPC server and auto-reconnect is disabled");
         }
+        return false;
     }
 
     void DeviceManager::Shutdown() {
@@ -82,7 +86,10 @@ namespace StayPutVR {
         }
         
         reconnect_thread_running_ = true;
-        last_reconnect_attempt_ = std::chrono::steady_clock::now();
+        reconnect_attempts_ = 0;
+        // Backdate so the very first attempt fires right after INITIAL_RECONNECT_DELAY
+        // instead of waiting a full RECONNECT_INTERVAL on top of it.
+        last_reconnect_attempt_ = std::chrono::steady_clock::now() - RECONNECT_INTERVAL;
         reconnect_thread_ = std::thread(&DeviceManager::ReconnectThreadFunction, this);
         
         if (Logger::IsInitialized()) {
@@ -142,8 +149,10 @@ namespace StayPutVR {
     }
     
     bool DeviceManager::TryReconnect() {
+        int attempt = ++reconnect_attempts_;
         if (Logger::IsInitialized()) {
-            Logger::Debug("DeviceManager: Attempting to reconnect to driver...");
+            Logger::Debug("DeviceManager: Attempting to connect to driver (attempt " +
+                std::to_string(attempt) + ")...");
         }
         
         // Ensure clean state before reconnecting

@@ -55,14 +55,18 @@ namespace StayPutVR {
         if (pipe_handle == INVALID_HANDLE_VALUE) {
             DWORD error = GetLastError();
             if (error == ERROR_PIPE_BUSY) {
-                Logger::Warning("IPCClient: Pipe is busy, waiting...");
-                
-                // Wait for the pipe to become available (increased timeout for driver startup)
-                if (!WaitNamedPipeA(PIPE_NAME, 15000)) { // 15 second timeout
-                    Logger::Warning("IPCClient: Timed out waiting for pipe (driver may not be loaded)");
+                Logger::Warning("IPCClient: Pipe is busy, waiting for an instance to free up...");
+
+                // Short wait: the (fixed) driver keeps a connect pending at all
+                // times, so a busy pipe should free up almost immediately. This
+                // runs on the background reconnect thread and is retried, so a
+                // long blocking wait here buys nothing.
+                if (!WaitNamedPipeA(PIPE_NAME, 2000)) {
+                    Logger::Warning("IPCClient: Pipe stayed busy for 2s (error " +
+                        std::to_string(GetLastError()) + ") - will retry");
                     return false;
                 }
-                
+
                 // Try to connect again
                 pipe_handle = CreateFileA(
                     PIPE_NAME,
@@ -73,13 +77,25 @@ namespace StayPutVR {
                     0,
                     NULL
                 );
-                
+
                 if (pipe_handle == INVALID_HANDLE_VALUE) {
-                    Logger::Error("IPCClient: Failed to connect to pipe: " + std::to_string(GetLastError()));
+                    Logger::Error("IPCClient: Failed to connect after pipe freed: " +
+                        std::to_string(GetLastError()));
                     return false;
                 }
+            } else if (error == ERROR_FILE_NOT_FOUND) {
+                // The pipe does not exist at all: the SteamVR driver isn't loaded
+                // (or vrserver hasn't started it yet). This is the most common
+                // "can't connect" cause - name it explicitly instead of a code.
+                Logger::Warning("IPCClient: Driver pipe not found (ERROR_FILE_NOT_FOUND) - "
+                    "SteamVR driver not loaded yet; will retry");
+                return false;
+            } else if (error == ERROR_ACCESS_DENIED) {
+                Logger::Error("IPCClient: Access denied opening driver pipe (ERROR_ACCESS_DENIED) - "
+                    "likely an elevation/integrity-level mismatch between this app and vrserver");
+                return false;
             } else {
-                Logger::Error("IPCClient: Failed to connect to pipe: " + std::to_string(error));
+                Logger::Error("IPCClient: Failed to connect to pipe, error " + std::to_string(error));
                 return false;
             }
         }
