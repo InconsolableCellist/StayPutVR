@@ -1,6 +1,8 @@
 #include "OSCManager.hpp"
 #include "Logger.hpp"
 #include <sstream>
+#include <unordered_set>
+#include <mutex>
 
 namespace StayPutVR {
 
@@ -236,7 +238,8 @@ void OSCManager::SetConfig(const Config& config) {
     osc_jawopen_alt_path_ = config.osc_jawopen_alt_path;
 
     if (Logger::IsInitialized()) {
-        Logger::Debug("OSCManager: Updated OSC paths from config");
+        Logger::Debug("OSCManager: Updated OSC paths from config (jawopen='" +
+                      osc_jawopen_path_ + "', jawopen_alt='" + osc_jawopen_alt_path_ + "')");
     }
 }
 
@@ -320,10 +323,42 @@ double OSCManager::SecondsSinceLastInbound() const {
 void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
     try {
         OSCPP::Server::Packet packet(data, size);
-        
+
+        // VRChat batches high-rate parameters (notably face-tracking values like
+        // JawOpen) into OSC bundles. Recurse into each contained element; without
+        // this the whole bundle is silently dropped and those params never arrive.
+        // Each sub-packet's data()/size() points at its true start, so re-parsing
+        // correctly re-detects message-vs-bundle (handles nesting too).
+        if (packet.isBundle()) {
+            OSCPP::Server::Bundle bundle = packet;
+            OSCPP::Server::PacketStream packets(bundle.packets());
+            while (!packets.atEnd()) {
+                OSCPP::Server::Packet p = packets.next();
+                ProcessOSCMessage(static_cast<const char*>(p.data()), p.size());
+            }
+            return;
+        }
+
         if (packet.isMessage()) {
             OSCPP::Server::Message message(packet);
             std::string address = message.address();
+
+            // Diagnostic: log each distinct inbound address exactly once so the
+            // log shows precisely what VRChat is sending (and at what path) —
+            // e.g. to confirm whether /avatar/parameters/FT/v2/JawOpen arrives.
+            // Bounded by the number of unique avatar params, so not spammy.
+            {
+                static std::mutex seen_mtx;
+                static std::unordered_set<std::string> seen_addrs;
+                bool is_new;
+                {
+                    std::lock_guard<std::mutex> lk(seen_mtx);
+                    is_new = seen_addrs.insert(address).second;
+                }
+                if (is_new && Logger::IsInitialized()) {
+                    Logger::Debug("OSCManager: first inbound OSC address: " + address);
+                }
+            }
 
             // Avatar change: VRChat sends /avatar/change (with the new avatar id
             // as a string argument) when the user switches avatars. The string

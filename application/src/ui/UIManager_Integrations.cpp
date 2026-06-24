@@ -115,22 +115,27 @@ namespace StayPutVR {
         if (ImGui::InputText("JawOpen Path (v2)", jaw_path, IM_ARRAYSIZE(jaw_path))) {
             config_.osc_jawopen_path = jaw_path;
         }
-        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        // Push the edited path into the live OSCManager so it takes effect at
+        // once. Without this, the receiver keeps matching the OLD path until OSC
+        // is reconnected, which is why an edited JawOpen path appears to do nothing.
+        if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
         ImGui::SameLine();
         if (ImGui::Button("Reset##jawpath")) {
             config_.osc_jawopen_path = "/avatar/parameters/v2/JawOpen";
             strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
             SaveConfig();
+            OSCManager::GetInstance().SetConfig(config_);
         }
         if (ImGui::InputText("JawOpen Path (alt)", jaw_alt_path, IM_ARRAYSIZE(jaw_alt_path))) {
             config_.osc_jawopen_alt_path = jaw_alt_path;
         }
-        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
         ImGui::SameLine();
         if (ImGui::Button("Reset##jawaltpath")) {
             config_.osc_jawopen_alt_path = "/avatar/parameters/JawOpen";
             strcpy_s(jaw_alt_path, sizeof(jaw_alt_path), config_.osc_jawopen_alt_path.c_str());
             SaveConfig();
+            OSCManager::GetInstance().SetConfig(config_);
         }
         ImGuiHelpers::HelpTooltip("Both paths are accepted. v2 is the official VRCFT path; alt covers avatars that publish the unprefixed JawOpen.");
 
