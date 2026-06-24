@@ -699,6 +699,10 @@ namespace StayPutVR {
             if (result) {
                 UpdateUIFromConfig();
 
+                // Populate the JawOpen constraint binding arrays from the
+                // reserved-serial entries in the device binding maps.
+                LoadJawBindingsFromConfig();
+
                 // Set default OSC ports if they're not set
                 if (config_.osc_send_port <= 0) {
                     config_.osc_send_port = 9000;

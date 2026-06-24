@@ -517,6 +517,10 @@ namespace StayPutVR {
         osc_query_server_->AddParameter(config_.osc_bite_path, "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_shock_path, "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_estop_stretch_path, "f", A::WriteOnly, 0.0f);
+        if (config_.jawopen_enabled) {
+            osc_query_server_->AddParameter(config_.osc_jawopen_path, "f", A::WriteOnly, 0.0f);
+            osc_query_server_->AddParameter(config_.osc_jawopen_alt_path, "f", A::WriteOnly, 0.0f);
+        }
         osc_query_server_->AddParameter(p + "avatar/change", "s", A::WriteOnly, std::string());
 
         // When VRChat's OSC port is discovered, retarget our send socket to it.
@@ -809,7 +813,15 @@ namespace StayPutVR {
                 }
             }
         );
-        
+
+        // VRCFT JawOpen: store every inbound value so the Visual heat bar and the
+        // constraint engine (CheckJawOpenConstraint) always see the live jaw value.
+        OSCManager::GetInstance().SetJawOpenCallback(
+            [this](float jaw_value) {
+                jaw_.current = jaw_value;
+            }
+        );
+
         if (Logger::IsInitialized()) {
             Logger::Info("VerifyOSCCallbacks: OSC callbacks verified and re-registered");
         }

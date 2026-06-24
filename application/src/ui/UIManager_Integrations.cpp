@@ -60,7 +60,145 @@ namespace StayPutVR {
                 RenderTwitchTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("VRCFT")) {
+                RenderVRCFTTab();
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
+        }
+    }
+
+    void UIManager::RenderVRCFTTab() {
+        ImGui::Text("VRCFT JawOpen Constraint");
+        ImGui::TextWrapped(
+            "Listens for the VRChat Face Tracking JawOpen parameter. While the HMD (neck) "
+            "lock is active, the avatar's jaw must stay near where it was when the lock "
+            "engaged. Drifting past the warning margin issues a warning; past the "
+            "disobedience margin triggers the full disobedience response (audio, OSC status, "
+            "and any bound shockers/vibrators) - the same escalation used for controllers. "
+            "You can also assign and bind this on the Devices > Visual screen by dragging the "
+            "JawOpen item onto the avatar's head.");
+        ImGui::Separator();
+
+        bool enabled = config_.jawopen_enabled;
+        if (ImGui::Checkbox("Enable JawOpen constraint", &enabled)) {
+            config_.jawopen_enabled = enabled;
+            if (enabled) LoadJawBindingsFromConfig();
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Off by default. When on, the jaw is constrained while the HMD is locked.");
+
+        // Live value + state readout.
+        ImGui::Spacing();
+        ImGui::Text("Live JawOpen:");
+        ImGui::SameLine();
+        ImGui::ProgressBar(jaw_.current, ImVec2(180, 0));
+        if (config_.jawopen_enabled && jaw_.active) {
+            ImGui::Text("Baseline: %.2f   Deviation: %.2f   %s",
+                        jaw_.baseline, jaw_.deviation,
+                        jaw_.exceeds_threshold ? "[DISOBEDIENCE]" :
+                        jaw_.in_warning_zone ? "[WARNING]" : "[SAFE]");
+        } else if (config_.jawopen_enabled && jaw_.in_grace) {
+            ImGui::TextDisabled("Capturing baseline (grace window)...");
+        } else if (config_.jawopen_enabled) {
+            ImGui::TextDisabled("Inactive (lock the HMD to engage).");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Parameter Paths");
+
+        static char jaw_path[128] = "";
+        static char jaw_alt_path[128] = "";
+        if (strlen(jaw_path) == 0) strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
+        if (strlen(jaw_alt_path) == 0) strcpy_s(jaw_alt_path, sizeof(jaw_alt_path), config_.osc_jawopen_alt_path.c_str());
+
+        if (ImGui::InputText("JawOpen Path (v2)", jaw_path, IM_ARRAYSIZE(jaw_path))) {
+            config_.osc_jawopen_path = jaw_path;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGui::SameLine();
+        if (ImGui::Button("Reset##jawpath")) {
+            config_.osc_jawopen_path = "/avatar/parameters/v2/JawOpen";
+            strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
+            SaveConfig();
+        }
+        if (ImGui::InputText("JawOpen Path (alt)", jaw_alt_path, IM_ARRAYSIZE(jaw_alt_path))) {
+            config_.osc_jawopen_alt_path = jaw_alt_path;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGui::SameLine();
+        if (ImGui::Button("Reset##jawaltpath")) {
+            config_.osc_jawopen_alt_path = "/avatar/parameters/JawOpen";
+            strcpy_s(jaw_alt_path, sizeof(jaw_alt_path), config_.osc_jawopen_alt_path.c_str());
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Both paths are accepted. v2 is the official VRCFT path; alt covers avatars that publish the unprefixed JawOpen.");
+
+        ImGui::Separator();
+        ImGui::Text("Constraint Tuning");
+
+        float warn = config_.jawopen_warning_margin;
+        if (ImGui::SliderFloat("Warning margin", &warn, 0.01f, 0.5f, "%.2f")) {
+            config_.jawopen_warning_margin = warn;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGuiHelpers::HelpTooltip("Jaw may deviate this far from the baseline before a warning is issued.");
+
+        float diso = config_.jawopen_disobedience_margin;
+        if (ImGui::SliderFloat("Disobedience margin", &diso, 0.02f, 0.8f, "%.2f")) {
+            config_.jawopen_disobedience_margin = diso;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGuiHelpers::HelpTooltip("Past this deviation the disobedience response fires (shockers, etc.).");
+
+        float grace = config_.jawopen_grace_seconds;
+        if (ImGui::SliderFloat("Grace window (s)", &grace, 0.0f, 10.0f, "%.1f")) {
+            config_.jawopen_grace_seconds = grace;
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGuiHelpers::HelpTooltip("After the HMD locks, the jaw value is sampled for this long to establish the ideal baseline before enforcement begins.");
+
+        ImGui::Separator();
+        ImGui::Text("Shocker / Vibrator bindings");
+        ImGui::TextWrapped("Which devices fire on jaw disobedience. (You can also drag ID chips "
+                           "onto the head on the Devices > Visual screen.)");
+
+        bool changed = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.pishock_shocker_ids[i] != 0) {
+                ImGui::PushID(i);
+                bool b = jaw_.pishock_enabled[i];
+                if (ImGui::Checkbox(("PiShock " + std::to_string(i)).c_str(), &b)) {
+                    jaw_.pishock_enabled[i] = b; changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        for (int i = 0; i < 5; ++i) {
+            if (!config_.openshock_device_ids[i].empty()) {
+                ImGui::PushID(100 + i);
+                bool b = jaw_.openshock_enabled[i];
+                if (ImGui::Checkbox(("OpenShock " + std::to_string(i)).c_str(), &b)) {
+                    jaw_.openshock_enabled[i] = b; changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        for (int i = 0; i < 5; ++i) {
+            if (config_.buttplug_device_indices[i] >= 0) {
+                ImGui::PushID(200 + i);
+                bool b = jaw_.vibration_device_enabled[i];
+                if (ImGui::Checkbox(("BPIO " + std::to_string(i)).c_str(), &b)) {
+                    jaw_.vibration_device_enabled[i] = b; changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        if (changed) {
+            config_.device_pishock_ids[kJawOpenSerial] = jaw_.pishock_enabled;
+            config_.device_openshock_ids[kJawOpenSerial] = jaw_.openshock_enabled;
+            config_.device_vibration_ids[kJawOpenSerial] = jaw_.vibration_device_enabled;
+            SaveConfig();
         }
     }
 

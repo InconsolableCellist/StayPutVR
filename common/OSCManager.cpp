@@ -232,7 +232,9 @@ void OSCManager::SetConfig(const Config& config) {
     osc_bite_path_ = config.osc_bite_path;
     osc_shock_path_ = config.osc_shock_path;
     osc_estop_stretch_path_ = config.osc_estop_stretch_path;
-    
+    osc_jawopen_path_ = config.osc_jawopen_path;
+    osc_jawopen_alt_path_ = config.osc_jawopen_alt_path;
+
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Updated OSC paths from config");
     }
@@ -434,6 +436,12 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     if (float_value >= 0.5f) {
                         estop_stretch_callback_(float_value);
                     }
+                }
+
+                // VRCFT JawOpen parameter (float 0..1) - official v2 or alt path
+                else if ((address == osc_jawopen_path_ || address == osc_jawopen_alt_path_)
+                         && jawopen_callback_ && tag == 'f') {
+                    jawopen_callback_(float_value);
                 }
                 
                 // Latch_IsPosed paths: direct state change (not toggle)
@@ -713,6 +721,7 @@ std::string OSCManager::GetDeviceString(OSCDeviceType device) const {
         case OSCDeviceType::FootLeft: return "FootLeft";
         case OSCDeviceType::FootRight: return "FootRight";
         case OSCDeviceType::Hip: return "Hip";
+        case OSCDeviceType::Jaw: return "Jaw";
         default: return "Unknown";
     }
 }

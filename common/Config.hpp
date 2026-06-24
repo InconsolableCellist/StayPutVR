@@ -107,7 +107,18 @@ public:
     // Emergency stop stretch path and setting
     std::string osc_estop_stretch_path = "/avatar/parameters/SPVR_EStop_Stretch";
     bool osc_estop_stretch_enabled = true;
-    
+
+    // VRCFT JawOpen constraint (see UIManager_Devices CheckJawOpenConstraint).
+    // While the HMD is locked, the avatar's JawOpen value must stay within a
+    // margin of the value captured at lock time, escalating warning->disobedience
+    // like the controller position constraint. Off by default.
+    bool jawopen_enabled = false;
+    std::string osc_jawopen_path = "/avatar/parameters/v2/JawOpen";   // official VRCFT v2
+    std::string osc_jawopen_alt_path = "/avatar/parameters/JawOpen";  // unprefixed fallback
+    float jawopen_warning_margin = 0.10f;       // |current-baseline| > this => warning
+    float jawopen_disobedience_margin = 0.20f;  // |current-baseline| > this => disobedience
+    float jawopen_grace_seconds = 2.0f;         // baseline-capture window after HMD lock
+
     // PiShock Mode Selection
     enum class PiShockMode {
         LEGACY_API = 0,

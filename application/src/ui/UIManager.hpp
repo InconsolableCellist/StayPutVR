@@ -108,6 +108,26 @@ namespace StayPutVR {
         float z;
     };
 
+    // VRCFT JawOpen constraint state. JawOpen is a scalar OSC parameter (0..1),
+    // not a tracked device, so it lives here rather than in device_positions_.
+    // The baseline is captured when the HMD lock engages (after a grace window);
+    // enforcement compares |current - baseline| against the configured margins,
+    // mirroring the 3-D position-deviation engine in 1-D.
+    struct JawOpenConstraint {
+        float current = 0.0f;      // live value from OSC
+        float baseline = 0.0f;     // captured ideal (frozen after grace)
+        bool  active = false;      // HMD locked and past the grace window
+        bool  hmd_was_locked = false; // previous-frame HMD lock state (edge detect)
+        bool  in_grace = false;    // within the post-lock baseline-capture window
+        std::chrono::steady_clock::time_point lock_time;
+        float deviation = 0.0f;
+        bool  in_warning_zone = false;
+        bool  exceeds_threshold = false;
+        std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
+    };
+
     class UIManager {
     public:
         UIManager();
@@ -209,6 +229,8 @@ namespace StayPutVR {
         void RenderOpenShockTab();
         void RenderButtplugTab();
         void RenderTwitchTab();
+        // VRCFT sub-tab: JawOpen constraint enable + paths + margins + grace + bindings.
+        void RenderVRCFTTab();
         // Integrations tab: hosts PiShock / OpenShock / BPIO / Twitch / OSC Triggers as sub-tabs.
         void RenderIntegrationsTab();
         // OSC Triggers sub-tab: bite/shock enable + intensity/duration (paths live in Settings > OSC).
@@ -260,9 +282,24 @@ namespace StayPutVR {
         void ActivateGlobalLock(bool activate);
         void ActivateGlobalLockInternal(bool activate);
         void CheckDevicePositionDeviations();
+
+        // VRCFT JawOpen constraint. Reserved serial used to key its shocker /
+        // vibrator bindings in the existing config_.device_*_ids maps so the
+        // standard Trigger*(serial) punishment pipeline works unchanged.
+        static constexpr const char* kJawOpenSerial = "SPVR_JAWOPEN";
+        void CheckJawOpenConstraint();          // called every frame from UpdateDevicePositions
+        void ApplyIdBindingToJaw(const char* code); // bind/unbind a dragged shocker ID to the jaw
+        void RenderJawConfig();                 // jaw config panel shown in the Visual view
+        void LoadJawBindingsFromConfig();       // populate jaw_ binding arrays from config maps
         
         // Timestamp of last played sound for rate limiting
         std::chrono::steady_clock::time_point last_sound_time_ = std::chrono::steady_clock::now();
+
+        // VRCFT JawOpen constraint runtime state (see CheckJawOpenConstraint).
+        JawOpenConstraint jaw_;
+        // True when the JawOpen head hotspot is selected in the Visual view, so
+        // its config panel shows instead of a device slot's (selected_slot_role_).
+        bool jaw_selected_ = false;
         
         DeviceManager* device_manager_ = nullptr;
         

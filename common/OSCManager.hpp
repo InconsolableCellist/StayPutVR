@@ -33,7 +33,8 @@ enum class OSCDeviceType {
     ControllerRight,
     FootLeft,
     FootRight,
-    Hip
+    Hip,
+    Jaw
 };
 
 enum class DeviceRole {
@@ -115,7 +116,12 @@ public:
 
     // Set callback for emergency stop stretch actions
     void SetEStopStretchCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); estop_stretch_callback_ = std::move(callback); }
-    
+
+    // Set callback for the VRCFT JawOpen parameter (float 0..1). Fired on every
+    // inbound JawOpen value so the UI can track the live jaw value and enforce
+    // the JawOpen constraint while the HMD is locked.
+    void SetJawOpenCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); jawopen_callback_ = std::move(callback); }
+
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
     void SendPiShockDuration(float duration); // 0-1 float
@@ -189,7 +195,12 @@ private:
     std::string osc_bite_path_ = "/avatar/parameters/SPVR_Bite";
     std::string osc_shock_path_ = "/avatar/parameters/Shock";
     std::string osc_estop_stretch_path_ = "/avatar/parameters/SPVR_EStop_Stretch";
-    
+
+    // VRCFT JawOpen parameter paths. Default is the official VRCFT v2 path; the
+    // alt path covers avatars that publish the unprefixed JawOpen parameter.
+    std::string osc_jawopen_path_ = "/avatar/parameters/v2/JawOpen";
+    std::string osc_jawopen_alt_path_ = "/avatar/parameters/JawOpen";
+
     // Helper methods for sending OSC messages
     bool SendOSCMessage(const std::string& path, int value);
     bool SendOSCMessage(const std::string& path, float value);
@@ -222,6 +233,9 @@ private:
     
     // Callback for emergency stop stretch events
     std::function<void(float)> estop_stretch_callback_;
+
+    // Callback for the VRCFT JawOpen parameter (float 0..1)
+    std::function<void(float)> jawopen_callback_;
 };
 
 } // namespace StayPutVR 

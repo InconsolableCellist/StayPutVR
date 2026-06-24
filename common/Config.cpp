@@ -42,6 +42,12 @@ Config::Config()
     , osc_global_out_of_bounds_enabled(true)
     , osc_estop_stretch_path("/avatar/parameters/SPVR_EStop_Stretch")
     , osc_estop_stretch_enabled(true)
+    , jawopen_enabled(false)
+    , osc_jawopen_path("/avatar/parameters/v2/JawOpen")
+    , osc_jawopen_alt_path("/avatar/parameters/JawOpen")
+    , jawopen_warning_margin(0.10f)
+    , jawopen_disobedience_margin(0.20f)
+    , jawopen_grace_seconds(2.0f)
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
@@ -219,6 +225,12 @@ bool Config::LoadFromFile(const std::string& filename) {
         osc_global_out_of_bounds_enabled = j.value("osc_global_out_of_bounds_enabled", true);
         osc_estop_stretch_path = j.value("osc_estop_stretch_path", "/avatar/parameters/SPVR_EStop_Stretch");
         osc_estop_stretch_enabled = j.value("osc_estop_stretch_enabled", true);
+        jawopen_enabled = j.value("jawopen_enabled", false);
+        osc_jawopen_path = j.value("osc_jawopen_path", "/avatar/parameters/v2/JawOpen");
+        osc_jawopen_alt_path = j.value("osc_jawopen_alt_path", "/avatar/parameters/JawOpen");
+        jawopen_warning_margin = j.value("jawopen_warning_margin", 0.10f);
+        jawopen_disobedience_margin = j.value("jawopen_disobedience_margin", 0.20f);
+        jawopen_grace_seconds = j.value("jawopen_grace_seconds", 2.0f);
         osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = j.value("osc_bite_enabled", true);
         osc_shock_path = j.value("osc_shock_path", "/avatar/parameters/Shock");
@@ -693,6 +705,12 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_global_out_of_bounds_enabled"] = osc_global_out_of_bounds_enabled;
         j["osc_estop_stretch_path"] = osc_estop_stretch_path;
         j["osc_estop_stretch_enabled"] = osc_estop_stretch_enabled;
+        j["jawopen_enabled"] = jawopen_enabled;
+        j["osc_jawopen_path"] = osc_jawopen_path;
+        j["osc_jawopen_alt_path"] = osc_jawopen_alt_path;
+        j["jawopen_warning_margin"] = jawopen_warning_margin;
+        j["jawopen_disobedience_margin"] = jawopen_disobedience_margin;
+        j["jawopen_grace_seconds"] = jawopen_grace_seconds;
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;
         j["osc_shock_path"] = osc_shock_path;
