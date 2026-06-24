@@ -333,6 +333,9 @@ namespace StayPutVR {
         // Fire a direct shock on all enabled shock managers at the given
         // intensity (0..1) and duration (seconds). Blocked during emergency stop.
         void TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason);
+        // Like TriggerExternalShock but each shocker uses its per-device
+        // disobedience intensity (OSC bite/shock "use individual" option).
+        void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason);
         void ResetEmergencyStop();
         
         // Helper functions

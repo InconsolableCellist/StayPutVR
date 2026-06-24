@@ -122,6 +122,16 @@ namespace StayPutVR {
         SendShock(ConvertIntensityToAPI(intensity), duration_ms, reason, "");
     }
 
+    void OpenShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason) {
+        if (!IsEnabled()) {
+            Logger::Info("OpenShock not enabled, skipping external shock");
+            return;
+        }
+        // is_disobedience=true selects the per-device disobedience intensities
+        // (or the master disobedience intensity when individual is disabled).
+        SendShockWithIndividualIntensities(ConvertDurationToAPI(duration_seconds), reason, "", true);
+    }
+
     void OpenShockManager::TestActions() {
         if (!IsEnabled()) {
             SetError("OpenShock not enabled");
@@ -439,8 +449,10 @@ namespace StayPutVR {
         return (std::max)(1, (std::min)(100, static_cast<int>(normalized_intensity * 100.0f)));
     }
 
-    int OpenShockManager::ConvertDurationToAPI(float normalized_duration) {
-        return (std::max)(300, (std::min)(65535, static_cast<int>(300 + (normalized_duration * 10714.0f))));
+    int OpenShockManager::ConvertDurationToAPI(float duration_seconds) {
+        // OpenShock API duration is milliseconds (300..65535). Config now stores
+        // seconds (0..1 normalized values were migrated to seconds on load).
+        return (std::max)(300, (std::min)(65535, static_cast<int>(duration_seconds * 1000.0f)));
     }
 
     void OpenShockManager::ExecuteAction(const OpenShockActionData& action) {

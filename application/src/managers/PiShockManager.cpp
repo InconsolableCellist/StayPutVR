@@ -130,6 +130,21 @@ namespace StayPutVR {
         SendShock(ConvertIntensityToAPI(intensity), ConvertDurationToAPI(duration_seconds), reason);
     }
 
+    void PiShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock not enabled, skipping external shock");
+            return;
+        }
+        // Legacy API is single-device, so "individual" simply uses the configured
+        // disobedience intensity rather than a flat bite/shock intensity.
+        float intensity;
+        {
+            auto cfg_lock = config_->ReadLock();
+            intensity = config_->pishock_disobedience_intensity;
+        }
+        TriggerShock(intensity, duration_seconds, reason);
+    }
+
     void PiShockManager::TestActions() {
         if (!IsEnabled()) {
             SetError("PiShock not enabled");

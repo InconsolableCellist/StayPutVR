@@ -47,17 +47,25 @@ namespace StayPutVR {
 
         ImGui::SeparatorText("Bite  (SPVR_Bite)");
         if (ImGui::Checkbox("Enable Bite trigger", &config_.osc_bite_enabled)) changed = true;
-        ImGui::SetNextItemWidth(220);
-        if (ImGui::SliderFloat("Bite intensity", &config_.osc_bite_intensity, 0.0f, 1.0f, "%.2f")) changed = true;
-        ImGui::SetNextItemWidth(220);
-        if (ImGui::SliderFloat("Bite duration (s)", &config_.osc_bite_duration, 0.1f, 15.0f, "%.1f")) changed = true;
+        if (ImGui::Checkbox("Use per-device disobedience intensities##bite", &config_.osc_bite_use_individual_intensities)) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("When on, each shocker fires at its individual disobedience intensity "
+                                  "(configured in the PiShock/OpenShock tabs) instead of the single Bite intensity below.");
+        ImGui::BeginDisabled(config_.osc_bite_use_individual_intensities);
+        if (ImGuiHelpers::SliderFloatWithButtons("Bite intensity", &config_.osc_bite_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
+        ImGui::EndDisabled();
+        if (ImGuiHelpers::SliderFloatWithButtons("Bite duration (s)", &config_.osc_bite_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
         ImGui::SeparatorText("Shock  (/avatar/parameters/Shock)");
         if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
-        ImGui::SetNextItemWidth(220);
-        if (ImGui::SliderFloat("Shock intensity", &config_.osc_shock_intensity, 0.0f, 1.0f, "%.2f")) changed = true;
-        ImGui::SetNextItemWidth(220);
-        if (ImGui::SliderFloat("Shock duration (s)", &config_.osc_shock_duration, 0.1f, 15.0f, "%.1f")) changed = true;
+        if (ImGui::Checkbox("Use per-device disobedience intensities##shock", &config_.osc_shock_use_individual_intensities)) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("When on, each shocker fires at its individual disobedience intensity "
+                                  "(configured in the PiShock/OpenShock tabs) instead of the single Shock intensity below.");
+        ImGui::BeginDisabled(config_.osc_shock_use_individual_intensities);
+        if (ImGuiHelpers::SliderFloatWithButtons("Shock intensity", &config_.osc_shock_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
+        ImGui::EndDisabled();
+        if (ImGuiHelpers::SliderFloatWithButtons("Shock duration (s)", &config_.osc_shock_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
         ImGui::Spacing();
         ImGui::TextDisabled("Both are blocked while emergency stop is active.");
@@ -769,12 +777,13 @@ namespace StayPutVR {
 
         OSCManager::GetInstance().SetShockCallback(
             [this](bool triggered) {
-                bool enabled; float intensity, duration;
+                bool enabled, use_individual; float intensity, duration;
                 {
                     auto cfg_lock = config_.ReadLock();
                     enabled = config_.osc_shock_enabled;
                     intensity = config_.osc_shock_intensity;
                     duration = config_.osc_shock_duration;
+                    use_individual = config_.osc_shock_use_individual_intensities;
                 }
                 if (!enabled) {
                     return;
@@ -782,7 +791,11 @@ namespace StayPutVR {
                 if (Logger::IsInitialized()) {
                     Logger::Info("Shock param triggered via OSC");
                 }
-                TriggerExternalShock(intensity, duration, "Shock param");
+                if (use_individual) {
+                    TriggerExternalShockIndividual(duration, "Shock param");
+                } else {
+                    TriggerExternalShock(intensity, duration, "Shock param");
+                }
             }
         );
         
@@ -1003,13 +1016,18 @@ namespace StayPutVR {
         
         // Fire a direct shock on all configured shockers at the bite intensity/
         // duration (issue #7). Replaces the old beep+vibrate+shock disobedience.
-        float bite_intensity, bite_duration;
+        float bite_intensity, bite_duration; bool bite_use_individual;
         {
             auto cfg_lock = config_.ReadLock();
             bite_intensity = config_.osc_bite_intensity;
             bite_duration = config_.osc_bite_duration;
+            bite_use_individual = config_.osc_bite_use_individual_intensities;
         }
-        TriggerExternalShock(bite_intensity, bite_duration, "Bite");
+        if (bite_use_individual) {
+            TriggerExternalShockIndividual(bite_duration, "Bite");
+        } else {
+            TriggerExternalShock(bite_intensity, bite_duration, "Bite");
+        }
         
         // Update all device statuses to show out-of-bounds
         for (auto& device : device_positions_) {
@@ -1103,6 +1121,37 @@ namespace StayPutVR {
         // OpenShock.
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
             openshock_manager_->TriggerShock(intensity, duration_seconds, reason);
+        }
+    }
+
+    void UIManager::TriggerExternalShockIndividual(float duration_seconds, const std::string& reason) {
+        // Same gating as TriggerExternalShock, but each shocker fires at its own
+        // per-device disobedience intensity instead of a single supplied value.
+        if (emergency_stop_active_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning(reason + " shock ignored - emergency stop is active");
+            }
+            return;
+        }
+
+        Config::PiShockMode mode;
+        {
+            auto cfg_lock = config_.ReadLock();
+            mode = config_.pishock_mode;
+        }
+
+        if (mode == Config::PiShockMode::LEGACY_API) {
+            if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+                pishock_manager_->TriggerShockIndividual(duration_seconds, reason);
+            }
+        } else {
+            if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
+                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason);
+            }
+        }
+
+        if (openshock_manager_ && openshock_manager_->IsEnabled()) {
+            openshock_manager_->TriggerShockIndividual(duration_seconds, reason);
         }
     }
 

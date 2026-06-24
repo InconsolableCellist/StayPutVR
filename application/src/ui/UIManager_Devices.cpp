@@ -1940,7 +1940,7 @@ namespace StayPutVR {
         
         // Position threshold slider
         ImGui::Text("Position Threshold:");
-        ImGui::SliderFloat("##PosThreshold", &position_threshold_, 0.01f, 0.5f, "%.2f m");
+        ImGuiHelpers::SliderFloatWithButtons("##PosThreshold", &position_threshold_, 0.01f, 0.5f, 0.01f, "%.2f m");
         ImGui::SameLine();
         ImGui::TextDisabled("(?)");
         if (ImGui::IsItemHovered()) {

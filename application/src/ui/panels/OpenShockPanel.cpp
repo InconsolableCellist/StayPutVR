@@ -164,13 +164,13 @@ void OpenShockPanel::Render() {
     }
 
     float warning_duration = config_.openshock_warning_duration;
-    if (ImGui::SliderFloat("Warning Duration", &warning_duration, 0.0f, 1.0f, "%.2f")) {
+    if (ImGuiHelpers::SliderFloatWithButtons("Warning Duration", &warning_duration, 0.3f, 15.0f, 0.1f, "%.2f seconds")) {
         config_.openshock_warning_duration = warning_duration;
         save_config_();
     }
 
     ImGui::SameLine();
-    ImGuiHelpers::HelpTooltip("Duration for warning zone actions (0.0 = shortest, 1.0 = longest)");
+    ImGuiHelpers::HelpTooltip("Duration for warning zone actions, in seconds (0.3 = shortest).");
 
     ImGui::Separator();
 
@@ -238,13 +238,13 @@ void OpenShockPanel::Render() {
     }
 
     float disobedience_duration = config_.openshock_disobedience_duration;
-    if (ImGui::SliderFloat("Disobedience Duration", &disobedience_duration, 0.0f, 1.0f, "%.2f")) {
+    if (ImGuiHelpers::SliderFloatWithButtons("Disobedience Duration", &disobedience_duration, 0.3f, 15.0f, 0.1f, "%.2f seconds")) {
         config_.openshock_disobedience_duration = disobedience_duration;
         save_config_();
     }
 
     ImGui::SameLine();
-    ImGuiHelpers::HelpTooltip("Duration for disobedience actions (0.0 = shortest, 1.0 = longest)");
+    ImGuiHelpers::HelpTooltip("Duration for disobedience actions, in seconds (0.3 = shortest).");
 
     if (!config_.openshock_enabled) {
         ImGui::PopStyleColor();

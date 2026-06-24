@@ -34,6 +34,9 @@ namespace StayPutVR {
         // Fire a direct shock at an explicit intensity (0..1) and duration
         // (seconds). Used by external triggers (bite / Shock param).
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "");
+        // Legacy API is single-device; "individual" maps to the disobedience
+        // intensity (for OSC bite/shock per-device-intensity option).
+        void TriggerShockIndividual(float duration_seconds, const std::string& reason = "");
         void TestActions() override;
         std::string GetConnectionStatus() const override;
 

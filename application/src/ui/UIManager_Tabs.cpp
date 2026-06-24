@@ -414,25 +414,25 @@ namespace StayPutVR {
         
         // Warning distance
         ImGui::Text("Safe Zone Radius:");
-        if (ImGui::SliderFloat("##WarningDistance", &warning_threshold_, 0.01f, 0.5f, "%.2f m")) {
+        if (ImGuiHelpers::SliderFloatWithButtons("##WarningDistance", &warning_threshold_, 0.01f, 0.5f, 0.01f, "%.2f m")) {
             config_.warning_threshold = warning_threshold_;
             changed = true;
         }
         ImGui::SameLine();
         ImGuiHelpers::HelpTooltip("Distance at which warning feedback begins");
-        
+
         // Out of bounds distance
         ImGui::Text("Warning Zone Radius:");
-        if (ImGui::SliderFloat("##OutOfBoundsDistance", &position_threshold_, 0.05f, 1.0f, "%.2f m")) {
+        if (ImGuiHelpers::SliderFloatWithButtons("##OutOfBoundsDistance", &position_threshold_, 0.05f, 1.0f, 0.01f, "%.2f m")) {
             config_.bounds_threshold = position_threshold_;
             changed = true;
         }
         ImGui::SameLine();
         ImGuiHelpers::HelpTooltip("Distance at which the device is considered out of bounds");
-        
+
         // Disable threshold
         ImGui::Text("Disable Distance:");
-        if (ImGui::SliderFloat("##DisableThreshold", &disable_threshold_, 0.2f, 2.0f, "%.2f m")) {
+        if (ImGuiHelpers::SliderFloatWithButtons("##DisableThreshold", &disable_threshold_, 0.2f, 2.0f, 0.01f, "%.2f m")) {
             config_.disable_threshold = disable_threshold_;
             changed = true;
         }

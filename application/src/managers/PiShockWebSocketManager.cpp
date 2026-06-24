@@ -258,6 +258,25 @@ namespace StayPutVR {
         SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, "", ConvertIntensityToAPI(intensity));
     }
 
+    void PiShockWebSocketManager::TriggerShockIndividual(float duration_seconds, const std::string& reason) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock WebSocket not enabled, skipping external shock");
+            return;
+        }
+        if (!IsConnected()) {
+            Logger::Warning("PiShock WebSocket not connected, skipping external shock");
+            return;
+        }
+        if (!CheckRateLimit()) {
+            Logger::Info("Rate limit active, skipping external shock");
+            return;
+        }
+        // intensity_override = -1 (the default) makes SendShockMulti pick each
+        // shocker's per-device disobedience intensity (or the master disobedience
+        // intensity when individual intensities are disabled).
+        SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, "");
+    }
+
     void PiShockWebSocketManager::TestActions() {
         if (!IsEnabled()) {
             SetError("PiShock WebSocket not enabled");

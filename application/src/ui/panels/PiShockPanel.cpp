@@ -191,7 +191,9 @@ void PiShockPanel::Render() {
                     }
 
                     ImGui::PushID(i);
-                    if (ImGui::InputInt(label.c_str(), &shocker_id_buffers[i])) {
+                    // step=0, step_fast=0 hides the InputInt's +/- stepper buttons
+                    // (shocker IDs are typed in directly, not nudged).
+                    if (ImGui::InputInt(label.c_str(), &shocker_id_buffers[i], 0, 0)) {
                         config_.pishock_shocker_ids[i] = shocker_id_buffers[i];
                         save_config_();
                     }
@@ -345,8 +347,7 @@ void PiShockPanel::Render() {
             }
 
             float disobedience_duration = config_.pishock_disobedience_duration;
-            if (ImGui::SliderFloat("Duration", &disobedience_duration, 1.0f, 15.0f, "%.2f seconds")) {
-                disobedience_duration = (std::max)(1.0f, (std::min)(15.0f, disobedience_duration));
+            if (ImGuiHelpers::SliderFloatWithButtons("Duration", &disobedience_duration, 1.0f, 15.0f, 0.1f, "%.2f seconds")) {
                 config_.pishock_disobedience_duration = disobedience_duration;
                 save_config_();
             }

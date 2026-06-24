@@ -23,7 +23,9 @@ namespace StayPutVR {
 
 class Config {
 public:
-    static constexpr int CURRENT_CONFIG_VERSION = 1;
+    // v1: PiShock durations migrated 0..1 -> seconds.
+    // v2: OpenShock durations migrated 0..1 -> seconds.
+    static constexpr int CURRENT_CONFIG_VERSION = 2;
 
     Config();
     ~Config() = default;
@@ -95,6 +97,10 @@ public:
     float osc_shock_duration = 1.0f;
     float osc_bite_intensity = 0.25f;
     float osc_bite_duration = 1.0f;
+    // When true, the trigger fires each shocker at its individual per-device
+    // disobedience intensity instead of the single intensity above.
+    bool osc_bite_use_individual_intensities = false;
+    bool osc_shock_use_individual_intensities = false;
 
     // Global lock/unlock paths
     std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
@@ -167,14 +173,16 @@ public:
     std::string openshock_server_url = "https://api.openshock.app"; 
     
     // Warning Zone OpenShock Settings
+    // Durations are in SECONDS (0.3..15), converted to API ms at send time.
+    // Existing 0..1 normalized configs are migrated to seconds on load (v2).
     int openshock_warning_action = 0; // 0=none, 1=shock, 2=vibrate
     float openshock_warning_intensity = 0.25f;
-    float openshock_warning_duration = 0.25f;
-    
+    float openshock_warning_duration = 1.0f;
+
     // Disobedience (Out of Bounds) OpenShock Settings
     int openshock_disobedience_action = 0; // 0=none, 1=shock, 2=vibrate
     float openshock_disobedience_intensity = 0.1f;
-    float openshock_disobedience_duration = 0.05f;
+    float openshock_disobedience_duration = 1.0f;
     
     // Master intensity settings for OpenShock
     bool openshock_use_individual_warning_intensities = false; // false = use master, true = use individual for warning

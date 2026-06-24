@@ -182,8 +182,13 @@ bool Config::LoadFromFile(const std::string& filename) {
         nlohmann::json j;
         file >> j;
 
-        // Config versioning
+        // Config versioning. Capture the on-disk version up front: each migration
+        // below gates on this original value, and we only stamp the member to the
+        // current version once at the end. (Previously the PiShock migration wrote
+        // config_version inline, which would cause a later migration gated on a
+        // higher version to be skipped.)
         config_version = j.value("config_version", 0);
+        const int loaded_config_version = config_version;
 
         // OSC settings
         osc_enabled = j.value("osc_enabled", true);
@@ -239,6 +244,8 @@ bool Config::LoadFromFile(const std::string& filename) {
         osc_shock_duration = j.value("osc_shock_duration", 1.0f);
         osc_bite_intensity = j.value("osc_bite_intensity", 0.25f);
         osc_bite_duration = j.value("osc_bite_duration", 1.0f);
+        osc_bite_use_individual_intensities = j.value("osc_bite_use_individual_intensities", false);
+        osc_shock_use_individual_intensities = j.value("osc_shock_use_individual_intensities", false);
 
         // PiShock settings
         pishock_enabled = j.value("pishock_enabled", false);
@@ -288,16 +295,15 @@ bool Config::LoadFromFile(const std::string& filename) {
         pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.25f);
         pishock_disobedience_duration = j.value("pishock_disobedience_duration", 1.0f);
 
-        // Migrate old normalized duration values (0.0-1.0) to new second values (1.0-15.0)
-        // Only run for configs that predate seconds-based durations (version < 1)
-        if (config_version < 1) {
+        // Migrate old normalized PiShock durations (0.0-1.0) to seconds (1.0-15.0).
+        // Only for configs that predate seconds-based PiShock durations (v < 1).
+        if (loaded_config_version < 1) {
             if (pishock_warning_duration >= 0.0f && pishock_warning_duration <= 1.0f) {
                 pishock_warning_duration = (std::max)(1.0f, pishock_warning_duration * 15.0f);
             }
             if (pishock_disobedience_duration >= 0.0f && pishock_disobedience_duration <= 1.0f) {
                 pishock_disobedience_duration = (std::max)(1.0f, pishock_disobedience_duration * 15.0f);
             }
-            config_version = CURRENT_CONFIG_VERSION;
         }
         
         // Individual device intensities for PiShock
@@ -343,7 +349,22 @@ bool Config::LoadFromFile(const std::string& filename) {
         openshock_disobedience_action = j.value("openshock_disobedience_action", 0);
         openshock_disobedience_intensity = j.value("openshock_disobedience_intensity", 0.25f);
         openshock_disobedience_duration = j.value("openshock_disobedience_duration", 0.25f);
-        
+
+        // Migrate old normalized OpenShock durations (0.0-1.0) to seconds (v < 2).
+        // The old API mapping was ms = 300 + norm*10714, so convert back to the
+        // real second value to preserve each user's actual shock length (0.25 ->
+        // ~3.0s, 1.0 -> ~11.0s) instead of reinterpreting 0.25 as a literal 0.25s.
+        // Guarded by the on-disk version so already-seconds values are left alone.
+        if (loaded_config_version < 2) {
+            openshock_warning_duration = (std::max)(0.3f, (std::min)(15.0f,
+                (300.0f + openshock_warning_duration * 10714.0f) / 1000.0f));
+            openshock_disobedience_duration = (std::max)(0.3f, (std::min)(15.0f,
+                (300.0f + openshock_disobedience_duration * 10714.0f) / 1000.0f));
+        }
+
+        // All version-gated migrations are done; stamp the member current.
+        config_version = CURRENT_CONFIG_VERSION;
+
         // Master intensity settings for OpenShock
         openshock_use_individual_warning_intensities = j.value("openshock_use_individual_warning_intensities", false);
         openshock_use_individual_disobedience_intensities = j.value("openshock_use_individual_disobedience_intensities", false);
@@ -719,6 +740,8 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_shock_duration"] = osc_shock_duration;
         j["osc_bite_intensity"] = osc_bite_intensity;
         j["osc_bite_duration"] = osc_bite_duration;
+        j["osc_bite_use_individual_intensities"] = osc_bite_use_individual_intensities;
+        j["osc_shock_use_individual_intensities"] = osc_shock_use_individual_intensities;
 
         // PiShock settings
         j["pishock_enabled"] = pishock_enabled;
