@@ -275,9 +275,11 @@ namespace StayPutVR {
         }
 
         Logger::Info("Testing configured PiShock WebSocket out-of-bounds actions...");
-        
-        // Test the actual configured disobedience actions
-        TriggerDisobedienceActions("TEST");
+
+        // Test the actual configured disobedience actions. Pass an empty serial
+        // so this fires on ALL configured shockers: a real serial ("TEST") would
+        // hit the per-device binding lookup, find no binding, and silently skip.
+        TriggerDisobedienceActions("");
     }
 
     void PiShockWebSocketManager::SendBeep(int duration, const std::string& reason) {

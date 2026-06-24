@@ -134,7 +134,9 @@ namespace StayPutVR {
         }
 
         Logger::Info("Testing configured OpenShock out-of-bounds actions...");
-        TriggerDisobedienceActions("TEST");
+        // Empty serial => fire configured shocker(s); a real serial ("TEST")
+        // would fail the per-device binding lookup and silently skip.
+        TriggerDisobedienceActions("");
     }
 
     void OpenShockManager::SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience) {
