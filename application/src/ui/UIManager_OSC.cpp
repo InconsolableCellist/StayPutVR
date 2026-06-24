@@ -527,7 +527,8 @@ namespace StayPutVR {
         osc_query_server_->AddParameter(config_.osc_estop_stretch_path, "f", A::WriteOnly, 0.0f);
         if (config_.jawopen_enabled) {
             osc_query_server_->AddParameter(config_.osc_jawopen_path, "f", A::WriteOnly, 0.0f);
-            osc_query_server_->AddParameter(config_.osc_jawopen_alt_path, "f", A::WriteOnly, 0.0f);
+            if (!config_.osc_jawenabled_path.empty())
+                osc_query_server_->AddParameter(config_.osc_jawenabled_path, "T", A::WriteOnly, false);
         }
         osc_query_server_->AddParameter(p + "avatar/change", "s", A::WriteOnly, std::string());
 
@@ -832,6 +833,13 @@ namespace StayPutVR {
         OSCManager::GetInstance().SetJawOpenCallback(
             [this](float jaw_value) {
                 jaw_.current = jaw_value;
+            }
+        );
+
+        // SPVR_JawEnabled: live runtime gate from the avatar radial menu.
+        OSCManager::GetInstance().SetJawEnabledCallback(
+            [this](bool enabled) {
+                jaw_.runtime_enabled = enabled;
             }
         );
 

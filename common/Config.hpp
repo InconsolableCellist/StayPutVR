@@ -118,12 +118,22 @@ public:
     // While the HMD is locked, the avatar's JawOpen value must stay within a
     // margin of the value captured at lock time, escalating warning->disobedience
     // like the controller position constraint. Off by default.
+    //
+    // NOTE: VRChat does NOT echo the raw VRCFT JawOpen (FT/v2/JawOpen) back out
+    // over OSC (it arrived as OSC input, so it's loopback-suppressed). The
+    // StayPutVR JawOpen bridge (a VRCFury Full Controller + the editor-generated
+    // .controller) reads FT/v2/JawOpen in an FX layer and drives a quantized,
+    // driver-set parameter SPVR_JawOpen, which VRChat DOES send out. So the app
+    // listens for SPVR_JawOpen, not the raw VRCFT param.
     bool jawopen_enabled = false;
-    std::string osc_jawopen_path = "/avatar/parameters/v2/JawOpen";   // official VRCFT v2
-    std::string osc_jawopen_alt_path = "/avatar/parameters/JawOpen";  // unprefixed fallback
+    std::string osc_jawopen_path = "/avatar/parameters/SPVR_JawOpen"; // bridge output param
+    // Live runtime gate: a synced bool the user toggles via the avatar radial menu.
+    // When the feature is armed (jawopen_enabled) and the HMD is locked, the jaw
+    // is only enforced while this is true; toggling it re-captures the baseline.
+    std::string osc_jawenabled_path = "/avatar/parameters/SPVR_JawEnabled";
     float jawopen_warning_margin = 0.10f;       // |current-baseline| > this => warning
     float jawopen_disobedience_margin = 0.20f;  // |current-baseline| > this => disobedience
-    float jawopen_grace_seconds = 2.0f;         // baseline-capture window after HMD lock
+    float jawopen_grace_seconds = 1.0f;         // baseline-capture window after HMD lock
 
     // PiShock Mode Selection
     enum class PiShockMode {

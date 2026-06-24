@@ -749,15 +749,6 @@ namespace StayPutVR {
     // window), then enforce |current - baseline| against the warning/disobedience
     // margins, reusing the same punishment + audio + OSC-status pipeline.
     void UIManager::CheckJawOpenConstraint() {
-        if (!config_.jawopen_enabled || emergency_stop_active_) {
-            jaw_.active = false;
-            jaw_.in_grace = false;
-            jaw_.hmd_was_locked = false;
-            jaw_.in_warning_zone = false;
-            jaw_.exceeds_threshold = false;
-            return;
-        }
-
         // Is the HMD currently locked (individually or via a global lock)?
         bool hmd_locked = false;
         for (const auto& d : device_positions_) {
@@ -768,24 +759,32 @@ namespace StayPutVR {
             }
         }
 
+        // The constraint engages only when armed (app master), gated on live
+        // (SPVR_JawEnabled radial), and the HMD is locked. Emergency stop forces
+        // it off. Toggling SPVR_JawEnabled while locked therefore suspends/resumes
+        // the jaw without unlocking the collar -- and resuming re-captures the
+        // baseline, so the current jaw pose becomes the new ideal.
+        bool gate = config_.jawopen_enabled && jaw_.runtime_enabled &&
+                    hmd_locked && !emergency_stop_active_;
+
         auto now = std::chrono::steady_clock::now();
 
-        // Falling edge: HMD just unlocked -> deactivate.
-        if (!hmd_locked) {
-            if (jaw_.hmd_was_locked) {
+        // Falling edge: gate dropped (unlocked, radial off, or disarmed) -> suspend.
+        if (!gate) {
+            if (jaw_.gate_active) {
                 jaw_.active = false;
                 jaw_.in_grace = false;
                 jaw_.in_warning_zone = false;
                 jaw_.exceeds_threshold = false;
                 UpdateDeviceStatus(OSCDeviceType::Jaw, DeviceStatus::Unlocked);
             }
-            jaw_.hmd_was_locked = false;
+            jaw_.gate_active = false;
             return;
         }
 
-        // Rising edge: HMD just locked -> start grace + baseline capture.
-        if (!jaw_.hmd_was_locked) {
-            jaw_.hmd_was_locked = true;
+        // Rising edge: gate just engaged -> start grace + baseline capture.
+        if (!jaw_.gate_active) {
+            jaw_.gate_active = true;
             jaw_.lock_time = now;
             jaw_.in_grace = true;
             jaw_.active = false;
@@ -1549,11 +1548,8 @@ namespace StayPutVR {
                 bool hovered = ImGui::IsItemHovered();
 
                 if (ImGui::BeginDragDropTarget()) {
-                    if (ImGui::AcceptDragDropPayload("SPVR_JAW")) {
-                        config_.jawopen_enabled = true;
-                        LoadJawBindingsFromConfig();
-                        SaveConfig();
-                    }
+                    // Drop shocker/vibrator IDs here to bind what fires on jaw
+                    // disobedience; the slot is always driven by SPVR_JawOpen.
                     if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID")) {
                         ApplyIdBindingToJaw(static_cast<const char*>(p->Data));
                     }
@@ -1561,20 +1557,54 @@ namespace StayPutVR {
                 }
                 if (ImGui::IsItemClicked()) { jaw_selected_ = true; selected_slot_role_ = DeviceRole::None; }
 
-                bool on = config_.jawopen_enabled;
-                ImU32 status_col = IM_COL32(130, 150, 170, 120); // disabled (dim)
-                if (on) {
-                    status_col = jaw_.exceeds_threshold ? IM_COL32(255, 70, 70, 255)
-                               : jaw_.in_warning_zone  ? IM_COL32(255, 215, 60, 255)
-                                                       : IM_COL32(70, 220, 100, 255);
-                }
+                // Colour: dim when not armed; muted blue when armed but idle
+                // (radial off / HMD unlocked / grace); zone colour when enforcing.
+                bool armed = config_.jawopen_enabled;
+                ImU32 status_col;
+                if (!armed)            status_col = IM_COL32(130, 150, 170, 120); // not armed
+                else if (!jaw_.active) status_col = IM_COL32(90, 150, 220, 220);  // armed, idle
+                else status_col = jaw_.exceeds_threshold ? IM_COL32(255, 70, 70, 255)
+                                : jaw_.in_warning_zone   ? IM_COL32(255, 215, 60, 255)
+                                                         : IM_COL32(70, 220, 100, 255);
                 ImU32 ring = hovered ? IM_COL32(255, 255, 255, 255) : status_col;
-                dl->AddCircleFilled(c, hot/2 - 2, on ? IM_COL32(30, 60, 45, 150) : IM_COL32(20, 24, 32, 140));
-                dl->AddCircle(c, hot/2, ring, 24, on ? 3.0f : 1.5f);
+                dl->AddCircleFilled(c, hot/2 - 2, armed ? IM_COL32(30, 60, 45, 150) : IM_COL32(20, 24, 32, 140));
+                dl->AddCircle(c, hot/2, ring, 24, armed ? 3.0f : 1.5f);
                 if (jaw_selected_)
                     dl->AddCircle(c, hot/2 + 3, IM_COL32(80, 160, 255, 255), 24, 2.0f);
                 drawOutlined(ImVec2(c.x + hot/2 + 3, c.y - 7),
-                             on ? status_col : IM_COL32(190, 200, 220, 230), "Jaw");
+                             armed ? status_col : IM_COL32(190, 200, 220, 230), "Jaw");
+
+                // Bound shocker/vibrator IDs drawn above the slot (S# blue=PiShock,
+                // red=OpenShock, V# purple=BPIO), mirroring the cuff slots.
+                {
+                    const ImU32 cb = IM_COL32(120, 190, 255, 255);
+                    const ImU32 cr = IM_COL32(255, 120, 120, 255);
+                    const ImU32 cp = IM_COL32(220, 150, 255, 255);
+                    auto forJawTokens = [&](auto emit) {
+                        for (int i = 0; i < 5; ++i)
+                            if (jaw_.pishock_enabled[i] && config_.pishock_shocker_ids[i] != 0) {
+                                char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cb);
+                            }
+                        for (int i = 0; i < 5; ++i)
+                            if (jaw_.openshock_enabled[i] && !config_.openshock_device_ids[i].empty()) {
+                                char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cr);
+                            }
+                        for (int i = 0; i < 5; ++i)
+                            if (jaw_.vibration_device_enabled[i] && config_.buttplug_device_indices[i] >= 0) {
+                                char t[6]; std::snprintf(t, 6, "V%d", i); emit(t, cp);
+                            }
+                    };
+                    float tw = 0.0f;
+                    forJawTokens([&](const char* t, ImU32){ tw += ImGui::CalcTextSize(t).x + 4.0f; });
+                    if (tw > 0.0f) {
+                        float sx = c.x - tw * 0.5f;
+                        float sy = c.y + hot/2 + 2.0f; // below the slot (top of effigy)
+                        forJawTokens([&](const char* t, ImU32 col){
+                            drawOutlined(ImVec2(sx, sy), col, t);
+                            sx += ImGui::CalcTextSize(t).x + 4.0f;
+                        });
+                    }
+                }
             }
 
             // Top-left drop targets: bind/unbind a dragged ID across every
@@ -1623,27 +1653,23 @@ namespace StayPutVR {
         // ---- RIGHT (neutral space): ID palette on top, device list below ----
         ImGui::BeginChild("RightPane", ImVec2(0, effigyH), false);
         ImGui::TextWrapped("Drag a device onto a body slot to assign it. Drag an ID chip onto a "
-                           "body slot to bind a shocker/vibrator. Drag the JawOpen (VRCFT) item "
-                           "onto the head to enable the jaw constraint. Click a device, slot, or "
-                           "the head to configure it.");
+                           "body slot (or the head) to bind a shocker/vibrator. The head slot is "
+                           "the JawOpen constraint, driven by SPVR_JawOpen and toggled in-game via "
+                           "the SPVR_JawEnabled radial. Click a device, slot, or the head to configure it.");
         ImGui::SeparatorText("Available IDs (drag onto a body slot)");
         RenderShockerPalette();
 
         ImGui::SeparatorText("Devices");
         ImGui::BeginChild("DeviceList", ImVec2(0, 0), true);
 
-        // JawOpen (VRCFT) virtual item: drag onto the head to enable; heat bar
-        // shows the live jaw value. Not a tracked device, so it's listed first.
+        // JawOpen (VRCFT) live readout: shows the SPVR_JawOpen value. Click to
+        // open the jaw config (the head slot is where you bind shockers). Not a
+        // drag source -- the jaw is always driven by SPVR_JawOpen.
         {
             ImGui::PushID("jawopen_item");
             if (ImGui::Selectable("JawOpen (VRCFT)", jaw_selected_, 0,
                                   ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0))) {
                 jaw_selected_ = true; selected_slot_role_ = DeviceRole::None;
-            }
-            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-                ImGui::SetDragDropPayload("SPVR_JAW", "JAW", 4);
-                ImGui::TextUnformatted("Assign JawOpen to head");
-                ImGui::EndDragDropSource();
             }
             ImGui::SameLine();
             float jh = jaw_.current;
@@ -1652,10 +1678,14 @@ namespace StayPutVR {
             ImGui::ProgressBar(jh, ImVec2(70, 0), jh > 0.6f ? "open" : (jh > 0.15f ? "ajar" : "closed"));
             ImGui::PopStyleColor();
             ImGui::SameLine();
-            if (config_.jawopen_enabled)
-                ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "-> Head");
+            if (!config_.jawopen_enabled)
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(off)");
+            else if (jaw_.active)
+                ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "active");
+            else if (!jaw_.runtime_enabled)
+                ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.4f, 1.0f), "radial off");
             else
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(disabled)");
+                ImGui::TextColored(ImVec4(0.55f, 0.7f, 0.95f, 1.0f), "armed");
             ImGui::PopID();
             ImGui::Separator();
         }
@@ -1823,28 +1853,30 @@ namespace StayPutVR {
         }
 
         bool enabled = config_.jawopen_enabled;
-        if (ImGui::Checkbox("Enabled", &enabled)) {
+        if (ImGui::Checkbox("Armed", &enabled)) {
             config_.jawopen_enabled = enabled;
             if (enabled) LoadJawBindingsFromConfig();
             SaveConfig();
         }
+        ImGuiHelpers::HelpTooltip("App master switch. When armed, the jaw is enforced while the "
+                                  "HMD is locked AND the in-game SPVR_JawEnabled radial is on.");
         ImGui::SameLine();
-        if (ImGui::SmallButton("Unassign")) {
-            config_.jawopen_enabled = false;
-            jaw_selected_ = false;
-            SaveConfig();
-            return;
-        }
+        ImGui::Text("| Radial (SPVR_JawEnabled):");
+        ImGui::SameLine();
+        if (jaw_.runtime_enabled) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "ON");
+        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "OFF");
 
         // Live state readout.
         ImGui::Text("Value: %.2f", jaw_.current);
         ImGui::SameLine();
-        if (config_.jawopen_enabled && jaw_.active) {
+        if (jaw_.active) {
             ImGui::Text("| baseline %.2f, dev %.2f %s", jaw_.baseline, jaw_.deviation,
                         jaw_.exceeds_threshold ? "[DISOBEDIENCE]" :
                         jaw_.in_warning_zone ? "[WARNING]" : "[SAFE]");
         } else if (config_.jawopen_enabled && jaw_.in_grace) {
             ImGui::TextDisabled("| capturing baseline...");
+        } else if (config_.jawopen_enabled && !jaw_.runtime_enabled) {
+            ImGui::TextDisabled("| suspended (radial off)");
         } else if (config_.jawopen_enabled) {
             ImGui::TextDisabled("| inactive (lock HMD)");
         }

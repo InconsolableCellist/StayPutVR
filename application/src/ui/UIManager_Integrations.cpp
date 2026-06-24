@@ -71,73 +71,93 @@ namespace StayPutVR {
     void UIManager::RenderVRCFTTab() {
         ImGui::Text("VRCFT JawOpen Constraint");
         ImGui::TextWrapped(
-            "Listens for the VRChat Face Tracking JawOpen parameter. While the HMD (neck) "
-            "lock is active, the avatar's jaw must stay near where it was when the lock "
-            "engaged. Drifting past the warning margin issues a warning; past the "
-            "disobedience margin triggers the full disobedience response (audio, OSC status, "
-            "and any bound shockers/vibrators) - the same escalation used for controllers. "
-            "You can also assign and bind this on the Devices > Visual screen by dragging the "
-            "JawOpen item onto the avatar's head.");
+            "While the HMD (neck) lock is active, the avatar's jaw must stay near where it "
+            "was when the lock engaged. Drifting past the warning margin issues a warning; "
+            "past the disobedience margin triggers the full disobedience response (audio, OSC "
+            "status, and any bound shockers/vibrators) - the same escalation used for "
+            "controllers. You can also assign and bind this on the Devices > Visual screen by "
+            "dragging the JawOpen item onto the avatar's head.");
+        ImGui::Spacing();
+        ImGui::TextWrapped(
+            "REQUIRES the StayPutVR JawOpen bridge on your avatar: VRChat does not send the "
+            "raw VRCFT jaw value (FT/v2/JawOpen) back out over OSC. The bridge (a VRCFury "
+            "Full Controller) reads it in an FX layer and drives the SPVR_JawOpen parameter, "
+            "which VRChat does send out - that is what this listens for below.");
         ImGui::Separator();
 
         bool enabled = config_.jawopen_enabled;
-        if (ImGui::Checkbox("Enable JawOpen constraint", &enabled)) {
+        if (ImGui::Checkbox("Arm JawOpen constraint", &enabled)) {
             config_.jawopen_enabled = enabled;
             if (enabled) LoadJawBindingsFromConfig();
             SaveConfig();
         }
-        ImGuiHelpers::HelpTooltip("Off by default. When on, the jaw is constrained while the HMD is locked.");
+        ImGuiHelpers::HelpTooltip("App master switch (off by default). When armed, the jaw is "
+                                  "enforced while the HMD is locked AND the in-game SPVR_JawEnabled "
+                                  "radial toggle is on. Toggling the radial while locked suspends or "
+                                  "resumes the jaw (resuming re-captures the baseline) without unlocking.");
+
+        ImGui::SameLine();
+        ImGui::Text("| Radial (SPVR_JawEnabled):");
+        ImGui::SameLine();
+        if (jaw_.runtime_enabled) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "ON");
+        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "OFF");
 
         // Live value + state readout.
         ImGui::Spacing();
         ImGui::Text("Live JawOpen:");
         ImGui::SameLine();
         ImGui::ProgressBar(jaw_.current, ImVec2(180, 0));
-        if (config_.jawopen_enabled && jaw_.active) {
+        if (jaw_.active) {
             ImGui::Text("Baseline: %.2f   Deviation: %.2f   %s",
                         jaw_.baseline, jaw_.deviation,
                         jaw_.exceeds_threshold ? "[DISOBEDIENCE]" :
                         jaw_.in_warning_zone ? "[WARNING]" : "[SAFE]");
         } else if (config_.jawopen_enabled && jaw_.in_grace) {
             ImGui::TextDisabled("Capturing baseline (grace window)...");
+        } else if (config_.jawopen_enabled && !jaw_.runtime_enabled) {
+            ImGui::TextDisabled("Suspended (SPVR_JawEnabled radial is off).");
         } else if (config_.jawopen_enabled) {
             ImGui::TextDisabled("Inactive (lock the HMD to engage).");
         }
 
         ImGui::Separator();
-        ImGui::Text("Parameter Paths");
+        // Collapsed by default - the defaults match the editor-generated bridge,
+        // so most users never need to touch these.
+        if (ImGui::CollapsingHeader("Parameter Paths")) {
+            static char jaw_path[128] = "";
+            static char jaw_en_path[128] = "";
+            if (strlen(jaw_path) == 0) strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
+            if (strlen(jaw_en_path) == 0) strcpy_s(jaw_en_path, sizeof(jaw_en_path), config_.osc_jawenabled_path.c_str());
 
-        static char jaw_path[128] = "";
-        static char jaw_alt_path[128] = "";
-        if (strlen(jaw_path) == 0) strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
-        if (strlen(jaw_alt_path) == 0) strcpy_s(jaw_alt_path, sizeof(jaw_alt_path), config_.osc_jawopen_alt_path.c_str());
+            if (ImGui::InputText("Bridge Path", jaw_path, IM_ARRAYSIZE(jaw_path))) {
+                config_.osc_jawopen_path = jaw_path;
+            }
+            // Push the edited path into the live OSCManager so it takes effect at
+            // once. Without this, the receiver keeps matching the OLD path until OSC
+            // is reconnected, which is why an edited JawOpen path appears to do nothing.
+            if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset##jawpath")) {
+                config_.osc_jawopen_path = "/avatar/parameters/SPVR_JawOpen";
+                strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
+                SaveConfig();
+                OSCManager::GetInstance().SetConfig(config_);
+            }
+            ImGuiHelpers::HelpTooltip("The parameter the JawOpen bridge drives. Default SPVR_JawOpen matches the editor-generated bridge controller.");
 
-        if (ImGui::InputText("JawOpen Path (v2)", jaw_path, IM_ARRAYSIZE(jaw_path))) {
-            config_.osc_jawopen_path = jaw_path;
+            if (ImGui::InputText("Enabled Path", jaw_en_path, IM_ARRAYSIZE(jaw_en_path))) {
+                config_.osc_jawenabled_path = jaw_en_path;
+            }
+            if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset##jawenpath")) {
+                config_.osc_jawenabled_path = "/avatar/parameters/SPVR_JawEnabled";
+                strcpy_s(jaw_en_path, sizeof(jaw_en_path), config_.osc_jawenabled_path.c_str());
+                SaveConfig();
+                OSCManager::GetInstance().SetConfig(config_);
+            }
+            ImGuiHelpers::HelpTooltip("The synced bool toggled by the avatar radial menu that enables/disables the jaw constraint live.");
         }
-        // Push the edited path into the live OSCManager so it takes effect at
-        // once. Without this, the receiver keeps matching the OLD path until OSC
-        // is reconnected, which is why an edited JawOpen path appears to do nothing.
-        if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##jawpath")) {
-            config_.osc_jawopen_path = "/avatar/parameters/v2/JawOpen";
-            strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
-            SaveConfig();
-            OSCManager::GetInstance().SetConfig(config_);
-        }
-        if (ImGui::InputText("JawOpen Path (alt)", jaw_alt_path, IM_ARRAYSIZE(jaw_alt_path))) {
-            config_.osc_jawopen_alt_path = jaw_alt_path;
-        }
-        if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset##jawaltpath")) {
-            config_.osc_jawopen_alt_path = "/avatar/parameters/JawOpen";
-            strcpy_s(jaw_alt_path, sizeof(jaw_alt_path), config_.osc_jawopen_alt_path.c_str());
-            SaveConfig();
-            OSCManager::GetInstance().SetConfig(config_);
-        }
-        ImGuiHelpers::HelpTooltip("Both paths are accepted. v2 is the official VRCFT path; alt covers avatars that publish the unprefixed JawOpen.");
 
         ImGui::Separator();
         ImGui::Text("Constraint Tuning");

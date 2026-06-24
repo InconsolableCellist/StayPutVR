@@ -114,11 +114,14 @@ namespace StayPutVR {
     // enforcement compares |current - baseline| against the configured margins,
     // mirroring the 3-D position-deviation engine in 1-D.
     struct JawOpenConstraint {
-        float current = 0.0f;      // live value from OSC
+        float current = 0.0f;      // live value from OSC (SPVR_JawOpen)
         float baseline = 0.0f;     // captured ideal (frozen after grace)
-        bool  active = false;      // HMD locked and past the grace window
-        bool  hmd_was_locked = false; // previous-frame HMD lock state (edge detect)
-        bool  in_grace = false;    // within the post-lock baseline-capture window
+        bool  active = false;      // gate satisfied and past the grace window
+        // SPVR_JawEnabled runtime gate from the avatar radial. Default true so an
+        // avatar that never sends it falls back to app-master-only behaviour.
+        bool  runtime_enabled = true;
+        bool  gate_active = false;  // previous-frame value of (armed && enabled && HMD locked)
+        bool  in_grace = false;    // within the post-engage baseline-capture window
         std::chrono::steady_clock::time_point lock_time;
         float deviation = 0.0f;
         bool  in_warning_zone = false;

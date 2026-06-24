@@ -235,11 +235,11 @@ void OSCManager::SetConfig(const Config& config) {
     osc_shock_path_ = config.osc_shock_path;
     osc_estop_stretch_path_ = config.osc_estop_stretch_path;
     osc_jawopen_path_ = config.osc_jawopen_path;
-    osc_jawopen_alt_path_ = config.osc_jawopen_alt_path;
+    osc_jawenabled_path_ = config.osc_jawenabled_path;
 
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Updated OSC paths from config (jawopen='" +
-                      osc_jawopen_path_ + "', jawopen_alt='" + osc_jawopen_alt_path_ + "')");
+                      osc_jawopen_path_ + "', jawenabled='" + osc_jawenabled_path_ + "')");
     }
 }
 
@@ -473,10 +473,15 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     }
                 }
 
-                // VRCFT JawOpen parameter (float 0..1) - official v2 or alt path
-                else if ((address == osc_jawopen_path_ || address == osc_jawopen_alt_path_)
-                         && jawopen_callback_ && tag == 'f') {
+                // JawOpen bridge parameter (float 0..1) - SPVR_JawOpen
+                else if (address == osc_jawopen_path_ && jawopen_callback_ && tag == 'f') {
                     jawopen_callback_(float_value);
+                }
+
+                // SPVR_JawEnabled runtime gate (synced bool from the radial menu).
+                // Pass both true and false so the UI can suspend/resume live.
+                else if (address == osc_jawenabled_path_ && jawenabled_callback_) {
+                    jawenabled_callback_(value_bool);
                 }
                 
                 // Latch_IsPosed paths: direct state change (not toggle)

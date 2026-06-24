@@ -122,6 +122,10 @@ public:
     // the JawOpen constraint while the HMD is locked.
     void SetJawOpenCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); jawopen_callback_ = std::move(callback); }
 
+    // Set callback for the SPVR_JawEnabled runtime gate (synced bool from the
+    // avatar radial menu). Fired on every inbound value (true and false).
+    void SetJawEnabledCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); jawenabled_callback_ = std::move(callback); }
+
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
     void SendPiShockDuration(float duration); // 0-1 float
@@ -196,10 +200,11 @@ private:
     std::string osc_shock_path_ = "/avatar/parameters/Shock";
     std::string osc_estop_stretch_path_ = "/avatar/parameters/SPVR_EStop_Stretch";
 
-    // VRCFT JawOpen parameter paths. Default is the official VRCFT v2 path; the
-    // alt path covers avatars that publish the unprefixed JawOpen parameter.
-    std::string osc_jawopen_path_ = "/avatar/parameters/v2/JawOpen";
-    std::string osc_jawopen_alt_path_ = "/avatar/parameters/JawOpen";
+    // JawOpen bridge parameter. The app listens for SPVR_JawOpen (driven by the
+    // VRCFury JawOpen bridge FX layer), not the raw VRCFT FT/v2/JawOpen, which
+    // VRChat does not echo back out.
+    std::string osc_jawopen_path_ = "/avatar/parameters/SPVR_JawOpen";
+    std::string osc_jawenabled_path_ = "/avatar/parameters/SPVR_JawEnabled";
 
     // Helper methods for sending OSC messages
     bool SendOSCMessage(const std::string& path, int value);
@@ -236,6 +241,9 @@ private:
 
     // Callback for the VRCFT JawOpen parameter (float 0..1)
     std::function<void(float)> jawopen_callback_;
+
+    // Callback for the SPVR_JawEnabled runtime gate (synced bool)
+    std::function<void(bool)> jawenabled_callback_;
 };
 
 } // namespace StayPutVR 
