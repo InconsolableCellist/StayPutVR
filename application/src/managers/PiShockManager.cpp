@@ -102,19 +102,36 @@ namespace StayPutVR {
         Logger::Info("Triggering PiShock warning actions for device: " +
                    (device_serial.empty() ? "ALL" : device_serial));
 
-        SendBeep(0, 1, "Warning - Beep");
-
-        bool do_vibrate;
-        float intensity;
+        // Snapshot config under read lock. Mirror TriggerDisobedienceActions but
+        // read the warning-zone fields, and gate every action on its own flag --
+        // previously this hardcoded an unconditional beep and read the
+        // *disobedience* vibrate/intensity, so warnings fired beep+vibrate even
+        // when nothing warning-related was configured.
+        bool do_beep, do_vibrate, do_shock;
+        float intensity, duration;
         {
             auto cfg_lock = config_->ReadLock();
-            do_vibrate = config_->pishock_disobedience_vibrate;
-            intensity = config_->pishock_disobedience_intensity;
+            do_beep = config_->pishock_warning_beep;
+            do_vibrate = config_->pishock_warning_vibrate;
+            do_shock = config_->pishock_warning_shock;
+            intensity = config_->pishock_warning_intensity;
+            duration = config_->pishock_warning_duration;
+        }
+
+        if (do_beep) {
+            SendBeep(0, 1, "Warning - Beep");
         }
 
         if (do_vibrate) {
-            int half_intensity = (std::max)(1, ConvertIntensityToAPI(intensity) / 2);
-            SendVibrate(half_intensity, 1, "Warning - Vibrate");
+            SendVibrate(ConvertIntensityToAPI(intensity),
+                       ConvertDurationToAPI(duration),
+                       "Warning - Vibrate");
+        }
+
+        if (do_shock) {
+            SendShock(ConvertIntensityToAPI(intensity),
+                     ConvertDurationToAPI(duration),
+                     "Warning - Shock");
         }
     }
 

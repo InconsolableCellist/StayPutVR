@@ -230,15 +230,27 @@ namespace StayPutVR {
             return;
         }
 
-        Logger::Info("Triggering PiShock WebSocket warning actions for device: " + 
+        Logger::Info("Triggering PiShock WebSocket warning actions for device: " +
                    (device_serial.empty() ? "ALL" : device_serial));
 
-        // Execute warning actions (typically lighter than disobedience)
-        SendBeep(1, "Warning - Beep");
-        
-        if (config_->pishock_disobedience_vibrate) {
-            int intensity = (std::max)(1, ConvertIntensityToAPI(config_->pishock_disobedience_intensity) / 2);
-            SendVibrate(intensity, 1000, "Warning - Vibrate");
+        // Execute configured warning actions, mirroring TriggerDisobedienceActions
+        // but reading the warning-zone fields. Previously this hardcoded an
+        // unconditional beep and reused the disobedience vibrate/intensity, so a
+        // warning fired beep+vibrate regardless of the warning config.
+        int warning_intensity = ConvertIntensityToAPI(config_->pishock_warning_intensity);
+
+        if (config_->pishock_warning_beep) {
+            SendBeepMulti(1, "Warning - Beep", device_serial);
+        }
+
+        if (config_->pishock_warning_vibrate) {
+            int duration = ConvertDurationToAPI(config_->pishock_warning_duration);
+            SendVibrateMulti(duration, "Warning - Vibrate", device_serial, warning_intensity);
+        }
+
+        if (config_->pishock_warning_shock) {
+            int duration = ConvertDurationToAPI(config_->pishock_warning_duration);
+            SendShockMulti(duration, "Warning - Shock", device_serial, warning_intensity);
         }
     }
 
@@ -795,7 +807,7 @@ namespace StayPutVR {
         }
     }
 
-    void PiShockWebSocketManager::SendVibrateMulti(int duration, const std::string& reason, const std::string& device_serial) {
+    void PiShockWebSocketManager::SendVibrateMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override) {
         if (!ValidateCredentials()) {
             SetError("Invalid PiShock credentials");
             return;
@@ -849,18 +861,22 @@ namespace StayPutVR {
             std::vector<nlohmann::json> commands;
             for (size_t i = 0; i < shocker_ids_to_use.size(); ++i) {
                 int device_index = device_indices[i];
-                float intensity_normalized;
-                
-                // Use individual disobedience intensities if enabled, otherwise use master
-                if (config_->pishock_use_individual_disobedience_intensities) {
-                    intensity_normalized = config_->pishock_individual_disobedience_intensities[device_index];
+                int intensity;
+                if (intensity_override >= 0) {
+                    // Explicit intensity (e.g. warning zone, which has its own intensity).
+                    intensity = (std::max)(1, intensity_override);
                 } else {
-                    intensity_normalized = config_->pishock_disobedience_intensity;
+                    float intensity_normalized;
+                    // Use individual disobedience intensities if enabled, otherwise use master
+                    if (config_->pishock_use_individual_disobedience_intensities) {
+                        intensity_normalized = config_->pishock_individual_disobedience_intensities[device_index];
+                    } else {
+                        intensity_normalized = config_->pishock_disobedience_intensity;
+                    }
+                    intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
                 }
-                
-                int intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
-                
-                Logger::Info("Sending PiShock Vibrate to device " + std::to_string(device_index) + 
+
+                Logger::Info("Sending PiShock Vibrate to device " + std::to_string(device_index) +
                            " (ID: " + std::to_string(shocker_ids_to_use[i]) + ")" +
                            " (Intensity: " + std::to_string(intensity) + 
                            ", Duration: " + std::to_string(duration) + "ms)");

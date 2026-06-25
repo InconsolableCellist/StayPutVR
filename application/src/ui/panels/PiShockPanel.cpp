@@ -278,11 +278,49 @@ void PiShockPanel::Render() {
         if (ImGui::BeginTabItem("Actions")) {
             ImGui::Spacing();
 
-            ImGui::TextWrapped("PiShock will only be triggered when a device exceeds the out-of-bounds threshold. Warnings will only use audio cues.");
+            ImGui::TextWrapped("PiShock fires its warning-zone actions when a device enters the warning band, "
+                               "and its out-of-bounds actions when it crosses the disobedience threshold. "
+                               "Leave a zone's actions unchecked to keep that zone silent.");
             ImGui::Spacing();
             ImGui::Separator();
 
             ImGui::BeginDisabled(!config_.pishock_enabled);
+
+            // Warning Zone Actions
+            ImGui::Text("Warning Zone Actions:");
+
+            bool warning_beep = config_.pishock_warning_beep;
+            if (ImGui::Checkbox("Beep on Warning", &warning_beep)) {
+                config_.pishock_warning_beep = warning_beep;
+                save_config_();
+            }
+
+            bool warning_vibrate = config_.pishock_warning_vibrate;
+            if (ImGui::Checkbox("Vibrate on Warning", &warning_vibrate)) {
+                config_.pishock_warning_vibrate = warning_vibrate;
+                save_config_();
+            }
+
+            bool warning_shock = config_.pishock_warning_shock;
+            if (ImGui::Checkbox("Shock on Warning", &warning_shock)) {
+                config_.pishock_warning_shock = warning_shock;
+                save_config_();
+            }
+
+            float warning_intensity = config_.pishock_warning_intensity;
+            if (ImGuiHelpers::SliderFloatWithButtons("Warning Intensity", &warning_intensity, 0.0f, 1.0f, 0.05f, "%.2f")) {
+                config_.pishock_warning_intensity = warning_intensity;
+                save_config_();
+            }
+
+            float warning_duration = config_.pishock_warning_duration;
+            if (ImGuiHelpers::SliderFloatWithButtons("Warning Duration", &warning_duration, 1.0f, 15.0f, 0.1f, "%.2f seconds")) {
+                config_.pishock_warning_duration = warning_duration;
+                save_config_();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
 
             // Out of Bounds Actions
             ImGui::Text("Out of Bounds Actions:");
@@ -319,7 +357,7 @@ void PiShockPanel::Render() {
 
             if (!use_individual_disobedience) {
                 float disobedience_intensity = config_.pishock_disobedience_intensity;
-                if (ImGui::SliderFloat("Intensity", &disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                if (ImGuiHelpers::SliderFloatWithButtons("Intensity", &disobedience_intensity, 0.0f, 1.0f, 0.05f, "%.2f")) {
                     config_.pishock_disobedience_intensity = disobedience_intensity;
                     save_config_();
                 }
@@ -334,7 +372,7 @@ void PiShockPanel::Render() {
                         std::string disobedience_label = "Device " + std::to_string(i) + " Intensity";
                         float individual_disobedience_intensity = config_.pishock_individual_disobedience_intensities[i];
 
-                        if (ImGui::SliderFloat(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, "%.2f")) {
+                        if (ImGuiHelpers::SliderFloatWithButtons(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, 0.05f, "%.2f")) {
                             config_.pishock_individual_disobedience_intensities[i] = individual_disobedience_intensity;
                             save_config_();
                         }

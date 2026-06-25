@@ -159,9 +159,9 @@ namespace StayPutVR {
         
         // Multi-device methods
         void SendBeepMulti(int duration, const std::string& reason, const std::string& device_serial);
-        void SendVibrateMulti(int duration, const std::string& reason, const std::string& device_serial);
         // intensity_override: API intensity (0..100) to use for every device;
         // when < 0 the configured disobedience intensities are used.
+        void SendVibrateMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override = -1);
         void SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override = -1);
         
         // Logging helpers
