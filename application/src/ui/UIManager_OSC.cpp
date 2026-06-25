@@ -424,10 +424,11 @@ namespace StayPutVR {
                 { "Foot Left",        OSCDeviceType::FootLeft },
                 { "Foot Right",       OSCDeviceType::FootRight },
                 { "Hip",              OSCDeviceType::Hip },
+                { "Jaw",              OSCDeviceType::Jaw },
             };
-            static int debug_status[6] = { 0, 0, 0, 0, 0, 0 };
+            static int debug_status[IM_ARRAYSIZE(kDebugDevices)] = {};
 
-            for (int i = 0; i < 6; ++i) {
+            for (int i = 0; i < IM_ARRAYSIZE(kDebugDevices); ++i) {
                 ImGui::PushID(i);
                 ImGui::SetNextItemWidth(280);
                 if (ImGui::Combo(kDebugDevices[i].label, &debug_status[i], kStatusNames, IM_ARRAYSIZE(kStatusNames))) {
@@ -438,7 +439,7 @@ namespace StayPutVR {
 
             ImGui::Spacing();
             auto sendAll = [&](DeviceStatus s) {
-                for (int i = 0; i < 6; ++i) {
+                for (int i = 0; i < IM_ARRAYSIZE(kDebugDevices); ++i) {
                     debug_status[i] = static_cast<int>(s);
                     OSCManager::GetInstance().SendDeviceStatus(kDebugDevices[i].type, s);
                 }
@@ -1101,7 +1102,8 @@ namespace StayPutVR {
         // currently tracked, e.g. on the headless/dev build).
         const OSCDeviceType allDevices[] = {
             OSCDeviceType::HMD, OSCDeviceType::ControllerLeft, OSCDeviceType::ControllerRight,
-            OSCDeviceType::FootLeft, OSCDeviceType::FootRight, OSCDeviceType::Hip
+            OSCDeviceType::FootLeft, OSCDeviceType::FootRight, OSCDeviceType::Hip,
+            OSCDeviceType::Jaw
         };
         for (OSCDeviceType d : allDevices) {
             OSCManager::GetInstance().SendDeviceStatus(d, DeviceStatus::Unlocked);

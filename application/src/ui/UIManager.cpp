@@ -312,7 +312,25 @@ namespace StayPutVR {
                         }
                     }
                 );
-                
+
+                // VRCFT JawOpen: store every inbound value so the Visual heat bar
+                // and CheckJawOpenConstraint always see the live jaw value. Must be
+                // registered here too (not only in VerifyOSCCallbacks), otherwise a
+                // startup auto-connect leaves jawopen_callback_ null and the jaw
+                // readout/constraint never sees SPVR_JawOpen.
+                OSCManager::GetInstance().SetJawOpenCallback(
+                    [this](float jaw_value) {
+                        jaw_.current = jaw_value;
+                    }
+                );
+
+                // SPVR_JawEnabled: live runtime gate from the avatar radial menu.
+                OSCManager::GetInstance().SetJawEnabledCallback(
+                    [this](bool enabled) {
+                        jaw_.runtime_enabled = enabled;
+                    }
+                );
+
                 // Start OSCQuery (mDNS) so VRChat can discover our ephemeral
                 // receive port and we can discover VRChat's OSC port.
                 if (osc_use_query) {
