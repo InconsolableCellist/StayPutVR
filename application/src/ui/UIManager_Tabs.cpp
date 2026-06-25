@@ -507,6 +507,30 @@ namespace StayPutVR {
                 if (active) ImGui::TextColored(col, "%.2f m", dist);
                 else ImGui::TextDisabled("-");
             }
+
+            // JawOpen (VRCFT) constraint, shown only when armed so the user sees
+            // its safe/warning/disobedience zones alongside the tracked devices.
+            // The "Dist" column carries the |current - baseline| deviation (a
+            // normalized 0..1 jaw value, not meters).
+            if (config_.jawopen_enabled) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted("Jaw");
+
+                const char* state; ImVec4 col;
+                bool engaged = jaw_.active;
+                if (!jaw_.runtime_enabled)       { state = "radial off"; col = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); }
+                else if (!engaged)               { state = "armed"; col = ImVec4(0.55f, 0.7f, 0.95f, 1.0f); }
+                else if (jaw_.exceeds_threshold) { state = "out"; col = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); }
+                else if (jaw_.in_warning_zone)   { state = "warning"; col = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); }
+                else                             { state = "locked"; col = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); }
+
+                ImGui::TableNextColumn();
+                ImGui::TextColored(col, "%s", state);
+                ImGui::TableNextColumn();
+                if (engaged) ImGui::TextColored(col, "%.2f", jaw_.deviation);
+                else ImGui::TextDisabled("-");
+            }
             ImGui::EndTable();
         }
     }

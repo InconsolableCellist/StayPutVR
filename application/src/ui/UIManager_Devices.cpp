@@ -819,7 +819,7 @@ namespace StayPutVR {
         jaw_.in_warning_zone = jaw_.deviation > config_.jawopen_warning_margin && !jaw_.exceeds_threshold;
         bool is_safe = !jaw_.exceeds_threshold && !jaw_.in_warning_zone;
 
-        bool play_warning = false, play_diso = false, play_success = false;
+        bool play_success = false;
 
         // Returned to safe zone.
         if (!was_safe && is_safe) {
@@ -832,7 +832,6 @@ namespace StayPutVR {
         if (!was_warning && jaw_.in_warning_zone) {
             UpdateDeviceStatus(OSCDeviceType::Jaw, DeviceStatus::LockedWarning);
             TriggerPiShockWarning(kJawOpenSerial);
-            play_warning = true;
         }
         // Returned from disobedience back to warning.
         if (was_exceeding && !jaw_.exceeds_threshold && jaw_.in_warning_zone) {
@@ -844,7 +843,6 @@ namespace StayPutVR {
             TriggerPiShockDisobedience(kJawOpenSerial);
             if (openshock_manager_ && openshock_manager_->IsEnabled())
                 openshock_manager_->TriggerDisobedienceActions(kJawOpenSerial);
-            play_diso = true;
         }
         // Continuous disobedience while out of range.
         else if (jaw_.exceeds_threshold && CanTriggerPiShock()) {
@@ -856,6 +854,11 @@ namespace StayPutVR {
         }
 
         // Audio, sharing the position constraint's cooldown (last_sound_time_).
+        // Warning/disobedience play off the *current* zone, not just the entry
+        // edge, mirroring CheckDevicePositionDeviations: the reminder reliably
+        // (re)plays each cooldown while the jaw is out of range and -- crucially
+        // -- retries on later frames if the shared cooldown happened to swallow
+        // the entry frame (an edge-only trigger would be lost in that case).
         if (config_.audio.enabled) {
             if (play_success) {
                 std::string fp = StayPutVR::GetResourcesPath() + "/success.wav";
@@ -870,13 +873,13 @@ namespace StayPutVR {
                 now - last_sound_time_).count();
             if (elapsed >= 1.0f) {
                 bool played = false;
-                if (play_diso && config_.audio.out_of_bounds) {
+                if (jaw_.exceeds_threshold && config_.audio.out_of_bounds) {
                     std::string fp = StayPutVR::GetResourcesPath() + "/disobedience.wav";
                     if (std::filesystem::exists(fp)) {
                         AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
                         played = true;
                     }
-                } else if (play_warning && config_.audio.warning) {
+                } else if (jaw_.in_warning_zone && config_.audio.warning) {
                     AudioManager::PlayWarningSound(config_.audio.volume);
                     played = true;
                 }
