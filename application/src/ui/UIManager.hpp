@@ -206,6 +206,11 @@ namespace StayPutVR {
         bool effigy_load_attempted_ = false; // attempt the PNG load only once
         DeviceRole selected_slot_role_ = DeviceRole::None; // slot whose config panel is open
 
+        // VRCFT / Unified Expressions logos shown on the Integrations > VRCFT tab.
+        unsigned int vrcft_logo_tex_ = 0; int vrcft_logo_w_ = 0, vrcft_logo_h_ = 0;
+        unsigned int ue_logo_tex_ = 0;    int ue_logo_w_ = 0, ue_logo_h_ = 0;
+        bool vrcft_logos_load_attempted_ = false;
+
         // Tab system
         TabType current_tab_ = TabType::MAIN;
         
@@ -259,6 +264,8 @@ namespace StayPutVR {
         void ApplyIdBindingToAllCuffs(const char* code, bool enable);
         void RenderSlotConfig(DeviceRole role);
         void LoadEffigyTexture();
+        void LoadVRCFTLogos();
+        unsigned int LoadPngTexture(const std::string& path, int& w, int& h);
         void AssignRoleToSerial(const std::string& serial, DeviceRole role);
         std::string SerialForRole(DeviceRole role) const;
         static const char* RoleName(DeviceRole role);

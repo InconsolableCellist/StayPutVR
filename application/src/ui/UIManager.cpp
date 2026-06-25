@@ -449,6 +449,18 @@ namespace StayPutVR {
             effigy_tex_ = 0;
         }
 
+        // Release the VRCFT / Unified Expressions logo textures (Integrations > VRCFT).
+        if (vrcft_logo_tex_ != 0) {
+            GLuint t = vrcft_logo_tex_;
+            glDeleteTextures(1, &t);
+            vrcft_logo_tex_ = 0;
+        }
+        if (ue_logo_tex_ != 0) {
+            GLuint t = ue_logo_tex_;
+            glDeleteTextures(1, &t);
+            ue_logo_tex_ = 0;
+        }
+
         // Stop OSCQuery (mDNS) threads so they release their sockets cleanly.
         StopOSCQuery();
 

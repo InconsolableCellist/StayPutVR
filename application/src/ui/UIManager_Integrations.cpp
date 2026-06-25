@@ -69,20 +69,35 @@ namespace StayPutVR {
     }
 
     void UIManager::RenderVRCFTTab() {
+        // VRCFT / Unified Expressions branding in the top-left.
+        LoadVRCFTLogos();
+        const float logoH = 28.0f;
+        bool drew_logo = false;
+        if (vrcft_logo_tex_ != 0 && vrcft_logo_h_ > 0) {
+            float w = logoH * (float)vrcft_logo_w_ / (float)vrcft_logo_h_;
+            ImGui::Image((ImTextureID)(intptr_t)vrcft_logo_tex_, ImVec2(w, logoH));
+            drew_logo = true;
+        }
+        if (ue_logo_tex_ != 0 && ue_logo_h_ > 0) {
+            if (drew_logo) ImGui::SameLine();
+            float w = logoH * (float)ue_logo_w_ / (float)ue_logo_h_;
+            ImGui::Image((ImTextureID)(intptr_t)ue_logo_tex_, ImVec2(w, logoH));
+            drew_logo = true;
+        }
+        if (drew_logo) ImGui::Spacing();
+
         ImGui::Text("VRCFT JawOpen Constraint");
         ImGui::TextWrapped(
-            "While the HMD (neck) lock is active, the avatar's jaw must stay near where it "
-            "was when the lock engaged. Drifting past the warning margin issues a warning; "
-            "past the disobedience margin triggers the full disobedience response (audio, OSC "
-            "status, and any bound shockers/vibrators) - the same escalation used for "
-            "controllers. You can also assign and bind this on the Devices > Visual screen by "
-            "dragging the JawOpen item onto the avatar's head.");
+	    "With VRCFaceTracking (VRCFT) and this feature, when you lock your collar (HMD/neck) "
+	    "your JawOpen value must remain where it was when locked (i.e., your real mouth must " 
+	    "remain open or closed). Opening or closing your mouth too far will result in the "
+	    "usual sort of warning and disobedience actions (shocks). "
+	    "Assign shocker ID(s) in the Devices -> Visual tab.");
         ImGui::Spacing();
         ImGui::TextWrapped(
-            "REQUIRES the StayPutVR JawOpen bridge on your avatar: VRChat does not send the "
-            "raw VRCFT jaw value (FT/v2/JawOpen) back out over OSC. The bridge (a VRCFury "
-            "Full Controller) reads it in an FX layer and drives the SPVR_JawOpen parameter, "
-            "which VRChat does send out - that is what this listens for below.");
+            "Requires the StayPutVR JawOpen bridge on your avatar (prefab v1.4.0+) and "
+	    "VRCFT. If your avatar uses a non-de facto-standard VRCFT FT/v2/JawOpen path, "
+	    "then update the JawOpen paramater path in your Unity project. (See docs or Discord)");
         ImGui::Separator();
 
         bool enabled = config_.jawopen_enabled;
@@ -91,9 +106,9 @@ namespace StayPutVR {
             if (enabled) LoadJawBindingsFromConfig();
             SaveConfig();
         }
-        ImGuiHelpers::HelpTooltip("App master switch (off by default). When armed, the jaw is "
-                                  "enforced while the HMD is locked AND the in-game SPVR_JawEnabled "
-                                  "radial toggle is on. Toggling the radial while locked suspends or "
+        ImGuiHelpers::HelpTooltip("App master switch (off by default). When armed, the jaw is \n"
+                                  "enforced while the HMD is locked AND the in-game SPVR_JawEnabled \n"
+                                  "radial toggle is on. Toggling the radial while locked suspends or \n"
                                   "resumes the jaw (resuming re-captures the baseline) without unlocking.");
 
         ImGui::SameLine();
@@ -143,7 +158,7 @@ namespace StayPutVR {
                 SaveConfig();
                 OSCManager::GetInstance().SetConfig(config_);
             }
-            ImGuiHelpers::HelpTooltip("The parameter the JawOpen bridge drives. Default SPVR_JawOpen matches the editor-generated bridge controller.");
+            ImGuiHelpers::HelpTooltip("StayPutVR v1.4.0 parameter name. Shouldn't need to change this.");
 
             if (ImGui::InputText("Enabled Path", jaw_en_path, IM_ARRAYSIZE(jaw_en_path))) {
                 config_.osc_jawenabled_path = jaw_en_path;
@@ -156,7 +171,7 @@ namespace StayPutVR {
                 SaveConfig();
                 OSCManager::GetInstance().SetConfig(config_);
             }
-            ImGuiHelpers::HelpTooltip("The synced bool toggled by the avatar radial menu that enables/disables the jaw constraint live.");
+            ImGuiHelpers::HelpTooltip("StayPutVR v1.4.0 radial menu enable bool. Shouldn't need to change this.");
         }
 
         ImGui::Separator();
@@ -181,7 +196,7 @@ namespace StayPutVR {
             config_.jawopen_grace_seconds = grace;
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
-        ImGuiHelpers::HelpTooltip("After the HMD locks, the jaw value is sampled for this long to establish the ideal baseline before enforcement begins.");
+        ImGuiHelpers::HelpTooltip("Grace period between locking and the JawOpen value being selected.");
 
         ImGui::Separator();
         ImGui::Text("Shocker / Vibrator bindings");

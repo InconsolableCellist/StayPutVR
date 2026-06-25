@@ -1222,21 +1222,17 @@ namespace StayPutVR {
         SaveConfig();
     }
 
-    void UIManager::LoadEffigyTexture() {
-        if (effigy_load_attempted_) return;
-        effigy_load_attempted_ = true;
+    // Decode a PNG to an RGBA GL texture. Returns the texture id (0 on
+    // missing/undecodable file); sets w/h to the image dimensions.
+    unsigned int UIManager::LoadPngTexture(const std::string& path, int& w, int& h) {
+        w = 0; h = 0;
+        if (!std::filesystem::exists(path)) return 0;
 
-        std::string path = GetResourcesPath() + "/effigy.png";
-        if (!std::filesystem::exists(path)) {
-            if (Logger::IsInitialized()) Logger::Info("UIManager: effigy.png not found; Visual tab uses a wireframe placeholder");
-            return;
-        }
-
-        int w = 0, h = 0, n = 0;
+        int n = 0;
         unsigned char* data = stbi_load(path.c_str(), &w, &h, &n, 4);
         if (!data) {
-            if (Logger::IsInitialized()) Logger::Warning("UIManager: failed to decode effigy.png");
-            return;
+            if (Logger::IsInitialized()) Logger::Warning("UIManager: failed to decode " + path);
+            return 0;
         }
         GLuint tex = 0;
         glGenTextures(1, &tex);
@@ -1247,10 +1243,24 @@ namespace StayPutVR {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
         stbi_image_free(data);
+        return tex;
+    }
 
-        effigy_tex_ = tex;
-        effigy_tex_w_ = w;
-        effigy_tex_h_ = h;
+    void UIManager::LoadEffigyTexture() {
+        if (effigy_load_attempted_) return;
+        effigy_load_attempted_ = true;
+
+        effigy_tex_ = LoadPngTexture(GetResourcesPath() + "/effigy.png", effigy_tex_w_, effigy_tex_h_);
+        if (effigy_tex_ == 0 && Logger::IsInitialized())
+            Logger::Info("UIManager: effigy.png not found; Visual tab uses a wireframe placeholder");
+    }
+
+    void UIManager::LoadVRCFTLogos() {
+        if (vrcft_logos_load_attempted_) return;
+        vrcft_logos_load_attempted_ = true;
+
+        vrcft_logo_tex_ = LoadPngTexture(GetResourcesPath() + "/vrcft_logo.png", vrcft_logo_w_, vrcft_logo_h_);
+        ue_logo_tex_    = LoadPngTexture(GetResourcesPath() + "/ue_logo.png",    ue_logo_w_,    ue_logo_h_);
     }
 
     // Palette of draggable ID chips for the Visual tab, grouped by integration:
@@ -1425,11 +1435,11 @@ namespace StayPutVR {
 
             // Outlined text so labels/IDs stay legible over the busy effigy art.
             auto drawOutlined = [&](ImVec2 p, ImU32 col, const char* t) {
-                const ImU32 sh = IM_COL32(0, 0, 0, 230);
-                dl->AddText(ImVec2(p.x + 1, p.y), sh, t);
-                dl->AddText(ImVec2(p.x - 1, p.y), sh, t);
-                dl->AddText(ImVec2(p.x, p.y + 1), sh, t);
-                dl->AddText(ImVec2(p.x, p.y - 1), sh, t);
+                const ImU32 sh = IM_COL32(0, 0, 0, 255);
+                // Full 8-direction outline so labels read on the bright effigy art.
+                for (int oy = -1; oy <= 1; ++oy)
+                    for (int ox = -1; ox <= 1; ++ox)
+                        if (ox || oy) dl->AddText(ImVec2(p.x + ox, p.y + oy), sh, t);
                 dl->AddText(p, col, t);
             };
 
@@ -1451,6 +1461,7 @@ namespace StayPutVR {
             const float hot = 30.0f;
             for (const auto& s : kSlots) {
                 ImVec2 c(origin.x + s.ux*imgW, origin.y + s.uy*imgH);
+                if (s.role == DeviceRole::HMD) c.y += 10.0f; // nudge collar/HMD slot down
                 ImGui::SetCursorScreenPos(ImVec2(c.x - hot/2, c.y - hot/2));
                 ImGui::InvisibleButton(s.label, ImVec2(hot, hot));
                 bool hovered = ImGui::IsItemHovered();
@@ -1471,7 +1482,7 @@ namespace StayPutVR {
                 // yellow warning, red out-of-bounds; dim when unassigned).
                 std::string serial = SerialForRole(s.role);
                 bool filled = !serial.empty();
-                ImU32 status_col = IM_COL32(130, 150, 170, 120); // unassigned (dim)
+                ImU32 status_col = IM_COL32(190, 205, 225, 230); // unassigned (dim)
                 if (filled) {
                     const DevicePosition* dev = nullptr;
                     for (const auto& d : device_positions_) if (d.serial == serial) { dev = &d; break; }
@@ -1486,8 +1497,8 @@ namespace StayPutVR {
                                                                    : IM_COL32(70, 220, 100, 255);
                 }
                 ImU32 ring = hovered ? IM_COL32(255, 255, 255, 255) : status_col;
-                dl->AddCircleFilled(c, hot/2 - 2, filled ? IM_COL32(30, 60, 45, 150) : IM_COL32(20, 24, 32, 140));
-                dl->AddCircle(c, hot/2, ring, 24, filled ? 3.0f : 1.5f);
+                dl->AddCircleFilled(c, hot/2 - 2, filled ? IM_COL32(30, 70, 50, 200) : IM_COL32(15, 20, 30, 195));
+                dl->AddCircle(c, hot/2, ring, 24, filled ? 3.0f : 2.5f);
                 if (s.role == selected_slot_role_)
                     dl->AddCircle(c, hot/2 + 3, IM_COL32(80, 160, 255, 255), 24, 2.0f);
 
@@ -1496,7 +1507,7 @@ namespace StayPutVR {
                 bool label_left = (s.ux < 0.45f);
                 ImVec2 tpos = label_left ? ImVec2(c.x - hot/2 - 3 - tsz.x, c.y - 7)
                                          : ImVec2(c.x + hot/2 + 3, c.y - 7);
-                ImU32 label_col = filled ? status_col : IM_COL32(190, 200, 220, 230);
+                ImU32 label_col = filled ? status_col : IM_COL32(240, 245, 255, 255);
                 drawOutlined(tpos, label_col, s.label);
 
                 // Bound shocker/vibrator IDs drawn above the circle: blue = PiShock,
@@ -1526,8 +1537,15 @@ namespace StayPutVR {
                         forTokens([&](const char* t, ImU32){ tw += ImGui::CalcTextSize(t).x + 4.0f; });
                         if (tw > 0.0f) {
                             float sx = c.x - tw * 0.5f;
-                            float sy = c.y - hot/2 - 16.0f;
-                            if (sy < origin.y + 1.0f) sy = c.y + hot/2 + 2.0f; // top slot: draw below
+                            // Collar/HMD: chips below the slot; every other slot keeps
+                            // them above (falling back to below only if they'd clip the top).
+                            float sy;
+                            if (s.role == DeviceRole::HMD) {
+                                sy = c.y + hot/2 + 2.0f;
+                            } else {
+                                sy = c.y - hot/2 - 16.0f;
+                                if (sy < origin.y + 1.0f) sy = c.y + hot/2 + 2.0f; // top slot: draw below
+                            }
                             forTokens([&](const char* t, ImU32 col){
                                 drawOutlined(ImVec2(sx, sy), col, t);
                                 sx += ImGui::CalcTextSize(t).x + 4.0f;
@@ -1542,7 +1560,7 @@ namespace StayPutVR {
             // Position sits over the head/muzzle (tune to the dashed-line effigy art).
             {
                 const float jux = 0.460f, juy = 0.115f;
-                ImVec2 c(origin.x + jux*imgW, origin.y + juy*imgH);
+                ImVec2 c(origin.x + jux*imgW, origin.y + juy*imgH + 20.0f);
                 ImGui::SetCursorScreenPos(ImVec2(c.x - hot/2, c.y - hot/2));
                 ImGui::InvisibleButton("JawOpenSlot", ImVec2(hot, hot));
                 bool hovered = ImGui::IsItemHovered();
@@ -1561,18 +1579,18 @@ namespace StayPutVR {
                 // (radial off / HMD unlocked / grace); zone colour when enforcing.
                 bool armed = config_.jawopen_enabled;
                 ImU32 status_col;
-                if (!armed)            status_col = IM_COL32(130, 150, 170, 120); // not armed
-                else if (!jaw_.active) status_col = IM_COL32(90, 150, 220, 220);  // armed, idle
+                if (!armed)            status_col = IM_COL32(190, 205, 225, 230); // not armed
+                else if (!jaw_.active) status_col = IM_COL32(150, 205, 255, 245); // armed, idle
                 else status_col = jaw_.exceeds_threshold ? IM_COL32(255, 70, 70, 255)
                                 : jaw_.in_warning_zone   ? IM_COL32(255, 215, 60, 255)
                                                          : IM_COL32(70, 220, 100, 255);
                 ImU32 ring = hovered ? IM_COL32(255, 255, 255, 255) : status_col;
-                dl->AddCircleFilled(c, hot/2 - 2, armed ? IM_COL32(30, 60, 45, 150) : IM_COL32(20, 24, 32, 140));
-                dl->AddCircle(c, hot/2, ring, 24, armed ? 3.0f : 1.5f);
+                dl->AddCircleFilled(c, hot/2 - 2, armed ? IM_COL32(30, 70, 50, 200) : IM_COL32(15, 20, 30, 195));
+                dl->AddCircle(c, hot/2, ring, 24, armed ? 3.0f : 2.5f);
                 if (jaw_selected_)
                     dl->AddCircle(c, hot/2 + 3, IM_COL32(80, 160, 255, 255), 24, 2.0f);
                 drawOutlined(ImVec2(c.x + hot/2 + 3, c.y - 7),
-                             armed ? status_col : IM_COL32(190, 200, 220, 230), "Jaw");
+                             armed ? status_col : IM_COL32(240, 245, 255, 255), "Jaw");
 
                 // Bound shocker/vibrator IDs drawn above the slot (S# blue=PiShock,
                 // red=OpenShock, V# purple=BPIO), mirroring the cuff slots.
@@ -1598,7 +1616,7 @@ namespace StayPutVR {
                     forJawTokens([&](const char* t, ImU32){ tw += ImGui::CalcTextSize(t).x + 4.0f; });
                     if (tw > 0.0f) {
                         float sx = c.x - tw * 0.5f;
-                        float sy = c.y + hot/2 + 2.0f; // below the slot (top of effigy)
+                        float sy = c.y - hot/2 - 16.0f; // above the slot
                         forJawTokens([&](const char* t, ImU32 col){
                             drawOutlined(ImVec2(sx, sy), col, t);
                             sx += ImGui::CalcTextSize(t).x + 4.0f;
@@ -1630,8 +1648,11 @@ namespace StayPutVR {
                 ImGui::EndDragDropTarget();
             }
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.88f, 0.95f, 1.0f));
-            ImGui::TextUnformatted("(drag IDs into here");
-            ImGui::TextUnformatted("or onto individual devices)");
+            ImGui::TextUnformatted("(drag IDs");
+            ImGui::TextUnformatted("into here");
+            ImGui::TextUnformatted("or onto");
+            ImGui::TextUnformatted("individual");
+            ImGui::TextUnformatted("devices)");
             ImGui::PopStyleColor();
             ImGui::EndGroup();
 
