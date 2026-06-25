@@ -1263,6 +1263,13 @@ namespace StayPutVR {
         ue_logo_tex_    = LoadPngTexture(GetResourcesPath() + "/ue_logo.png",    ue_logo_w_,    ue_logo_h_);
     }
 
+    void UIManager::LoadBiteTechLogo() {
+        if (bitetech_logo_load_attempted_) return;
+        bitetech_logo_load_attempted_ = true;
+
+        bitetech_logo_tex_ = LoadPngTexture(GetResourcesPath() + "/bitetech_logo.png", bitetech_logo_w_, bitetech_logo_h_);
+    }
+
     // Palette of draggable ID chips for the Visual tab, grouped by integration:
     // PiShock (blue) and OpenShock (red) bind independently even when they share a
     // slot number; Buttplug/BPIO (purple) is separate. Each category also has an

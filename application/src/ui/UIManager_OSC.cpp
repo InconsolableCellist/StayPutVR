@@ -46,6 +46,16 @@ namespace StayPutVR {
         ImGui::Separator();
 
         ImGui::SeparatorText("Bite  (SPVR_Bite)");
+        // VRC BiteTech branding: logo + "Supports" line.
+        LoadBiteTechLogo();
+        if (bitetech_logo_tex_ != 0 && bitetech_logo_h_ > 0) {
+            const float h = 22.0f;
+            float w = h * (float)bitetech_logo_w_ / (float)bitetech_logo_h_;
+            ImGui::Image((ImTextureID)(intptr_t)bitetech_logo_tex_, ImVec2(w, h));
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+        }
+        ImGui::TextDisabled("Supports VRC BiteTech");
         if (ImGui::Checkbox("Enable Bite trigger", &config_.osc_bite_enabled)) changed = true;
         if (ImGui::Checkbox("Use per-device disobedience intensities##bite", &config_.osc_bite_use_individual_intensities)) changed = true;
         ImGui::SameLine();
@@ -57,6 +67,7 @@ namespace StayPutVR {
         if (ImGuiHelpers::SliderFloatWithButtons("Bite duration (s)", &config_.osc_bite_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
         ImGui::SeparatorText("Shock  (/avatar/parameters/Shock)");
+        ImGui::TextDisabled("Supports Simple Shock System");
         if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
         if (ImGui::Checkbox("Use per-device disobedience intensities##shock", &config_.osc_shock_use_individual_intensities)) changed = true;
         ImGui::SameLine();

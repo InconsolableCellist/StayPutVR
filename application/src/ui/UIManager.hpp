@@ -211,6 +211,10 @@ namespace StayPutVR {
         unsigned int ue_logo_tex_ = 0;    int ue_logo_w_ = 0, ue_logo_h_ = 0;
         bool vrcft_logos_load_attempted_ = false;
 
+        // VRC BiteTech logo shown on the Integrations > OSC Triggers (Bite) section.
+        unsigned int bitetech_logo_tex_ = 0; int bitetech_logo_w_ = 0, bitetech_logo_h_ = 0;
+        bool bitetech_logo_load_attempted_ = false;
+
         // Tab system
         TabType current_tab_ = TabType::MAIN;
         
@@ -265,6 +269,7 @@ namespace StayPutVR {
         void RenderSlotConfig(DeviceRole role);
         void LoadEffigyTexture();
         void LoadVRCFTLogos();
+        void LoadBiteTechLogo();
         unsigned int LoadPngTexture(const std::string& path, int& w, int& h);
         void AssignRoleToSerial(const std::string& serial, DeviceRole role);
         std::string SerialForRole(DeviceRole role) const;
