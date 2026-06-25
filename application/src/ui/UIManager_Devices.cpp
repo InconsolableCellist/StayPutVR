@@ -1486,7 +1486,7 @@ namespace StayPutVR {
                     }
                     ImGui::EndDragDropTarget();
                 }
-                if (ImGui::IsItemClicked()) selected_slot_role_ = s.role;
+                if (ImGui::IsItemClicked()) { selected_slot_role_ = s.role; jaw_selected_ = false; }
 
                 // Colour the slot by the assigned device's live status (green safe,
                 // yellow warning, red out-of-bounds; dim when unassigned).
@@ -1732,7 +1732,7 @@ namespace StayPutVR {
             // device's slot for configuration.
             bool is_sel = (d.role != DeviceRole::None && d.role == selected_slot_role_);
             if (ImGui::Selectable(row.c_str(), is_sel, 0, ImVec2(ImGui::GetContentRegionAvail().x * 0.5f, 0))) {
-                if (d.role != DeviceRole::None) selected_slot_role_ = d.role;
+                if (d.role != DeviceRole::None) { selected_slot_role_ = d.role; jaw_selected_ = false; }
             }
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
                 ImGui::SetDragDropPayload("SPVR_DEVICE", d.serial.c_str(), d.serial.size() + 1);
