@@ -258,14 +258,12 @@ namespace StayPutVR {
         ImGui::Spacing();
         ImGui::TextWrapped(
             "This reads your OS microphone directly (independent of VRChat's mute), so it only "
-            "punishes speaking -- it does not mute you in VRChat. The mic is held open whenever "
-            "this integration is enabled.");
+            "punishes speaking -- it does not mute you in VRChat.");
         ImGui::Separator();
 
         bool agreed = ImGuiHelpers::SafetyAgreementBlock(
             "Enforced silence with a shock penalty is a physical-restraint play feature. Use it "
-            "only with safe words/limits in place, never alone if a shocker could cause harm, and "
-            "stop if you feel unwell.",
+            "with care and consideration for your limits. Check this box to enable this feature.",
             config_.mic_user_agreement);
         if (agreed != config_.mic_user_agreement) {
             config_.mic_user_agreement = agreed;
