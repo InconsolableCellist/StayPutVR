@@ -308,7 +308,7 @@ void PiShockPanel::Render() {
             }
 
             float warning_intensity = config_.pishock_warning_intensity;
-            if (ImGuiHelpers::SliderFloatWithButtons("Warning Intensity", &warning_intensity, 0.0f, 1.0f, 0.05f, "%.2f")) {
+            if (ImGuiHelpers::SliderFloatWithButtons("Warning Intensity", &warning_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) {
                 config_.pishock_warning_intensity = warning_intensity;
                 save_config_();
             }
@@ -357,7 +357,7 @@ void PiShockPanel::Render() {
 
             if (!use_individual_disobedience) {
                 float disobedience_intensity = config_.pishock_disobedience_intensity;
-                if (ImGuiHelpers::SliderFloatWithButtons("Intensity", &disobedience_intensity, 0.0f, 1.0f, 0.05f, "%.2f")) {
+                if (ImGuiHelpers::SliderFloatWithButtons("Intensity", &disobedience_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) {
                     config_.pishock_disobedience_intensity = disobedience_intensity;
                     save_config_();
                 }
@@ -372,7 +372,7 @@ void PiShockPanel::Render() {
                         std::string disobedience_label = "Device " + std::to_string(i) + " Intensity";
                         float individual_disobedience_intensity = config_.pishock_individual_disobedience_intensities[i];
 
-                        if (ImGuiHelpers::SliderFloatWithButtons(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, 0.05f, "%.2f")) {
+                        if (ImGuiHelpers::SliderFloatWithButtons(disobedience_label.c_str(), &individual_disobedience_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) {
                             config_.pishock_individual_disobedience_intensities[i] = individual_disobedience_intensity;
                             save_config_();
                         }
