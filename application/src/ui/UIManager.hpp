@@ -357,7 +357,8 @@ namespace StayPutVR {
         void UpdateDeviceStatus(OSCDeviceType device, DeviceStatus status);
         void HandleOSCConnection();
         void DisconnectOSC();
-        void VerifyOSCCallbacks();
+        void RegisterOSCCallbacks();  // single source of truth for inbound-OSC callbacks
+        void VerifyOSCCallbacks();    // re-registers on an open connection (guards + logs)
 
         // OSCQuery (mDNS) lifecycle. Started/stopped alongside the OSC sockets
         // when config_.osc_query_enabled is set.

@@ -727,15 +727,10 @@ namespace StayPutVR {
         }
     }
 
-    void UIManager::VerifyOSCCallbacks() {
-        if (!osc_enabled_) {
-            if (Logger::IsInitialized()) {
-                Logger::Warning("VerifyOSCCallbacks: OSC is not enabled");
-            }
-            return;
-        }
-        
-        // Re-register callbacks to ensure they're properly set
+    // Register every inbound-OSC callback. Single source of truth shared by the
+    // startup auto-connect path (UIManager.cpp) and HandleOSCConnection (via
+    // VerifyOSCCallbacks), so the two sites can never drift to different sets.
+    void UIManager::RegisterOSCCallbacks() {
         OSCManager::GetInstance().SetLockCallback(
             [this](OSCDeviceType device, bool locked) {
                 OnDeviceLocked(device, locked);
@@ -854,7 +849,19 @@ namespace StayPutVR {
                 jaw_.runtime_enabled = enabled;
             }
         );
+    }
 
+    // Re-register callbacks on an already-open connection (manual OSC toggle /
+    // reconnect). Thin wrapper over RegisterOSCCallbacks so existing callers keep
+    // the same entry point and the not-enabled guard.
+    void UIManager::VerifyOSCCallbacks() {
+        if (!osc_enabled_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("VerifyOSCCallbacks: OSC is not enabled");
+            }
+            return;
+        }
+        RegisterOSCCallbacks();
         if (Logger::IsInitialized()) {
             Logger::Info("VerifyOSCCallbacks: OSC callbacks verified and re-registered");
         }
