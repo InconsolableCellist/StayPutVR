@@ -5,6 +5,7 @@ namespace StayPutVR {
 ShockDeviceBase::ShockDeviceBase(int rate_limit_seconds)
     : rate_limit_seconds_(rate_limit_seconds)
     , last_action_time_(std::chrono::steady_clock::now())
+    , last_warning_time_(std::chrono::steady_clock::now())
     , last_shock_time_(std::chrono::steady_clock::now())
 {
 }
@@ -72,6 +73,17 @@ bool ShockDeviceBase::CheckRateLimit() {
 void ShockDeviceBase::UpdateRateLimit() {
     std::lock_guard<std::mutex> lock(rate_limit_mutex_);
     last_action_time_ = std::chrono::steady_clock::now();
+}
+
+bool ShockDeviceBase::CheckWarningRateLimit() {
+    std::lock_guard<std::mutex> lock(rate_limit_mutex_);
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_warning_time_);
+    if (elapsed.count() >= rate_limit_seconds_) {
+        last_warning_time_ = now;
+        return true;
+    }
+    return false;
 }
 
 bool ShockDeviceBase::CheckShockCooldown() {

@@ -93,9 +93,10 @@ namespace StayPutVR {
             return;
         }
 
-        // Rate-limit once per event (see TriggerDisobedienceActions).
-        if (!CheckRateLimit()) {
-            Logger::Info("Rate limit active, skipping warning actions");
+        // Rate-limit warnings on their OWN timer so a stream of warnings never
+        // consumes the disobedience/shock budget (see CheckWarningRateLimit).
+        if (!CheckWarningRateLimit()) {
+            Logger::Info("Warning rate limit active, skipping warning actions");
             return;
         }
 

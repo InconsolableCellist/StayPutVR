@@ -11,6 +11,7 @@ namespace StayPutVR {
         , user_agreement_(false)
         , connected_(false)
         , last_action_time_(std::chrono::steady_clock::now())
+        , last_warning_time_(std::chrono::steady_clock::now())
         , last_shock_time_(std::chrono::steady_clock::now())
         , last_ping_time_(std::chrono::steady_clock::now())
         , last_error_("")
@@ -224,9 +225,10 @@ namespace StayPutVR {
             return;
         }
 
-        // Rate-limit once per event (see TriggerDisobedienceActions).
-        if (!CheckRateLimit()) {
-            Logger::Info("Rate limit active, skipping warning actions");
+        // Rate-limit warnings on their OWN timer so a stream of warnings never
+        // consumes the disobedience/shock budget (see CheckWarningRateLimit).
+        if (!CheckWarningRateLimit()) {
+            Logger::Info("Warning rate limit active, skipping warning actions");
             return;
         }
 
@@ -399,9 +401,21 @@ namespace StayPutVR {
         std::lock_guard<std::mutex> lock(rate_limit_mutex_);
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_action_time_);
-        
+
         if (elapsed.count() >= RATE_LIMIT_SECONDS) {
             last_action_time_ = now;
+            return true;
+        }
+        return false;
+    }
+
+    bool PiShockWebSocketManager::CheckWarningRateLimit() {
+        std::lock_guard<std::mutex> lock(rate_limit_mutex_);
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_warning_time_);
+
+        if (elapsed.count() >= RATE_LIMIT_SECONDS) {
+            last_warning_time_ = now;
             return true;
         }
         return false;

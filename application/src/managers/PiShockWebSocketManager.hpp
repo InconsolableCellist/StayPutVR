@@ -109,6 +109,9 @@ namespace StayPutVR {
         
         // Rate limiting
         mutable std::chrono::steady_clock::time_point last_action_time_;
+        // Separate timer for warning-zone actions so a stream of warnings never
+        // consumes the disobedience/shock budget (see CheckWarningRateLimit).
+        mutable std::chrono::steady_clock::time_point last_warning_time_;
         mutable std::mutex rate_limit_mutex_;
         static constexpr int RATE_LIMIT_SECONDS = 2;
         
@@ -138,6 +141,7 @@ namespace StayPutVR {
         // Internal methods
         void SetError(const std::string& error);
         bool CheckRateLimit();
+        bool CheckWarningRateLimit();
         void UpdateRateLimit();
         bool CheckShockCooldown();
         void UpdateShockCooldown();

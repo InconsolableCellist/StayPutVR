@@ -56,6 +56,11 @@ protected:
     void SetError(const std::string& error);
     bool CheckRateLimit();
     void UpdateRateLimit();
+    // Separate rate limit for warning-zone actions. Warnings must throttle among
+    // themselves WITHOUT consuming the main (disobedience/shock) budget -- otherwise
+    // repeatedly entering the warning zone keeps bumping last_action_time_ and the
+    // disobedience shock that follows is never allowed through.
+    bool CheckWarningRateLimit();
     bool CheckShockCooldown();
     void UpdateShockCooldown();
 
@@ -78,6 +83,7 @@ private:
     // Rate limiting
     int rate_limit_seconds_;
     mutable std::chrono::steady_clock::time_point last_action_time_;
+    mutable std::chrono::steady_clock::time_point last_warning_time_;
     mutable std::mutex rate_limit_mutex_;
 
     // Shock cooldown
