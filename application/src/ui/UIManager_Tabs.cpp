@@ -519,7 +519,7 @@ namespace StayPutVR {
 
                 const char* state; ImVec4 col;
                 bool engaged = jaw_.active;
-                if (!jaw_.runtime_enabled)       { state = "radial off"; col = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); }
+                if (!CollarModeIncludesJaw())    { state = "mode off"; col = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); }
                 else if (!engaged)               { state = "armed"; col = ImVec4(0.55f, 0.7f, 0.95f, 1.0f); }
                 else if (jaw_.exceeds_threshold) { state = "out"; col = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); }
                 else if (jaw_.in_warning_zone)   { state = "warning"; col = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); }
@@ -531,7 +531,42 @@ namespace StayPutVR {
                 if (engaged) ImGui::TextColored(col, "%.2f", jaw_.deviation);
                 else ImGui::TextDisabled("-");
             }
+
+            // Microphone enforced-mute, shown only when enabled. "Dist" column carries
+            // the (level - ambient floor) deviation; the live mic level is in the VU
+            // readout below the table.
+            if (config_.mic_enabled) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted("Mic");
+
+                const char* state; ImVec4 col;
+                bool engaged = mic_.active;
+                if (!CollarModeIncludesMic())    { state = "mode off"; col = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); }
+                else if (!engaged)               { state = "armed"; col = ImVec4(0.55f, 0.7f, 0.95f, 1.0f); }
+                else if (mic_.exceeds_threshold) { state = "out"; col = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); }
+                else if (mic_.in_warning_zone)   { state = "warning"; col = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); }
+                else                             { state = "locked"; col = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); }
+
+                ImGui::TableNextColumn();
+                ImGui::TextColored(col, "%s", state);
+                ImGui::TableNextColumn();
+                if (engaged) ImGui::TextColored(col, "%.2f", mic_.deviation);
+                else ImGui::TextDisabled("-");
+            }
             ImGui::EndTable();
+
+            // Unified collar-mode readout + live mic VU (when the mic feature is on).
+            if (config_.jawopen_enabled || config_.mic_enabled) {
+                ImGui::Spacing();
+                ImGui::Text("Collar mode: %s", CollarModeName(collar_mode_.load()));
+            }
+            if (config_.mic_enabled) {
+                float lvl = microphone_manager_ ? microphone_manager_->GetLevel() : 0.0f;
+                ImGui::Text("Mic level:");
+                ImGui::SameLine();
+                ImGui::ProgressBar(lvl, ImVec2(160, 0));
+            }
         }
     }
 

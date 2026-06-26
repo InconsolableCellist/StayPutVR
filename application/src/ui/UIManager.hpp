@@ -38,6 +38,7 @@
 #include "../managers/PiShockWebSocketManager.hpp"
 #include "../managers/OpenShockManager.hpp"
 #include "../managers/ButtplugManager.hpp"
+#include "../managers/MicrophoneManager.hpp"
 #include "panels/PiShockPanel.hpp"
 #include "panels/OpenShockPanel.hpp"
 #include "panels/ButtplugPanel.hpp"
@@ -117,10 +118,7 @@ namespace StayPutVR {
         float current = 0.0f;      // live value from OSC (SPVR_JawOpen)
         float baseline = 0.0f;     // captured ideal (frozen after grace)
         bool  active = false;      // gate satisfied and past the grace window
-        // SPVR_JawEnabled runtime gate from the avatar radial. Default true so an
-        // avatar that never sends it falls back to app-master-only behaviour.
-        bool  runtime_enabled = true;
-        bool  gate_active = false;  // previous-frame value of (armed && enabled && HMD locked)
+        bool  gate_active = false;  // previous-frame value of (armed && collar-Jaw && HMD locked)
         bool  in_grace = false;    // within the post-engage baseline-capture window
         std::chrono::steady_clock::time_point lock_time;
         float deviation = 0.0f;
@@ -130,6 +128,31 @@ namespace StayPutVR {
         std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
+
+    // Microphone enforced-mute constraint state. Mirrors JawOpenConstraint in 1-D,
+    // but the live value is pulled from MicrophoneManager (not OSC), the baseline is
+    // the ambient room-noise floor captured during grace, and deviation is one-sided
+    // (only louder-than-baseline matters). The runtime gate comes from the collar mode.
+    struct MicrophoneConstraint {
+        float current = 0.0f;      // live smoothed RMS level from MicrophoneManager (0..1)
+        float baseline = 0.0f;     // ambient floor captured during grace (frozen after)
+        float grace_floor = 1.0f;  // running minimum during grace (the captured floor)
+        bool  active = false;
+        bool  gate_active = false;
+        bool  in_grace = false;
+        std::chrono::steady_clock::time_point lock_time;
+        float deviation = 0.0f;
+        bool  in_warning_zone = false;
+        bool  exceeds_threshold = false;
+        std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
+    };
+
+    // Unified collar mode (replaces the old SPVR_JawEnabled radial). The avatar's
+    // momentary SPVR_Collar_ToggleButton cycles through the modes whose integration
+    // is enabled+agreed; the app echoes the result on SPVR_Collar_Mode.
+    enum class CollarMode { Neither = 0, Jaw = 1, Mic = 2, Both = 3 };
 
     class UIManager {
     public:
@@ -308,7 +331,22 @@ namespace StayPutVR {
         void ApplyIdBindingToJaw(const char* code); // bind/unbind a dragged shocker ID to the jaw
         void RenderJawConfig();                 // jaw config panel shown in the Visual view
         void LoadJawBindingsFromConfig();       // populate jaw_ binding arrays from config maps
-        
+
+        // Microphone enforced-mute constraint. Reserved serial keys its shocker /
+        // vibrator bindings in the same config_.device_*_ids maps as the jaw.
+        static constexpr const char* kMicSerial = "SPVR_MIC";
+        void CheckMicrophoneConstraint();       // called every frame from UpdateDevicePositions
+        void RenderMicTab();                    // Integrations -> Mic subtab
+        void LoadMicBindingsFromConfig();       // populate mic_ binding arrays from config maps
+
+        // Unified collar-mode helpers (see UIManager_OSC.cpp).
+        void SendCollarMode(int mode);          // guarded wrapper over OSCManager::SendCollarMode
+        void RecomputeCollarValidMask();        // UI thread: which modes are selectable now
+        int  NextValidCollarMode(int current) const; // advance to next enabled+agreed mode
+        bool CollarModeIncludesJaw() const;     // collar_mode_ is Jaw or Both
+        bool CollarModeIncludesMic() const;     // collar_mode_ is Mic or Both
+        const char* CollarModeName(int mode) const;
+
         // Timestamp of last played sound for rate limiting
         std::chrono::steady_clock::time_point last_sound_time_ = std::chrono::steady_clock::now();
 
@@ -317,7 +355,20 @@ namespace StayPutVR {
         // True when the JawOpen head hotspot is selected in the Visual view, so
         // its config panel shows instead of a device slot's (selected_slot_role_).
         bool jaw_selected_ = false;
-        
+
+        // Microphone enforced-mute constraint runtime state (see CheckMicrophoneConstraint).
+        MicrophoneConstraint mic_;
+        // Live mic capture (WASAPI). Started when mic_enabled is on.
+        std::unique_ptr<MicrophoneManager> microphone_manager_;
+
+        // Unified collar mode. Written by the OSC receive thread (toggle) and the UI
+        // thread (enable/disable snaps an invalid mode); read every frame by the
+        // constraint code. collar_valid_mask_ is a bitmask over CollarMode values that
+        // the UI thread recomputes so the OSC thread never touches config_ directly.
+        std::atomic<int> collar_mode_{0};
+        std::atomic<int> collar_valid_mask_{0x1}; // bit i set => mode i selectable; Neither always
+        bool collar_toggle_prev_ = false;         // rising-edge debounce (OSC thread only)
+
         DeviceManager* device_manager_ = nullptr;
         
         std::unique_ptr<TwitchManager> twitch_manager_;

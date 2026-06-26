@@ -539,8 +539,13 @@ namespace StayPutVR {
         osc_query_server_->AddParameter(config_.osc_estop_stretch_path, "f", A::WriteOnly, 0.0f);
         if (config_.jawopen_enabled) {
             osc_query_server_->AddParameter(config_.osc_jawopen_path, "f", A::WriteOnly, 0.0f);
-            if (!config_.osc_jawenabled_path.empty())
-                osc_query_server_->AddParameter(config_.osc_jawenabled_path, "T", A::WriteOnly, false);
+        }
+        // Unified collar mode: the momentary toggle (inbound) and the mode echo
+        // (outbound) are advertised whenever either gated integration is enabled.
+        if (config_.jawopen_enabled || config_.mic_enabled) {
+            if (!config_.osc_collar_toggle_path.empty())
+                osc_query_server_->AddParameter(config_.osc_collar_toggle_path, "T", A::WriteOnly, false);
+            osc_query_server_->AddParameter(p + "avatar/parameters/SPVR_Collar_Mode", "i", A::WriteOnly, 0);
         }
         osc_query_server_->AddParameter(p + "avatar/change", "s", A::WriteOnly, std::string());
 
@@ -701,6 +706,64 @@ namespace StayPutVR {
         OSCManager::GetInstance().SendDeviceStatus(device, status);
     }
 
+    void UIManager::SendCollarMode(int mode) {
+        if (!osc_enabled_) {
+            return;
+        }
+        OSCManager::GetInstance().SendCollarMode(mode);
+    }
+
+    const char* UIManager::CollarModeName(int mode) const {
+        switch (mode) {
+            case static_cast<int>(CollarMode::Jaw):  return "Jaw";
+            case static_cast<int>(CollarMode::Mic):  return "Mic";
+            case static_cast<int>(CollarMode::Both): return "Both";
+            default: return "Neither";
+        }
+    }
+
+    bool UIManager::CollarModeIncludesJaw() const {
+        int m = collar_mode_.load();
+        return m == static_cast<int>(CollarMode::Jaw) || m == static_cast<int>(CollarMode::Both);
+    }
+
+    bool UIManager::CollarModeIncludesMic() const {
+        int m = collar_mode_.load();
+        return m == static_cast<int>(CollarMode::Mic) || m == static_cast<int>(CollarMode::Both);
+    }
+
+    // UI thread: recompute which collar modes are selectable from the enabled+agreed
+    // integrations, and snap the current mode to a valid one if it just became invalid
+    // (e.g. the user disabled an integration). The OSC receive thread reads only the
+    // resulting atomic mask, never config_.
+    void UIManager::RecomputeCollarValidMask() {
+        bool jaw_ok = config_.jawopen_enabled && config_.jawopen_user_agreement;
+        bool mic_ok = config_.mic_enabled && config_.mic_user_agreement;
+        int mask = 1 << static_cast<int>(CollarMode::Neither); // Neither always valid
+        if (jaw_ok) mask |= 1 << static_cast<int>(CollarMode::Jaw);
+        if (mic_ok) mask |= 1 << static_cast<int>(CollarMode::Mic);
+        if (jaw_ok && mic_ok) mask |= 1 << static_cast<int>(CollarMode::Both);
+        collar_valid_mask_.store(mask);
+
+        int cur = collar_mode_.load();
+        if (!((mask >> cur) & 1)) {
+            collar_mode_.store(static_cast<int>(CollarMode::Neither));
+            SendCollarMode(static_cast<int>(CollarMode::Neither));
+        }
+    }
+
+    // Advance to the next selectable mode in cycle order 0->1->2->3->0, skipping
+    // modes whose integration isn't enabled+agreed. Returns the same mode if none
+    // other is valid (so a lone Neither just stays Neither).
+    int UIManager::NextValidCollarMode(int current) const {
+        int mask = collar_valid_mask_.load();
+        for (int i = 1; i <= 4; ++i) {
+            int cand = (current + i) % 4;
+            if ((mask >> cand) & 1) return cand;
+        }
+        return current;
+    }
+
     // Helper function to map DeviceType to OSCDeviceType
     OSCDeviceType UIManager::MapToOSCDeviceType(DeviceType type) {
         switch (type) {
@@ -723,6 +786,8 @@ namespace StayPutVR {
             case OSCDeviceType::FootLeft: return "FootLeft";
             case OSCDeviceType::FootRight: return "FootRight";
             case OSCDeviceType::Hip: return "Hip";
+            case OSCDeviceType::Jaw: return "Jaw";
+            case OSCDeviceType::Mic: return "Mic";
             default: return "Unknown";
         }
     }
@@ -843,12 +908,23 @@ namespace StayPutVR {
             }
         );
 
-        // SPVR_JawEnabled: live runtime gate from the avatar radial menu.
-        OSCManager::GetInstance().SetJawEnabledCallback(
-            [this](bool enabled) {
-                jaw_.runtime_enabled = enabled;
+        // Unified collar-mode toggle button (momentary contact). Runs on the OSC
+        // receive thread: rising-edge detect, advance to the next enabled+agreed mode,
+        // and echo SPVR_Collar_Mode. Reads only collar_valid_mask_ (atomic), never config_.
+        OSCManager::GetInstance().SetCollarToggleCallback(
+            [this](bool pressed) {
+                if (!pressed) { collar_toggle_prev_ = false; return; }
+                if (collar_toggle_prev_) return;  // ignore repeats while held
+                collar_toggle_prev_ = true;
+                int next = NextValidCollarMode(collar_mode_.load());
+                collar_mode_.store(next);
+                SendCollarMode(next);
             }
         );
+
+        // Seed the avatar with the current collar mode after (re)registration so the
+        // animator is in sync following an OSC reconnect.
+        SendCollarMode(collar_mode_.load());
     }
 
     // Re-register callbacks on an already-open connection (manual OSC toggle /
@@ -1110,11 +1186,16 @@ namespace StayPutVR {
         const OSCDeviceType allDevices[] = {
             OSCDeviceType::HMD, OSCDeviceType::ControllerLeft, OSCDeviceType::ControllerRight,
             OSCDeviceType::FootLeft, OSCDeviceType::FootRight, OSCDeviceType::Hip,
-            OSCDeviceType::Jaw
+            OSCDeviceType::Jaw, OSCDeviceType::Mic
         };
         for (OSCDeviceType d : allDevices) {
             OSCManager::GetInstance().SendDeviceStatus(d, DeviceStatus::Unlocked);
         }
+
+        // Reset the unified collar mode to Neither on avatar change so enforcement
+        // never silently carries over to a freshly-loaded avatar.
+        collar_mode_.store(static_cast<int>(CollarMode::Neither));
+        SendCollarMode(static_cast<int>(CollarMode::Neither));
     }
 
     void UIManager::TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason) {

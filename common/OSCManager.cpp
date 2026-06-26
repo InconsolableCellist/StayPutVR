@@ -235,11 +235,11 @@ void OSCManager::SetConfig(const Config& config) {
     osc_shock_path_ = config.osc_shock_path;
     osc_estop_stretch_path_ = config.osc_estop_stretch_path;
     osc_jawopen_path_ = config.osc_jawopen_path;
-    osc_jawenabled_path_ = config.osc_jawenabled_path;
+    osc_collar_toggle_path_ = config.osc_collar_toggle_path;
 
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Updated OSC paths from config (jawopen='" +
-                      osc_jawopen_path_ + "', jawenabled='" + osc_jawenabled_path_ + "')");
+                      osc_jawopen_path_ + "', collar_toggle='" + osc_collar_toggle_path_ + "')");
     }
 }
 
@@ -478,10 +478,10 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     jawopen_callback_(float_value);
                 }
 
-                // SPVR_JawEnabled runtime gate (synced bool from the radial menu).
-                // Pass both true and false so the UI can suspend/resume live.
-                else if (address == osc_jawenabled_path_ && jawenabled_callback_) {
-                    jawenabled_callback_(value_bool);
+                // Unified collar-mode toggle button (momentary contact). Pass both
+                // true and false so the UI can rising-edge detect and advance the mode.
+                else if (address == osc_collar_toggle_path_ && collar_toggle_callback_) {
+                    collar_toggle_callback_(value_bool);
                 }
                 
                 // Latch_IsPosed paths: direct state change (not toggle)
@@ -573,6 +573,16 @@ void OSCManager::SendDeviceStatus(OSCDeviceType device, DeviceStatus status) {
     if (SendOSCMessage(path, statusValue) && Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Sending status " + std::to_string(statusValue) + " to " + path +
             " (device=" + GetDeviceString(device) + ", status=" + std::to_string(statusValue) + ")");
+    }
+}
+
+void OSCManager::SendCollarMode(int mode) {
+    if (!initialized_) {
+        return;
+    }
+    const std::string path = "/avatar/parameters/SPVR_Collar_Mode";
+    if (SendOSCMessage(path, mode) && Logger::IsInitialized()) {
+        Logger::Debug("OSCManager: Sending collar mode " + std::to_string(mode) + " to " + path);
     }
 }
 
@@ -762,6 +772,7 @@ std::string OSCManager::GetDeviceString(OSCDeviceType device) const {
         case OSCDeviceType::FootRight: return "FootRight";
         case OSCDeviceType::Hip: return "Hip";
         case OSCDeviceType::Jaw: return "Jaw";
+        case OSCDeviceType::Mic: return "Mic";
         default: return "Unknown";
     }
 }

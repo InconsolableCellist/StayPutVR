@@ -126,14 +126,28 @@ public:
     // driver-set parameter SPVR_JawOpen, which VRChat DOES send out. So the app
     // listens for SPVR_JawOpen, not the raw VRCFT param.
     bool jawopen_enabled = false;
+    bool jawopen_user_agreement = false;        // safety gate, mirrors pishock_user_agreement
     std::string osc_jawopen_path = "/avatar/parameters/SPVR_JawOpen"; // bridge output param
-    // Live runtime gate: a synced bool the user toggles via the avatar radial menu.
-    // When the feature is armed (jawopen_enabled) and the HMD is locked, the jaw
-    // is only enforced while this is true; toggling it re-captures the baseline.
-    std::string osc_jawenabled_path = "/avatar/parameters/SPVR_JawEnabled";
     float jawopen_warning_margin = 0.10f;       // |current-baseline| > this => warning
     float jawopen_disobedience_margin = 0.20f;  // |current-baseline| > this => disobedience
     float jawopen_grace_seconds = 1.0f;         // baseline-capture window after HMD lock
+
+    // Microphone enforced-mute constraint (see UIManager_Devices CheckMicrophoneConstraint).
+    // While the HMD is locked AND the collar mode includes Mic, the captured mic
+    // loudness must stay within a margin of the ambient floor captured at lock time,
+    // escalating warning->disobedience like the JawOpen constraint. Off by default.
+    // The level comes from MicrophoneManager (WASAPI capture), not from OSC.
+    bool mic_enabled = false;
+    bool mic_user_agreement = false;            // safety gate, mirrors pishock_user_agreement
+    std::string mic_device_id = "";             // stable WASAPI endpoint id; "" => system default
+    float mic_warning_margin = 0.08f;           // (level-baseline) > this => warning
+    float mic_disobedience_margin = 0.18f;      // (level-baseline) > this => disobedience
+    float mic_grace_seconds = 2.0f;             // ambient-floor capture window after HMD lock
+
+    // Unified collar mode runtime gate. The avatar's momentary SPVR_Collar_ToggleButton
+    // cycles SPVR_Collar_Mode (0=Neither,1=Jaw,2=Mic,3=Both) among the integrations the
+    // user has enabled+agreed; it replaces the old per-feature SPVR_JawEnabled radial.
+    std::string osc_collar_toggle_path = "/avatar/parameters/SPVR_Collar_ToggleButton";
 
     // PiShock Mode Selection
     enum class PiShockMode {

@@ -43,11 +43,18 @@ Config::Config()
     , osc_estop_stretch_path("/avatar/parameters/SPVR_EStop_Stretch")
     , osc_estop_stretch_enabled(true)
     , jawopen_enabled(false)
+    , jawopen_user_agreement(false)
     , osc_jawopen_path("/avatar/parameters/SPVR_JawOpen")
-    , osc_jawenabled_path("/avatar/parameters/SPVR_JawEnabled")
     , jawopen_warning_margin(0.10f)
     , jawopen_disobedience_margin(0.20f)
     , jawopen_grace_seconds(1.0f)
+    , mic_enabled(false)
+    , mic_user_agreement(false)
+    , mic_device_id("")
+    , mic_warning_margin(0.08f)
+    , mic_disobedience_margin(0.18f)
+    , mic_grace_seconds(2.0f)
+    , osc_collar_toggle_path("/avatar/parameters/SPVR_Collar_ToggleButton")
     , pishock_enabled(false)
     , pishock_group(0)
     , pishock_user_agreement(false)
@@ -231,11 +238,18 @@ bool Config::LoadFromFile(const std::string& filename) {
         osc_estop_stretch_path = j.value("osc_estop_stretch_path", "/avatar/parameters/SPVR_EStop_Stretch");
         osc_estop_stretch_enabled = j.value("osc_estop_stretch_enabled", true);
         jawopen_enabled = j.value("jawopen_enabled", false);
+        jawopen_user_agreement = j.value("jawopen_user_agreement", false);
         osc_jawopen_path = j.value("osc_jawopen_path", "/avatar/parameters/SPVR_JawOpen");
-        osc_jawenabled_path = j.value("osc_jawenabled_path", "/avatar/parameters/SPVR_JawEnabled");
         jawopen_warning_margin = j.value("jawopen_warning_margin", 0.10f);
         jawopen_disobedience_margin = j.value("jawopen_disobedience_margin", 0.20f);
         jawopen_grace_seconds = j.value("jawopen_grace_seconds", 1.0f);
+        mic_enabled = j.value("mic_enabled", false);
+        mic_user_agreement = j.value("mic_user_agreement", false);
+        mic_device_id = j.value("mic_device_id", std::string(""));
+        mic_warning_margin = j.value("mic_warning_margin", 0.08f);
+        mic_disobedience_margin = j.value("mic_disobedience_margin", 0.18f);
+        mic_grace_seconds = j.value("mic_grace_seconds", 2.0f);
+        osc_collar_toggle_path = j.value("osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
         osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = j.value("osc_bite_enabled", true);
         osc_shock_path = j.value("osc_shock_path", "/avatar/parameters/Shock");
@@ -727,11 +741,18 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["osc_estop_stretch_path"] = osc_estop_stretch_path;
         j["osc_estop_stretch_enabled"] = osc_estop_stretch_enabled;
         j["jawopen_enabled"] = jawopen_enabled;
+        j["jawopen_user_agreement"] = jawopen_user_agreement;
         j["osc_jawopen_path"] = osc_jawopen_path;
-        j["osc_jawenabled_path"] = osc_jawenabled_path;
         j["jawopen_warning_margin"] = jawopen_warning_margin;
         j["jawopen_disobedience_margin"] = jawopen_disobedience_margin;
         j["jawopen_grace_seconds"] = jawopen_grace_seconds;
+        j["mic_enabled"] = mic_enabled;
+        j["mic_user_agreement"] = mic_user_agreement;
+        j["mic_device_id"] = mic_device_id;
+        j["mic_warning_margin"] = mic_warning_margin;
+        j["mic_disobedience_margin"] = mic_disobedience_margin;
+        j["mic_grace_seconds"] = mic_grace_seconds;
+        j["osc_collar_toggle_path"] = osc_collar_toggle_path;
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;
         j["osc_shock_path"] = osc_shock_path;

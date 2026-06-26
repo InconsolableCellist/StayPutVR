@@ -33,6 +33,8 @@ if(WIN32)
         imgui
         glfw
         winmm.lib
+        ole32.lib
+        oleaut32.lib
         stayputvr_common
     )
 

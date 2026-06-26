@@ -34,7 +34,8 @@ enum class OSCDeviceType {
     FootLeft,
     FootRight,
     Hip,
-    Jaw
+    Jaw,
+    Mic
 };
 
 enum class DeviceRole {
@@ -89,7 +90,11 @@ public:
 
     // Send device status updates
     void SendDeviceStatus(OSCDeviceType device, DeviceStatus status);
-    
+
+    // Send the unified collar mode (0=Neither,1=Jaw,2=Mic,3=Both) as an int to
+    // /avatar/parameters/SPVR_Collar_Mode so the avatar can display it.
+    void SendCollarMode(int mode);
+
     // Set callback for when a device should be locked/unlocked.
     // All setters are guarded by callback_mutex_ so the receive thread
     // never sees a half-written std::function.
@@ -122,9 +127,10 @@ public:
     // the JawOpen constraint while the HMD is locked.
     void SetJawOpenCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); jawopen_callback_ = std::move(callback); }
 
-    // Set callback for the SPVR_JawEnabled runtime gate (synced bool from the
-    // avatar radial menu). Fired on every inbound value (true and false).
-    void SetJawEnabledCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); jawenabled_callback_ = std::move(callback); }
+    // Set callback for the unified collar-mode toggle button (SPVR_Collar_ToggleButton,
+    // a momentary contact). Fired on every inbound value (true and false) so the UI can
+    // do rising-edge detection and advance SPVR_Collar_Mode.
+    void SetCollarToggleCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); collar_toggle_callback_ = std::move(callback); }
 
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
@@ -204,7 +210,9 @@ private:
     // VRCFury JawOpen bridge FX layer), not the raw VRCFT FT/v2/JawOpen, which
     // VRChat does not echo back out.
     std::string osc_jawopen_path_ = "/avatar/parameters/SPVR_JawOpen";
-    std::string osc_jawenabled_path_ = "/avatar/parameters/SPVR_JawEnabled";
+
+    // Unified collar-mode toggle button (momentary contact). Inbound only.
+    std::string osc_collar_toggle_path_ = "/avatar/parameters/SPVR_Collar_ToggleButton";
 
     // Helper methods for sending OSC messages
     bool SendOSCMessage(const std::string& path, int value);
@@ -242,8 +250,8 @@ private:
     // Callback for the VRCFT JawOpen parameter (float 0..1)
     std::function<void(float)> jawopen_callback_;
 
-    // Callback for the SPVR_JawEnabled runtime gate (synced bool)
-    std::function<void(bool)> jawenabled_callback_;
+    // Callback for the unified collar-mode toggle button (momentary contact, bool)
+    std::function<void(bool)> collar_toggle_callback_;
 };
 
 } // namespace StayPutVR 

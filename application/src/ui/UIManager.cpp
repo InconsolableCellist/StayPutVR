@@ -263,6 +263,16 @@ namespace StayPutVR {
             config_, buttplug_manager_,
             [this]() { SaveConfig(); });
 
+        // Microphone enforced-mute. Create the capture manager; start it only if the
+        // feature is enabled+agreed. Seed the collar valid-mode mask and mic bindings.
+        microphone_manager_ = std::make_unique<MicrophoneManager>();
+        if (config_.mic_enabled && config_.mic_user_agreement) {
+            microphone_manager_->SetDevice(config_.mic_device_id);
+            microphone_manager_->Start();
+        }
+        LoadMicBindingsFromConfig();
+        RecomputeCollarValidMask();
+
         return true;
     }
 
@@ -342,9 +352,14 @@ namespace StayPutVR {
         if (StayPutVR::Logger::IsInitialized()) {
             StayPutVR::Logger::Info("UIManager shutting down");
         }
-        
+
         // Save configuration before shutting down
         SaveConfig();
+
+        // Stop the microphone capture thread before tearing down.
+        if (microphone_manager_) {
+            microphone_manager_->Stop();
+        }
 
         // Release the effigy GL texture (Devices > Visual).
         if (effigy_tex_ != 0) {

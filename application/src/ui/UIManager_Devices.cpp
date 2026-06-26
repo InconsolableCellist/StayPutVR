@@ -270,9 +270,10 @@ namespace StayPutVR {
             }
         }
 
-        // VRCFT JawOpen constraint runs every frame; it edge-detects the HMD
-        // lock state itself (so it works for both global and individual locks).
+        // VRCFT JawOpen + microphone constraints run every frame; each edge-detects
+        // the HMD lock state itself (so it works for both global and individual locks).
         CheckJawOpenConstraint();
+        CheckMicrophoneConstraint();
 
         // Save device names to configuration if they exist
         bool names_changed = false;
@@ -759,12 +760,13 @@ namespace StayPutVR {
             }
         }
 
-        // The constraint engages only when armed (app master), gated on live
-        // (SPVR_JawEnabled radial), and the HMD is locked. Emergency stop forces
-        // it off. Toggling SPVR_JawEnabled while locked therefore suspends/resumes
-        // the jaw without unlocking the collar -- and resuming re-captures the
-        // baseline, so the current jaw pose becomes the new ideal.
-        bool gate = config_.jawopen_enabled && jaw_.runtime_enabled &&
+        // The constraint engages only when armed (app master), the collar mode
+        // includes Jaw (the unified SPVR_Collar_Mode gate that replaced the old
+        // SPVR_JawEnabled radial), and the HMD is locked. Emergency stop forces it
+        // off. Switching the collar mode away from Jaw while locked therefore
+        // suspends/resumes the jaw without unlocking the collar -- and resuming
+        // re-captures the baseline, so the current jaw pose becomes the new ideal.
+        bool gate = config_.jawopen_enabled && CollarModeIncludesJaw() &&
                     hmd_locked && !emergency_stop_active_;
 
         auto now = std::chrono::steady_clock::now();
@@ -880,6 +882,152 @@ namespace StayPutVR {
                         played = true;
                     }
                 } else if (jaw_.in_warning_zone && config_.audio.warning) {
+                    AudioManager::PlayWarningSound(config_.audio.volume);
+                    played = true;
+                }
+                if (played) last_sound_time_ = now;
+            }
+        }
+    }
+
+    // Microphone enforced-mute constraint. The 1-D analog of CheckJawOpenConstraint
+    // for mic loudness: when the HMD locks AND the collar mode includes Mic, capture
+    // the ambient room-noise floor as the baseline (the quietest level seen during a
+    // grace window, so talking through grace can't inflate it), then enforce
+    // (level - baseline) one-sided against the warning/disobedience margins, reusing
+    // the same punishment + audio + OSC-status pipeline as the jaw.
+    void UIManager::CheckMicrophoneConstraint() {
+        // Live level pulled from the capture manager (jaw gets its value pushed via OSC).
+        mic_.current = microphone_manager_ ? microphone_manager_->GetLevel() : 0.0f;
+
+        // Is the HMD currently locked (individually or via a global lock)?
+        bool hmd_locked = false;
+        for (const auto& d : device_positions_) {
+            if (d.role == DeviceRole::HMD &&
+                (d.locked || (d.include_in_locking && global_lock_active_))) {
+                hmd_locked = true;
+                break;
+            }
+        }
+
+        // Engages only when armed (app master), the collar mode includes Mic, and the
+        // HMD is locked. Emergency stop forces it off.
+        bool gate = config_.mic_enabled && CollarModeIncludesMic() &&
+                    hmd_locked && !emergency_stop_active_;
+
+        auto now = std::chrono::steady_clock::now();
+
+        // Falling edge: gate dropped -> suspend.
+        if (!gate) {
+            if (mic_.gate_active) {
+                mic_.active = false;
+                mic_.in_grace = false;
+                mic_.in_warning_zone = false;
+                mic_.exceeds_threshold = false;
+                UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::Unlocked);
+            }
+            mic_.gate_active = false;
+            return;
+        }
+
+        // Rising edge: gate just engaged -> start grace + ambient-floor capture.
+        if (!mic_.gate_active) {
+            mic_.gate_active = true;
+            mic_.lock_time = now;
+            mic_.in_grace = true;
+            mic_.active = false;
+            mic_.grace_floor = mic_.current;
+            mic_.baseline = mic_.current;
+            mic_.in_warning_zone = false;
+            mic_.exceeds_threshold = false;
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+        }
+
+        // During grace, track the running MINIMUM level (the quietest moment = the
+        // ambient noise floor) so a user who talks during grace cannot train the
+        // floor upward. Freeze it as the baseline when grace ends.
+        if (mic_.in_grace) {
+            if (mic_.current < mic_.grace_floor) mic_.grace_floor = mic_.current;
+            float since_lock = std::chrono::duration_cast<std::chrono::duration<float>>(
+                now - mic_.lock_time).count();
+            if (since_lock >= config_.mic_grace_seconds) {
+                mic_.in_grace = false;
+                mic_.active = true;
+                mic_.baseline = mic_.grace_floor; // freeze the ambient floor
+            } else {
+                mic_.baseline = mic_.grace_floor; // keep the readout in sync during grace
+                return;
+            }
+        }
+
+        // Enforcement: one-sided deviation above the ambient floor (only louder matters).
+        mic_.deviation = mic_.current - mic_.baseline;
+        if (mic_.deviation < 0.0f) mic_.deviation = 0.0f;
+        bool was_warning = mic_.in_warning_zone;
+        bool was_exceeding = mic_.exceeds_threshold;
+        bool was_safe = !was_warning && !was_exceeding;
+
+        mic_.exceeds_threshold = mic_.deviation > config_.mic_disobedience_margin;
+        mic_.in_warning_zone = mic_.deviation > config_.mic_warning_margin && !mic_.exceeds_threshold;
+        bool is_safe = !mic_.exceeds_threshold && !mic_.in_warning_zone;
+
+        bool play_success = false;
+
+        // Returned to safe (quiet) zone.
+        if (!was_safe && is_safe) {
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+            if (buttplug_manager_ && buttplug_manager_->IsEnabled())
+                buttplug_manager_->TriggerSafeZoneActions(kMicSerial);
+            play_success = true;
+        }
+        // Newly entered warning zone from safe.
+        if (!was_warning && mic_.in_warning_zone) {
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedWarning);
+            TriggerPiShockWarning(kMicSerial);
+        }
+        // Returned from disobedience back to warning.
+        if (was_exceeding && !mic_.exceeds_threshold && mic_.in_warning_zone) {
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedWarning);
+        }
+        // Newly entered disobedience zone.
+        if (!was_exceeding && mic_.exceeds_threshold) {
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedDisobedience);
+            TriggerPiShockDisobedience(kMicSerial);
+            if (openshock_manager_ && openshock_manager_->IsEnabled())
+                openshock_manager_->TriggerDisobedienceActions(kMicSerial);
+        }
+        // Continuous disobedience while too loud.
+        else if (mic_.exceeds_threshold && CanTriggerPiShock()) {
+            TriggerPiShockDisobedience(kMicSerial);
+        }
+        else if (mic_.exceeds_threshold && openshock_manager_ && openshock_manager_->IsEnabled()) {
+            if (openshock_manager_->CanTriggerAction())
+                openshock_manager_->TriggerDisobedienceActions(kMicSerial);
+        }
+
+        // Audio, sharing the position/jaw cooldown (last_sound_time_); continuous,
+        // keyed off the current zone (see CheckJawOpenConstraint for the rationale).
+        if (config_.audio.enabled) {
+            if (play_success) {
+                std::string fp = StayPutVR::GetResourcesPath() + "/success.wav";
+                if (std::filesystem::exists(fp)) {
+                    AudioManager::StopSound();
+                    AudioManager::PlaySound("success.wav", config_.audio.volume);
+                    last_sound_time_ = now;
+                    return;
+                }
+            }
+            float elapsed = std::chrono::duration_cast<std::chrono::duration<float>>(
+                now - last_sound_time_).count();
+            if (elapsed >= 1.0f) {
+                bool played = false;
+                if (mic_.exceeds_threshold && config_.audio.out_of_bounds) {
+                    std::string fp = StayPutVR::GetResourcesPath() + "/disobedience.wav";
+                    if (std::filesystem::exists(fp)) {
+                        AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
+                        played = true;
+                    }
+                } else if (mic_.in_warning_zone && config_.audio.warning) {
                     AudioManager::PlayWarningSound(config_.audio.volume);
                     played = true;
                 }
@@ -1403,6 +1551,15 @@ namespace StayPutVR {
             jaw_.vibration_device_enabled = it->second;
     }
 
+    void UIManager::LoadMicBindingsFromConfig() {
+        if (auto it = config_.device_pishock_ids.find(kMicSerial); it != config_.device_pishock_ids.end())
+            mic_.pishock_enabled = it->second;
+        if (auto it = config_.device_openshock_ids.find(kMicSerial); it != config_.device_openshock_ids.end())
+            mic_.openshock_enabled = it->second;
+        if (auto it = config_.device_vibration_ids.find(kMicSerial); it != config_.device_vibration_ids.end())
+            mic_.vibration_device_enabled = it->second;
+    }
+
     void UIManager::RenderVisualAssignment() {
         LoadEffigyTexture();
 
@@ -1685,8 +1842,9 @@ namespace StayPutVR {
         ImGui::BeginChild("RightPane", ImVec2(0, effigyH), false);
         ImGui::TextWrapped("Drag a device onto a body slot to assign it. Drag an ID chip onto a "
                            "body slot (or the head) to bind a shocker/vibrator. The head slot is "
-                           "the JawOpen constraint, driven by SPVR_JawOpen and toggled in-game via "
-                           "the SPVR_JawEnabled radial. Click a device, slot, or the head to configure it.");
+                           "the VRCFT JawOpen constraint, driven by SPVR_JawOpen and engaged in-game "
+                           "via the collar mode (SPVR_Collar_Mode). Click a device, slot, or the head "
+                           "to configure it.");
         ImGui::SeparatorText("Available IDs (drag onto a body slot)");
         RenderShockerPalette();
 
@@ -1713,8 +1871,8 @@ namespace StayPutVR {
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(off)");
             else if (jaw_.active)
                 ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "active");
-            else if (!jaw_.runtime_enabled)
-                ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.4f, 1.0f), "radial off");
+            else if (!CollarModeIncludesJaw())
+                ImGui::TextColored(ImVec4(0.9f, 0.75f, 0.4f, 1.0f), "mode off");
             else
                 ImGui::TextColored(ImVec4(0.55f, 0.7f, 0.95f, 1.0f), "armed");
             ImGui::PopID();
@@ -1887,15 +2045,16 @@ namespace StayPutVR {
         if (ImGui::Checkbox("Armed", &enabled)) {
             config_.jawopen_enabled = enabled;
             if (enabled) LoadJawBindingsFromConfig();
+            RecomputeCollarValidMask();
             SaveConfig();
         }
         ImGuiHelpers::HelpTooltip("App master switch. When armed, the jaw is enforced while the "
-                                  "HMD is locked AND the in-game SPVR_JawEnabled radial is on.");
+                                  "HMD is locked AND the collar mode includes Jaw.");
         ImGui::SameLine();
-        ImGui::Text("| Radial (SPVR_JawEnabled):");
+        ImGui::Text("| Collar includes Jaw:");
         ImGui::SameLine();
-        if (jaw_.runtime_enabled) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "ON");
-        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "OFF");
+        if (CollarModeIncludesJaw()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "YES");
+        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "NO");
 
         // Live state readout.
         ImGui::Text("Value: %.2f", jaw_.current);
@@ -1906,8 +2065,8 @@ namespace StayPutVR {
                         jaw_.in_warning_zone ? "[WARNING]" : "[SAFE]");
         } else if (config_.jawopen_enabled && jaw_.in_grace) {
             ImGui::TextDisabled("| capturing baseline...");
-        } else if (config_.jawopen_enabled && !jaw_.runtime_enabled) {
-            ImGui::TextDisabled("| suspended (radial off)");
+        } else if (config_.jawopen_enabled && !CollarModeIncludesJaw()) {
+            ImGui::TextDisabled("| suspended (collar mode excludes Jaw)");
         } else if (config_.jawopen_enabled) {
             ImGui::TextDisabled("| inactive (lock HMD)");
         }

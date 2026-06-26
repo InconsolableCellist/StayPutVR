@@ -64,6 +64,10 @@ namespace StayPutVR {
                 RenderVRCFTTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Mic")) {
+                RenderMicTab();
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
     }
@@ -100,22 +104,37 @@ namespace StayPutVR {
 	    "then update the JawOpen paramater path in your Unity project. (See docs or Discord)");
         ImGui::Separator();
 
-        bool enabled = config_.jawopen_enabled;
-        if (ImGui::Checkbox("Arm JawOpen constraint", &enabled)) {
-            config_.jawopen_enabled = enabled;
-            if (enabled) LoadJawBindingsFromConfig();
+        bool agreed = ImGuiHelpers::SafetyAgreementBlock(
+            "Locking your jaw open/closed and shocking you for moving it is a physical-restraint "
+            "play feature. Use it only with safe words/limits in place, never alone if a shocker "
+            "could cause harm, and stop if you feel unwell.",
+            config_.jawopen_user_agreement);
+        if (agreed != config_.jawopen_user_agreement) {
+            config_.jawopen_user_agreement = agreed;
+            RecomputeCollarValidMask();
             SaveConfig();
         }
-        ImGuiHelpers::HelpTooltip("App master switch (off by default). When armed, the jaw is \n"
-                                  "enforced while the HMD is locked AND the in-game SPVR_JawEnabled \n"
-                                  "radial toggle is on. Toggling the radial while locked suspends or \n"
-                                  "resumes the jaw (resuming re-captures the baseline) without unlocking.");
+
+        ImGui::BeginDisabled(!agreed);
+
+        bool enabled = config_.jawopen_enabled;
+        if (ImGui::Checkbox("Enable VRCFT JawOpen Integration", &enabled)) {
+            config_.jawopen_enabled = enabled;
+            if (enabled) LoadJawBindingsFromConfig();
+            RecomputeCollarValidMask();
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("App master switch (off by default). When enabled, the jaw is \n"
+                                  "enforced while the HMD is locked AND the collar mode includes Jaw \n"
+                                  "(tap the in-game collar button to cycle Neither/Jaw/Mic/Both). \n"
+                                  "Switching the mode away from Jaw while locked suspends it (resuming \n"
+                                  "re-captures the baseline) without unlocking.");
 
         ImGui::SameLine();
-        ImGui::Text("| Radial (SPVR_JawEnabled):");
+        ImGui::Text("| Collar includes Jaw:");
         ImGui::SameLine();
-        if (jaw_.runtime_enabled) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "ON");
-        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "OFF");
+        if (CollarModeIncludesJaw()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "YES");
+        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "NO");
 
         // Live value + state readout.
         ImGui::Spacing();
@@ -129,8 +148,8 @@ namespace StayPutVR {
                         jaw_.in_warning_zone ? "[WARNING]" : "[SAFE]");
         } else if (config_.jawopen_enabled && jaw_.in_grace) {
             ImGui::TextDisabled("Capturing baseline (grace window)...");
-        } else if (config_.jawopen_enabled && !jaw_.runtime_enabled) {
-            ImGui::TextDisabled("Suspended (SPVR_JawEnabled radial is off).");
+        } else if (config_.jawopen_enabled && !CollarModeIncludesJaw()) {
+            ImGui::TextDisabled("Suspended (collar mode excludes Jaw).");
         } else if (config_.jawopen_enabled) {
             ImGui::TextDisabled("Inactive (lock the HMD to engage).");
         }
@@ -140,9 +159,7 @@ namespace StayPutVR {
         // so most users never need to touch these.
         if (ImGui::CollapsingHeader("Parameter Paths")) {
             static char jaw_path[128] = "";
-            static char jaw_en_path[128] = "";
             if (strlen(jaw_path) == 0) strcpy_s(jaw_path, sizeof(jaw_path), config_.osc_jawopen_path.c_str());
-            if (strlen(jaw_en_path) == 0) strcpy_s(jaw_en_path, sizeof(jaw_en_path), config_.osc_jawenabled_path.c_str());
 
             if (ImGui::InputText("Bridge Path", jaw_path, IM_ARRAYSIZE(jaw_path))) {
                 config_.osc_jawopen_path = jaw_path;
@@ -159,19 +176,6 @@ namespace StayPutVR {
                 OSCManager::GetInstance().SetConfig(config_);
             }
             ImGuiHelpers::HelpTooltip("StayPutVR v1.4.0 parameter name. Shouldn't need to change this.");
-
-            if (ImGui::InputText("Enabled Path", jaw_en_path, IM_ARRAYSIZE(jaw_en_path))) {
-                config_.osc_jawenabled_path = jaw_en_path;
-            }
-            if (ImGui::IsItemDeactivatedAfterEdit()) { SaveConfig(); OSCManager::GetInstance().SetConfig(config_); }
-            ImGui::SameLine();
-            if (ImGui::Button("Reset##jawenpath")) {
-                config_.osc_jawenabled_path = "/avatar/parameters/SPVR_JawEnabled";
-                strcpy_s(jaw_en_path, sizeof(jaw_en_path), config_.osc_jawenabled_path.c_str());
-                SaveConfig();
-                OSCManager::GetInstance().SetConfig(config_);
-            }
-            ImGuiHelpers::HelpTooltip("StayPutVR v1.4.0 radial menu enable bool. Shouldn't need to change this.");
         }
 
         ImGui::Separator();
@@ -240,6 +244,176 @@ namespace StayPutVR {
             config_.device_vibration_ids[kJawOpenSerial] = jaw_.vibration_device_enabled;
             SaveConfig();
         }
+
+        ImGui::EndDisabled(); // end of jawopen_user_agreement gate
+    }
+
+    void UIManager::RenderMicTab() {
+        ImGui::Text("Microphone Enforced-Mute");
+        ImGui::TextWrapped(
+            "When you lock your collar (HMD/neck) and the collar mode includes Mic, your "
+            "microphone must stay near the ambient room level captured at lock time -- i.e. you "
+            "must stay quiet. Talking too loud triggers the usual warning and disobedience actions "
+            "(shocks). Assign shocker ID(s) below.");
+        ImGui::Spacing();
+        ImGui::TextWrapped(
+            "This reads your OS microphone directly (independent of VRChat's mute), so it only "
+            "punishes speaking -- it does not mute you in VRChat. The mic is held open whenever "
+            "this integration is enabled.");
+        ImGui::Separator();
+
+        bool agreed = ImGuiHelpers::SafetyAgreementBlock(
+            "Enforced silence with a shock penalty is a physical-restraint play feature. Use it "
+            "only with safe words/limits in place, never alone if a shocker could cause harm, and "
+            "stop if you feel unwell.",
+            config_.mic_user_agreement);
+        if (agreed != config_.mic_user_agreement) {
+            config_.mic_user_agreement = agreed;
+            RecomputeCollarValidMask();
+            SaveConfig();
+        }
+
+        ImGui::BeginDisabled(!agreed);
+
+        bool enabled = config_.mic_enabled;
+        if (ImGui::Checkbox("Enable Microphone Volume Integration", &enabled)) {
+            config_.mic_enabled = enabled;
+            if (microphone_manager_) {
+                if (enabled) { microphone_manager_->SetDevice(config_.mic_device_id); microphone_manager_->Start(); }
+                else microphone_manager_->Stop();
+            }
+            if (enabled) LoadMicBindingsFromConfig();
+            RecomputeCollarValidMask();
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("App master switch (off by default). When enabled, the mic is \n"
+                                  "enforced while the HMD is locked AND the collar mode includes Mic.");
+        ImGui::SameLine();
+        ImGui::Text("| Collar includes Mic:");
+        ImGui::SameLine();
+        if (CollarModeIncludesMic()) ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "YES");
+        else ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "NO");
+
+        // Capture device selection.
+        ImGui::Spacing();
+        std::string cur_name = microphone_manager_ ? microphone_manager_->GetCurrentDeviceName() : "None";
+        if (ImGui::BeginCombo("Input Device", config_.mic_device_id.empty() ? "System Default" : cur_name.c_str())) {
+            bool def_sel = config_.mic_device_id.empty();
+            if (ImGui::Selectable("System Default", def_sel)) {
+                config_.mic_device_id.clear();
+                if (microphone_manager_) microphone_manager_->SetDevice("");
+                SaveConfig();
+            }
+            if (microphone_manager_) {
+                for (const auto& d : microphone_manager_->GetDevices()) {
+                    bool sel = (d.id == config_.mic_device_id);
+                    if (ImGui::Selectable(d.name.c_str(), sel)) {
+                        config_.mic_device_id = d.id;
+                        microphone_manager_->SetDevice(d.id);
+                        SaveConfig();
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (microphone_manager_) {
+            if (microphone_manager_->IsRunning() && microphone_manager_->IsConnected())
+                ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "Capturing: %s", cur_name.c_str());
+            else if (microphone_manager_->IsRunning())
+                ImGui::TextColored(ImVec4(0.9f, 0.6f, 0.4f, 1.0f), "Connecting / no device...");
+            else
+                ImGui::TextDisabled("Capture stopped.");
+            std::string err = microphone_manager_->GetLastError();
+            if (!err.empty()) ImGui::TextDisabled("Last error: %s", err.c_str());
+        }
+
+        // Live VU + state readout.
+        ImGui::Spacing();
+        ImGui::Text("Mic level:");
+        ImGui::SameLine();
+        ImGui::ProgressBar(microphone_manager_ ? microphone_manager_->GetLevel() : 0.0f, ImVec2(180, 0));
+        if (mic_.active) {
+            ImGui::Text("Floor: %.2f   Deviation: %.2f   %s",
+                        mic_.baseline, mic_.deviation,
+                        mic_.exceeds_threshold ? "[DISOBEDIENCE]" :
+                        mic_.in_warning_zone ? "[WARNING]" : "[SAFE]");
+        } else if (config_.mic_enabled && mic_.in_grace) {
+            ImGui::TextDisabled("Capturing ambient floor (grace window)...");
+        } else if (config_.mic_enabled && !CollarModeIncludesMic()) {
+            ImGui::TextDisabled("Suspended (collar mode excludes Mic).");
+        } else if (config_.mic_enabled) {
+            ImGui::TextDisabled("Inactive (lock the HMD to engage).");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Constraint Tuning");
+
+        float warn = config_.mic_warning_margin;
+        if (ImGui::SliderFloat("Warning margin", &warn, 0.01f, 0.5f, "%.2f"))
+            config_.mic_warning_margin = warn;
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGuiHelpers::HelpTooltip("How far above the ambient floor the mic level may rise before a warning.");
+
+        float diso = config_.mic_disobedience_margin;
+        if (ImGui::SliderFloat("Disobedience margin", &diso, 0.02f, 0.8f, "%.2f"))
+            config_.mic_disobedience_margin = diso;
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGuiHelpers::HelpTooltip("Past this rise above the floor the disobedience response fires (shockers, etc.).");
+
+        float grace = config_.mic_grace_seconds;
+        if (ImGui::SliderFloat("Grace window (s)", &grace, 0.0f, 10.0f, "%.1f"))
+            config_.mic_grace_seconds = grace;
+        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        ImGuiHelpers::HelpTooltip("Quiet window after locking during which the ambient noise floor is captured.");
+
+        ImGui::Separator();
+        ImGui::Text("Shocker / Vibrator bindings");
+        ImGui::TextWrapped("Which devices fire on mic disobedience.");
+
+        bool changed = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.pishock_shocker_ids[i] != 0) {
+                ImGui::PushID(i);
+                bool b = mic_.pishock_enabled[i];
+                if (ImGui::Checkbox(("PiShock " + std::to_string(i)).c_str(), &b)) {
+                    mic_.pishock_enabled[i] = b; changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        for (int i = 0; i < 5; ++i) {
+            if (!config_.openshock_device_ids[i].empty()) {
+                ImGui::PushID(100 + i);
+                bool b = mic_.openshock_enabled[i];
+                if (ImGui::Checkbox(("OpenShock " + std::to_string(i)).c_str(), &b)) {
+                    mic_.openshock_enabled[i] = b; changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        for (int i = 0; i < 5; ++i) {
+            if (config_.buttplug_device_indices[i] >= 0) {
+                ImGui::PushID(200 + i);
+                bool b = mic_.vibration_device_enabled[i];
+                if (ImGui::Checkbox(("BPIO " + std::to_string(i)).c_str(), &b)) {
+                    mic_.vibration_device_enabled[i] = b; changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        if (changed) {
+            config_.device_pishock_ids[kMicSerial] = mic_.pishock_enabled;
+            config_.device_openshock_ids[kMicSerial] = mic_.openshock_enabled;
+            config_.device_vibration_ids[kMicSerial] = mic_.vibration_device_enabled;
+            SaveConfig();
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Test warning action")) TriggerPiShockWarning(kMicSerial);
+        ImGui::SameLine();
+        if (ImGui::Button("Test disobedience action")) TriggerPiShockDisobedience(kMicSerial);
+
+        ImGui::EndDisabled(); // end of mic_user_agreement gate
     }
 
     void UIManager::RenderPiShockTab() {
