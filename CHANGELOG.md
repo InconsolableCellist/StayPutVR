@@ -2,17 +2,17 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
-## 1.5 — Jaw + Microphone restraint, unified collar mode (6/26/2026)
+## 1.4 — Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 
-**Requires the new 1.5 avatar prefab** — this release adds/renames synced OSC
-parameters (`SPVR_Mic_Status`, `SPVR_Collar_Mode`, `SPVR_SoundEffect`) and retires
-the `SPVR_JawEnabled` radial in favor of the unified collar toggle.
+**Requires the new 1.4 avatar prefab** — reduces synced params and adds/renames OSC
+parameters (`SPVR_Mic_Status`, `SPVR_Collar_Mode`, `SPVR_SoundEffect`); the
+per-feature `SPVR_JawEnabled` radial is retired in favor of the unified collar toggle.
 
-### Added
+### Restraints & avatar
 - **VRCFT JawOpen constraint** — with VRCFaceTracking, lock your collar and your
   jaw must stay where it was when locked (mouth held open or closed); straying too
   far escalates warning → disobedience like the position constraint. Driven by the
-  `SPVR_JawOpen` bridge param; configured on the new Integrations → VRCFT tab and the
+  `SPVR_JawOpen` bridge param; configured on the Integrations → VRCFT tab and the
   Devices → Visual head slot.
 - **Microphone enforced-mute constraint** — while locked, your microphone must stay
   near the ambient room level captured at lock time (i.e. stay quiet); talking too
@@ -29,33 +29,31 @@ the `SPVR_JawEnabled` radial in favor of the unified collar toggle.
   switch, the app can pulse an int enum on `SPVR_SoundEffect` so an avatar animation
   layer plays a sound. Per-event toggles (on by default) under
   Settings → Notifications → "In-Game Sound Effects".
-- **PiShock warning-zone actions** — the PiShock Actions tab now has a full Warning
-  Zone section (beep / vibrate / shock with their own intensity & duration), parallel
-  to the Out of Bounds section.
 - Status tab now shows live Jaw and Mic rows alongside tracked devices, plus a
   collar-mode and mic-level readout.
 
-### Changed
-- Settings → Notifications: "Audio Notifications" renamed to **"App Sound Effects"**
-  (the on-PC cues), distinct from the new in-game sound effects.
+### Shockers
+- **PiShock warning-zone actions** — the PiShock Actions tab now has a full Warning
+  Zone section (beep / vibrate / shock with their own intensity & duration), parallel
+  to the Out of Bounds section.
 - PiShock intensity controls (warning + disobedience, master & per-device) now have
   +/- nudge buttons that step in small increments.
-
-### Fixed
 - **Warnings no longer starve the disobedience shock** — warning and disobedience
   actions previously shared one rate-limit timer, so repeated warnings could prevent
   the disobedience shock from ever firing. They now throttle independently.
 - PiShock warnings honored their config instead of firing a hardcoded beep + the
   *disobedience* vibrate; warnings are now silent unless explicitly configured.
+
+### General
+- Settings → Notifications: "Audio Notifications" renamed to **"App Sound Effects"**
+  (the on-PC cues), distinct from the new in-game sound effects.
 - JawOpen input callbacks are registered on startup auto-connect (not only on a manual
   OSC toggle), so the jaw value/constraint works on a normal launch.
 - OSC inbound-callback registration consolidated into one place so the startup and
   reconnect paths can't drift (this also fixed per-device shock intensities not
   applying until an OSC toggle).
-- Collar toggle now has a time debounce so contact bounce / rapid taps don't
+- Collar toggle has a time debounce so contact bounce / rapid taps don't
   multi-advance the mode.
-
-## 1.4 — Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (6/22/2026)
 - PiShock WebSocket v2 is now the default for new users (existing users keep their saved setting)
 - Fixed PiShock multi-action: Beep + Vibrate + Shock now all fire from a single event (#9)
 - Changing avatars now unlocks and resets all device status instead of leaving it stale (#6)

@@ -104,16 +104,14 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
-**1.5** - Jaw + Microphone restraint, unified collar mode (6/26/2026)
+**1.4** - Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 - Added the **VRCFT JawOpen constraint**: while locked, your jaw must stay where it was when locked
 - Added a **Microphone enforced-mute constraint**: stay quiet while locked, with adaptive ambient-floor detection, a background-noise calibration button, and a configurable cooldown
 - Added a **unified collar mode** (Neither / Jaw / Mic / Both) driven by a single in-game toggle button, replacing the per-feature `SPVR_JawEnabled` radial
 - Added **in-game sound effects**: pulse an OSC enum so your avatar can play a sound on lock, unlock, warning, disobedience, and collar-mode switch
 - Added a full **Warning Zone** action section for PiShock (beep / vibrate / shock with their own intensity & duration)
 - Fixed: repeated warnings could starve the disobedience shock so it never fired (warning and disobedience now throttle independently)
-- **Requires the new 1.5 avatar prefab** (adds `SPVR_Mic_Status`, `SPVR_Collar_Mode`, `SPVR_SoundEffect`; retires `SPVR_JawEnabled`)
-
-**1.4** - Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (6/22/2026)
+- **Requires the new 1.4 avatar prefab** (adds `SPVR_Mic_Status`, `SPVR_Collar_Mode`, `SPVR_SoundEffect`; retires `SPVR_JawEnabled`)
 - PiShock WebSocket v2 is now the default for new users (existing users keep their saved setting)
 - Fixed PiShock multi-action: Beep + Vibrate + Shock now all fire from a single event (#9)
 - Changing avatars now unlocks and resets all device status instead of leaving it stale (#6)

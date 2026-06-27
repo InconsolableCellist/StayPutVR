@@ -3,7 +3,7 @@
 // Single source of truth for the user-facing application version string.
 // Keep in sync with project(StayPutVR VERSION ...) in the root CMakeLists.txt
 // and the installer's OutFile/DisplayVersion.
-#define STAYPUTVR_VERSION "1.5"
+#define STAYPUTVR_VERSION "1.4"
 
 // Short git hash of the build, generated into the build dir by
 // cmake/GitHash.cmake and shown in parentheses next to the version (splash +
