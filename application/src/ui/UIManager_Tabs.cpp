@@ -661,9 +661,8 @@ namespace StayPutVR {
         ImGui::Spacing();
         ImGui::Text("In-Game Sound Effects");
         ImGui::Separator();
-        ImGuiHelpers::HelpTooltip("Sends SPVR_SoundEffect (int enum) for a brief moment on the ticked "
-                                  "events so your avatar can play a sound. Requires the prefab's "
-                                  "sound-effect animation layer.");
+        ImGuiHelpers::HelpTooltip("Sends SPVR_SoundEffect (int enum) for a brief moment on the ticked \n"
+                                  "events so your avatar can play a sound effect audible to others");
 
         bool ingame_enabled = config_.ingame_sfx_enabled;
         if (ImGui::Checkbox("Enable In-Game Sound Effects", &ingame_enabled)) {

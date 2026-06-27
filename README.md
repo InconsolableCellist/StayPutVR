@@ -55,6 +55,10 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
   - **Warning zone**: You're straying too far--watch out!
   - **Non-Compliance zone**: Now you've done it.
   - **Disable zone**: Safety threshold for tracking errors or if you wish to stop consenting--auto unlocks and stops any output!
+- **JawOpen restraint** (VRCFaceTracking): while locked, your jaw must stay where it was--hold your mouth open or closed
+- **Microphone enforced-mute**: while locked, stay quiet--talking too loud trips warnings and consequences (with background-noise calibration for noisy rooms)
+- **Unified collar mode**: one in-game button cycles which restraints are active (Jaw / Mic / Both / Neither)
+- **In-game sound effects**: drive avatar animation sounds on lock, unlock, warning, disobedience, and collar-mode switch
 - Integration with VRChat, PiShock, OpenShock, BPIO and Twitch (experimental)
 - Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
 - Audio cues for warnings and boundary violations
@@ -97,6 +101,17 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 5. Install with `cmake --build build --target install --config Release`
 
 ## 📅 Version History
+
+See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+**1.5** - Jaw + Microphone restraint, unified collar mode (6/26/2026)
+- Added the **VRCFT JawOpen constraint**: while locked, your jaw must stay where it was when locked
+- Added a **Microphone enforced-mute constraint**: stay quiet while locked, with adaptive ambient-floor detection, a background-noise calibration button, and a configurable cooldown
+- Added a **unified collar mode** (Neither / Jaw / Mic / Both) driven by a single in-game toggle button, replacing the per-feature `SPVR_JawEnabled` radial
+- Added **in-game sound effects**: pulse an OSC enum so your avatar can play a sound on lock, unlock, warning, disobedience, and collar-mode switch
+- Added a full **Warning Zone** action section for PiShock (beep / vibrate / shock with their own intensity & duration)
+- Fixed: repeated warnings could starve the disobedience shock so it never fired (warning and disobedience now throttle independently)
+- **Requires the new 1.5 avatar prefab** (adds `SPVR_Mic_Status`, `SPVR_Collar_Mode`, `SPVR_SoundEffect`; retires `SPVR_JawEnabled`)
 
 **1.4** - Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (6/22/2026)
 - PiShock WebSocket v2 is now the default for new users (existing users keep their saved setting)
