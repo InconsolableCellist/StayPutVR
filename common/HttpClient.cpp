@@ -562,7 +562,7 @@ bool SendOpenShockCommand(
     
     // Prepare headers for OpenShock API
     std::map<std::string, std::string> headers;
-    headers["OpenShockToken"] = apiToken;
+    headers["Open-Shock-Token"] = apiToken;
     headers["User-Agent"] = "StayPutVR/1.1";
     headers["Content-Type"] = "application/json";
     
@@ -638,7 +638,7 @@ void SendOpenShockCommandAsync(
         
         // Prepare headers for OpenShock API
         std::map<std::string, std::string> headers;
-        headers["OpenShockToken"] = apiToken;
+        headers["Open-Shock-Token"] = apiToken;
         headers["User-Agent"] = "StayPutVR/1.1";
         headers["Content-Type"] = "application/json";
         
@@ -723,7 +723,7 @@ bool SendOpenShockCommandMulti(
     
     // Prepare headers for OpenShock API
     std::map<std::string, std::string> headers;
-    headers["OpenShockToken"] = apiToken;
+    headers["Open-Shock-Token"] = apiToken;
     headers["User-Agent"] = "StayPutVR/1.1";
     headers["Content-Type"] = "application/json";
     
