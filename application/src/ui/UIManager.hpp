@@ -144,6 +144,8 @@ namespace StayPutVR {
         float deviation = 0.0f;
         bool  in_warning_zone = false;
         bool  exceeds_threshold = false;
+        // Refractory period: no new disobedience action fires until now passes this.
+        std::chrono::steady_clock::time_point diso_cooldown_until;
         std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
         std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
@@ -153,6 +155,10 @@ namespace StayPutVR {
     // momentary SPVR_Collar_ToggleButton cycles through the modes whose integration
     // is enabled+agreed; the app echoes the result on SPVR_Collar_Mode.
     enum class CollarMode { Neither = 0, Jaw = 1, Mic = 2, Both = 3 };
+
+    // In-game sound-effect events. Pulsed on SPVR_SoundEffect so an avatar
+    // animation layer can play a clip. Order is the param's quantized enum.
+    enum class InGameSound { None = 0, Lock = 1, Unlock = 2, Warning = 3, Disobedience = 4, CollarMode = 5 };
 
     class UIManager {
     public:
@@ -338,6 +344,13 @@ namespace StayPutVR {
         void CheckMicrophoneConstraint();       // called every frame from UpdateDevicePositions
         void RenderMicTab();                    // Integrations -> Mic subtab
         void LoadMicBindingsFromConfig();       // populate mic_ binding arrays from config maps
+        void StartMicCalibration();             // begin a background-noise sample
+        void UpdateMicCalibration();            // per-frame: accumulate + finalize calibration
+
+        // In-game sound effects: pulse SPVR_SoundEffect for a configured event, then
+        // reset to 0 a moment later (UpdateInGameSoundPulse, called every frame).
+        void TriggerInGameSound(InGameSound type);
+        void UpdateInGameSoundPulse();
 
         // Unified collar-mode helpers (see UIManager_OSC.cpp).
         void SendCollarMode(int mode);          // guarded wrapper over OSCManager::SendCollarMode
@@ -368,6 +381,25 @@ namespace StayPutVR {
         std::atomic<int> collar_mode_{0};
         std::atomic<int> collar_valid_mask_{0x1}; // bit i set => mode i selectable; Neither always
         bool collar_toggle_prev_ = false;         // rising-edge debounce (OSC thread only)
+        // Time-based debounce: ignore toggle presses that arrive within this window of
+        // the last accepted one (contact bounce / rapid repeats). OSC thread only.
+        std::chrono::steady_clock::time_point collar_toggle_last_time_;
+
+        // In-game sound-effect pulse state. Atomic because TriggerInGameSound can be
+        // called from the OSC receive thread (collar toggle / avatar reset) as well as
+        // the UI thread (constraints / lock funnels). ingame_sfx_pending_ holds the
+        // value currently asserted on SPVR_SoundEffect; UpdateInGameSoundPulse (UI
+        // thread) resets it to 0 once the pulse window elapses.
+        std::atomic<int> ingame_sfx_pending_{0};
+        std::atomic<long long> ingame_sfx_reset_ms_{0}; // steady_clock deadline, ms
+        static constexpr int kInGameSfxPulseMs = 300;
+        static constexpr float kCollarToggleDebounceSeconds = 0.4f;
+
+        // Microphone background-noise calibration state (UI thread).
+        bool mic_calibrating_ = false;
+        std::chrono::steady_clock::time_point mic_calib_start_;
+        float mic_calib_min_ = 1.0f;
+        float mic_calib_max_ = 0.0f;
 
         DeviceManager* device_manager_ = nullptr;
         

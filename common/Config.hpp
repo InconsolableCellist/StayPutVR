@@ -140,9 +140,10 @@ public:
     bool mic_enabled = false;
     bool mic_user_agreement = false;            // safety gate, mirrors pishock_user_agreement
     std::string mic_device_id = "";             // stable WASAPI endpoint id; "" => system default
-    float mic_warning_margin = 0.08f;           // (level-baseline) > this => warning
-    float mic_disobedience_margin = 0.18f;      // (level-baseline) > this => disobedience
+    float mic_warning_margin = 0.05f;           // (level-baseline) > this => warning
+    float mic_disobedience_margin = 0.10f;      // (level-baseline) > this => disobedience
     float mic_grace_seconds = 2.0f;             // ambient-floor capture window after HMD lock
+    float mic_disobedience_cooldown_seconds = 3.0f; // refractory period after a mic disobedience fires
 
     // Unified collar mode runtime gate. The avatar's momentary SPVR_Collar_ToggleButton
     // cycles SPVR_Collar_Mode (0=Neither,1=Jaw,2=Mic,3=Both) among the integrations the
@@ -331,6 +332,18 @@ public:
         float haptic_intensity = 0.5f;
     };
     AudioConfig audio;
+
+    // In-game sound effects. On configured events the app pulses an int enum on
+    // SPVR_SoundEffect (0=None,1=Lock,2=Unlock,3=Warning,4=Disobedience,
+    // 5=CollarMode) so an avatar animation layer can play a sound. Independent of
+    // the app's own (App Sound Effects) audio cues. Per-event toggles default on.
+    bool ingame_sfx_enabled = true;
+    bool ingame_sfx_lock = true;
+    bool ingame_sfx_unlock = true;
+    bool ingame_sfx_warning = true;
+    bool ingame_sfx_disobedience = true;
+    bool ingame_sfx_collar_mode = true;
+    std::string osc_sound_effect_path = "/avatar/parameters/SPVR_SoundEffect";
 
     // Application Settings
     bool start_with_steamvr;

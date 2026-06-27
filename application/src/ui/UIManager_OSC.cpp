@@ -547,6 +547,9 @@ namespace StayPutVR {
                 osc_query_server_->AddParameter(config_.osc_collar_toggle_path, "T", A::WriteOnly, false);
             osc_query_server_->AddParameter(p + "avatar/parameters/SPVR_Collar_Mode", "i", A::WriteOnly, 0);
         }
+        // In-game sound-effect enum (outbound, pulsed) for the avatar's sound layer.
+        if (config_.ingame_sfx_enabled && !config_.osc_sound_effect_path.empty())
+            osc_query_server_->AddParameter(config_.osc_sound_effect_path, "i", A::WriteOnly, 0);
         osc_query_server_->AddParameter(p + "avatar/change", "s", A::WriteOnly, std::string());
 
         // When VRChat's OSC port is discovered, retarget our send socket to it.
@@ -704,6 +707,17 @@ namespace StayPutVR {
         }
 
         OSCManager::GetInstance().SendDeviceStatus(device, status);
+
+        // Central hook for the warning/disobedience in-game sound effects: the
+        // position, jaw, and mic constraints all route their zone-entry edges
+        // through here, so triggering the SFX on these two statuses covers every
+        // source without per-constraint duplication. (Lock/Unlock SFX are fired at
+        // the lock funnels instead, since Unlocked is also sent on resets.)
+        if (status == DeviceStatus::LockedWarning) {
+            TriggerInGameSound(InGameSound::Warning);
+        } else if (status == DeviceStatus::LockedDisobedience) {
+            TriggerInGameSound(InGameSound::Disobedience);
+        }
     }
 
     void UIManager::SendCollarMode(int mode) {
@@ -711,6 +725,47 @@ namespace StayPutVR {
             return;
         }
         OSCManager::GetInstance().SendCollarMode(mode);
+    }
+
+    // Pulse SPVR_SoundEffect for a configured in-game event. Thread-safe: may be
+    // called from the OSC receive thread (collar toggle) or the UI thread.
+    void UIManager::TriggerInGameSound(InGameSound type) {
+        if (!osc_enabled_ || !config_.ingame_sfx_enabled) {
+            return;
+        }
+        bool allowed = false;
+        switch (type) {
+            case InGameSound::Lock:         allowed = config_.ingame_sfx_lock; break;
+            case InGameSound::Unlock:       allowed = config_.ingame_sfx_unlock; break;
+            case InGameSound::Warning:      allowed = config_.ingame_sfx_warning; break;
+            case InGameSound::Disobedience: allowed = config_.ingame_sfx_disobedience; break;
+            case InGameSound::CollarMode:   allowed = config_.ingame_sfx_collar_mode; break;
+            default: break;
+        }
+        if (!allowed) {
+            return;
+        }
+        int value = static_cast<int>(type);
+        OSCManager::GetInstance().SendSoundEffect(config_.osc_sound_effect_path, value);
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        ingame_sfx_pending_.store(value);
+        ingame_sfx_reset_ms_.store(now_ms + kInGameSfxPulseMs);
+    }
+
+    // UI thread, every frame: once the brief pulse window elapses, reset the
+    // SPVR_SoundEffect param to 0 so the next event re-triggers the animation.
+    void UIManager::UpdateInGameSoundPulse() {
+        int pending = ingame_sfx_pending_.load();
+        if (pending == 0) {
+            return;
+        }
+        auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        if (now_ms >= ingame_sfx_reset_ms_.load()) {
+            OSCManager::GetInstance().SendSoundEffect(config_.osc_sound_effect_path, 0);
+            ingame_sfx_pending_.store(0);
+        }
     }
 
     const char* UIManager::CollarModeName(int mode) const {
@@ -916,9 +971,20 @@ namespace StayPutVR {
                 if (!pressed) { collar_toggle_prev_ = false; return; }
                 if (collar_toggle_prev_) return;  // ignore repeats while held
                 collar_toggle_prev_ = true;
-                int next = NextValidCollarMode(collar_mode_.load());
-                collar_mode_.store(next);
-                SendCollarMode(next);
+                // Time debounce: drop presses that arrive within the window of the last
+                // accepted one (VRChat contact bounce / rapid taps).
+                auto now = std::chrono::steady_clock::now();
+                float since = std::chrono::duration_cast<std::chrono::duration<float>>(
+                    now - collar_toggle_last_time_).count();
+                if (since < kCollarToggleDebounceSeconds) return;
+                collar_toggle_last_time_ = now;
+                int cur = collar_mode_.load();
+                int next = NextValidCollarMode(cur);
+                if (next != cur) {
+                    collar_mode_.store(next);
+                    SendCollarMode(next);
+                    TriggerInGameSound(InGameSound::CollarMode);
+                }
             }
         );
 

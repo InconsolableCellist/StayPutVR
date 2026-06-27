@@ -325,11 +325,12 @@ namespace StayPutVR {
             if (!err.empty()) ImGui::TextDisabled("Last error: %s", err.c_str());
         }
 
-        // Live VU + state readout.
+        // Live VU + state readout. The bar is a decaying peak-hold (high-water mark
+        // that eases back down), not the raw smoothed level used for enforcement.
         ImGui::Spacing();
         ImGui::Text("Mic level:");
         ImGui::SameLine();
-        ImGui::ProgressBar(microphone_manager_ ? microphone_manager_->GetLevel() : 0.0f, ImVec2(180, 0));
+        ImGui::ProgressBar(microphone_manager_ ? microphone_manager_->GetPeak() : 0.0f, ImVec2(180, 0));
         if (mic_.active) {
             ImGui::Text("Floor: %.2f   Deviation: %.2f   %s",
                         mic_.baseline, mic_.deviation,
@@ -346,23 +347,39 @@ namespace StayPutVR {
         ImGui::Separator();
         ImGui::Text("Constraint Tuning");
 
+        // Background-noise calibration: sample a few seconds of room noise and set the
+        // margins above it. Requires the capture to be running.
+        bool can_calibrate = microphone_manager_ && microphone_manager_->IsRunning();
+        ImGui::BeginDisabled(!can_calibrate || mic_calibrating_);
+        if (ImGui::Button(mic_calibrating_ ? "Sampling background..." : "Calibrate (sample background noise)"))
+            StartMicCalibration();
+        ImGui::EndDisabled();
+        ImGuiHelpers::HelpTooltip("Stay quiet and click: samples ~4s of room noise and sets the warning/"
+                                  "disobedience margins safely above it. Useful in noisy environments.");
+
         float warn = config_.mic_warning_margin;
-        if (ImGui::SliderFloat("Warning margin", &warn, 0.01f, 0.5f, "%.2f"))
-            config_.mic_warning_margin = warn;
-        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        if (ImGuiHelpers::SliderFloatWithButtons("Warning margin", &warn, 0.01f, 0.5f, 0.005f, "%.3f")) {
+            config_.mic_warning_margin = warn; SaveConfig();
+        }
         ImGuiHelpers::HelpTooltip("How far above the ambient floor the mic level may rise before a warning.");
 
         float diso = config_.mic_disobedience_margin;
-        if (ImGui::SliderFloat("Disobedience margin", &diso, 0.02f, 0.8f, "%.2f"))
-            config_.mic_disobedience_margin = diso;
-        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        if (ImGuiHelpers::SliderFloatWithButtons("Disobedience margin", &diso, 0.02f, 0.8f, 0.005f, "%.3f")) {
+            config_.mic_disobedience_margin = diso; SaveConfig();
+        }
         ImGuiHelpers::HelpTooltip("Past this rise above the floor the disobedience response fires (shockers, etc.).");
 
         float grace = config_.mic_grace_seconds;
-        if (ImGui::SliderFloat("Grace window (s)", &grace, 0.0f, 10.0f, "%.1f"))
-            config_.mic_grace_seconds = grace;
-        if (ImGui::IsItemDeactivatedAfterEdit()) SaveConfig();
+        if (ImGuiHelpers::SliderFloatWithButtons("Grace window (s)", &grace, 0.0f, 10.0f, 0.1f, "%.1f")) {
+            config_.mic_grace_seconds = grace; SaveConfig();
+        }
         ImGuiHelpers::HelpTooltip("Quiet window after locking during which the ambient noise floor is captured.");
+
+        float cooldown = config_.mic_disobedience_cooldown_seconds;
+        if (ImGuiHelpers::SliderFloatWithButtons("Disobedience cooldown (s)", &cooldown, 0.0f, 15.0f, 0.1f, "%.1f")) {
+            config_.mic_disobedience_cooldown_seconds = cooldown; SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Refractory period after a mic disobedience fires before it can fire again.");
 
         ImGui::Separator();
         ImGui::Text("Shocker / Vibrator bindings");

@@ -562,7 +562,7 @@ namespace StayPutVR {
                 ImGui::Text("Collar mode: %s", CollarModeName(collar_mode_.load()));
             }
             if (config_.mic_enabled) {
-                float lvl = microphone_manager_ ? microphone_manager_->GetLevel() : 0.0f;
+                float lvl = microphone_manager_ ? microphone_manager_->GetPeak() : 0.0f;
                 ImGui::Text("Mic level:");
                 ImGui::SameLine();
                 ImGui::ProgressBar(lvl, ImVec2(160, 0));
@@ -613,12 +613,12 @@ namespace StayPutVR {
         
         bool changed = false;
         
-        // Audio notification settings
-        ImGui::Text("Audio Notifications");
+        // App-side sound effects (played locally on this PC).
+        ImGui::Text("App Sound Effects");
         ImGui::Separator();
-        
+
         bool enable_audio = config_.audio.enabled;
-        if (ImGui::Checkbox("Enable Audio Notifications", &enable_audio)) {
+        if (ImGui::Checkbox("Enable App Sound Effects", &enable_audio)) {
             config_.audio.enabled = enable_audio;
             changed = true;
         }
@@ -654,7 +654,39 @@ namespace StayPutVR {
             config_.audio.unlock = unlock_audio;
             changed = true;
         }
-        
+
+        // In-game sound effects: pulse an OSC int enum (SPVR_SoundEffect) on these
+        // events so an avatar animation layer can play a sound in VRChat. Independent
+        // of the App Sound Effects above.
+        ImGui::Spacing();
+        ImGui::Text("In-Game Sound Effects");
+        ImGui::Separator();
+        ImGuiHelpers::HelpTooltip("Sends SPVR_SoundEffect (int enum) for a brief moment on the ticked "
+                                  "events so your avatar can play a sound. Requires the prefab's "
+                                  "sound-effect animation layer.");
+
+        bool ingame_enabled = config_.ingame_sfx_enabled;
+        if (ImGui::Checkbox("Enable In-Game Sound Effects", &ingame_enabled)) {
+            config_.ingame_sfx_enabled = ingame_enabled;
+            changed = true;
+        }
+
+        ImGui::BeginDisabled(!config_.ingame_sfx_enabled);
+        bool sfx_lock = config_.ingame_sfx_lock;
+        if (ImGui::Checkbox("Lock##ingame", &sfx_lock)) { config_.ingame_sfx_lock = sfx_lock; changed = true; }
+        ImGui::SameLine();
+        bool sfx_unlock = config_.ingame_sfx_unlock;
+        if (ImGui::Checkbox("Unlock##ingame", &sfx_unlock)) { config_.ingame_sfx_unlock = sfx_unlock; changed = true; }
+        ImGui::SameLine();
+        bool sfx_warning = config_.ingame_sfx_warning;
+        if (ImGui::Checkbox("Warning##ingame", &sfx_warning)) { config_.ingame_sfx_warning = sfx_warning; changed = true; }
+        bool sfx_diso = config_.ingame_sfx_disobedience;
+        if (ImGui::Checkbox("Disobedience##ingame", &sfx_diso)) { config_.ingame_sfx_disobedience = sfx_diso; changed = true; }
+        ImGui::SameLine();
+        bool sfx_collar = config_.ingame_sfx_collar_mode;
+        if (ImGui::Checkbox("Collar mode switch##ingame", &sfx_collar)) { config_.ingame_sfx_collar_mode = sfx_collar; changed = true; }
+        ImGui::EndDisabled();
+
         // Test buttons for sound effects
         ImGui::Separator();
         ImGui::Text("Test Audio:");

@@ -376,6 +376,12 @@ namespace StayPutVR {
                 if (smoothed < 1e-7f) smoothed = 0.0f;
                 level_.store(smoothed, std::memory_order_relaxed);
 
+                // Decaying peak-hold for the VU meter: jump up instantly, ease down.
+                float pk = peak_.load(std::memory_order_relaxed);
+                pk = (smoothed > pk) ? smoothed : pk * 0.92f;
+                if (pk < 1e-7f) pk = 0.0f;
+                peak_.store(pk, std::memory_order_relaxed);
+
                 capture_client_->ReleaseBuffer(frames);
 
                 if (FAILED(capture_client_->GetNextPacketSize(&packet))) { device_lost = true; break; }

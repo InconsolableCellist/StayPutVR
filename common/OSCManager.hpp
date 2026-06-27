@@ -95,6 +95,10 @@ public:
     // /avatar/parameters/SPVR_Collar_Mode so the avatar can display it.
     void SendCollarMode(int mode);
 
+    // Send the in-game sound-effect enum (pulsed by the UI) to the configured
+    // SPVR_SoundEffect path so an avatar animation layer can play a clip.
+    void SendSoundEffect(const std::string& path, int value);
+
     // Set callback for when a device should be locked/unlocked.
     // All setters are guarded by callback_mutex_ so the receive thread
     // never sees a half-written std::function.

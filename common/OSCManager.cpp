@@ -586,6 +586,13 @@ void OSCManager::SendCollarMode(int mode) {
     }
 }
 
+void OSCManager::SendSoundEffect(const std::string& path, int value) {
+    if (!initialized_) {
+        return;
+    }
+    SendOSCMessage(path, value);
+}
+
 void OSCManager::SendPiShockGroup(int group) {
     if (!initialized_) {
         if (Logger::IsInitialized()) {

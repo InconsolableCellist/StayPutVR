@@ -274,6 +274,8 @@ namespace StayPutVR {
         // the HMD lock state itself (so it works for both global and individual locks).
         CheckJawOpenConstraint();
         CheckMicrophoneConstraint();
+        UpdateMicCalibration();      // finalize a background-noise sample if one is running
+        UpdateInGameSoundPulse();    // reset the SPVR_SoundEffect pulse to 0 when it expires
 
         // Save device names to configuration if they exist
         bool names_changed = false;
@@ -332,6 +334,9 @@ namespace StayPutVR {
                 }
             }
             
+            // In-game lock/unlock sound effect for this individual device toggle.
+            TriggerInGameSound(lock ? InGameSound::Lock : InGameSound::Unlock);
+
             // Send OSC status update for individual device lock/unlock
             if (device_positions_[index].role != DeviceRole::None) {
                 OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device_positions_[index].role);
@@ -431,6 +436,9 @@ namespace StayPutVR {
             if (play_sound && config_.audio.enabled && config_.audio.lock) {
                 AudioManager::PlayLockSound(config_.audio.volume);
             }
+            // In-game lock SFX (suppressed for automatic transitions like avatar change,
+            // matching the audio cue). Independent of the App Sound Effects toggle.
+            if (play_sound) TriggerInGameSound(InGameSound::Lock);
         } else {
             // Send OSC status updates for global unlock
             for (auto& device : device_positions_) {
@@ -461,6 +469,8 @@ namespace StayPutVR {
             if (play_sound && config_.audio.enabled && config_.audio.unlock) {
                 AudioManager::PlayUnlockSound(config_.audio.volume);
             }
+            // In-game unlock SFX (suppressed for automatic transitions like avatar change).
+            if (play_sound) TriggerInGameSound(InGameSound::Unlock);
         }
     }
 
@@ -989,20 +999,33 @@ namespace StayPutVR {
         if (was_exceeding && !mic_.exceeds_threshold && mic_.in_warning_zone) {
             UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedWarning);
         }
-        // Newly entered disobedience zone.
+        // Refractory period after a mic disobedience fires: the status still reflects
+        // disobedience, but no NEW punishment fires until the cooldown elapses. This
+        // is on top of each shocker's own rate limit.
+        auto mic_cooldown = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<float>(config_.mic_disobedience_cooldown_seconds));
+        bool diso_ready = now >= mic_.diso_cooldown_until;
+
+        // Newly entered disobedience zone: always reflect the status; fire the actions
+        // only if we're past the cooldown.
         if (!was_exceeding && mic_.exceeds_threshold) {
             UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedDisobedience);
-            TriggerPiShockDisobedience(kMicSerial);
-            if (openshock_manager_ && openshock_manager_->IsEnabled())
-                openshock_manager_->TriggerDisobedienceActions(kMicSerial);
+            if (diso_ready) {
+                TriggerPiShockDisobedience(kMicSerial);
+                if (openshock_manager_ && openshock_manager_->IsEnabled())
+                    openshock_manager_->TriggerDisobedienceActions(kMicSerial);
+                mic_.diso_cooldown_until = now + mic_cooldown;
+            }
         }
-        // Continuous disobedience while too loud.
-        else if (mic_.exceeds_threshold && CanTriggerPiShock()) {
-            TriggerPiShockDisobedience(kMicSerial);
-        }
-        else if (mic_.exceeds_threshold && openshock_manager_ && openshock_manager_->IsEnabled()) {
-            if (openshock_manager_->CanTriggerAction())
-                openshock_manager_->TriggerDisobedienceActions(kMicSerial);
+        // Continuous disobedience while too loud, gated by the cooldown.
+        else if (mic_.exceeds_threshold && diso_ready) {
+            bool fired = false;
+            if (CanTriggerPiShock()) { TriggerPiShockDisobedience(kMicSerial); fired = true; }
+            if (openshock_manager_ && openshock_manager_->IsEnabled() &&
+                openshock_manager_->CanTriggerAction()) {
+                openshock_manager_->TriggerDisobedienceActions(kMicSerial); fired = true;
+            }
+            if (fired) mic_.diso_cooldown_until = now + mic_cooldown;
         }
 
         // Audio, sharing the position/jaw cooldown (last_sound_time_); continuous,
@@ -1558,6 +1581,50 @@ namespace StayPutVR {
             mic_.openshock_enabled = it->second;
         if (auto it = config_.device_vibration_ids.find(kMicSerial); it != config_.device_vibration_ids.end())
             mic_.vibration_device_enabled = it->second;
+    }
+
+    // Begin a background-noise sample. Captures the quiet-room level fluctuation for
+    // a few seconds (UpdateMicCalibration) and sets the warning/disobedience margins
+    // safely above it -- handy in noisy environments where fixed defaults false-trip.
+    void UIManager::StartMicCalibration() {
+        if (!microphone_manager_ || !microphone_manager_->IsRunning()) return;
+        mic_calibrating_ = true;
+        mic_calib_start_ = std::chrono::steady_clock::now();
+        mic_calib_min_ = 1.0f;
+        mic_calib_max_ = 0.0f;
+    }
+
+    void UIManager::UpdateMicCalibration() {
+        if (!mic_calibrating_) return;
+        if (!microphone_manager_) { mic_calibrating_ = false; return; }
+
+        float lvl = microphone_manager_->GetLevel();
+        if (lvl < mic_calib_min_) mic_calib_min_ = lvl;
+        if (lvl > mic_calib_max_) mic_calib_max_ = lvl;
+
+        const float kCalibSeconds = 4.0f;
+        float elapsed = std::chrono::duration_cast<std::chrono::duration<float>>(
+            std::chrono::steady_clock::now() - mic_calib_start_).count();
+        if (elapsed < kCalibSeconds) return;
+
+        // The lock-time baseline is the quiet floor; during silence the level still
+        // fluctuates up to (max-min) above it, so set the margins above that swing.
+        float fluct = mic_calib_max_ - mic_calib_min_;
+        if (fluct < 0.0f) fluct = 0.0f;
+        float warn = fluct * 1.5f + 0.02f;
+        float diso = fluct * 2.5f + 0.05f;
+        auto clampf = [](float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); };
+        warn = clampf(warn, 0.01f, 0.5f);
+        diso = clampf(diso, warn + 0.02f, 0.8f);
+        config_.mic_warning_margin = warn;
+        config_.mic_disobedience_margin = diso;
+        SaveConfig();
+        mic_calibrating_ = false;
+
+        if (Logger::IsInitialized()) {
+            Logger::Info("Mic calibration: noise swing " + std::to_string(fluct) +
+                         " -> warning " + std::to_string(warn) + ", disobedience " + std::to_string(diso));
+        }
     }
 
     void UIManager::RenderVisualAssignment() {

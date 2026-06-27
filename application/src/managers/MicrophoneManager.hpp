@@ -38,8 +38,12 @@ namespace StayPutVR {
         bool IsConnected() const { return connected_.load(); }
 
         // Smoothed RMS level in [0,1]. Written by the capture thread, read by the
-        // UI/constraint thread. Lock-free.
+        // UI/constraint thread. Lock-free. Used by the enforcement constraint.
         float GetLevel() const { return level_.load(std::memory_order_relaxed); }
+
+        // Decaying peak-hold (fast attack, slow release) in [0,1], for the VU meter:
+        // jumps to each new high then eases back down. Display-only.
+        float GetPeak() const { return peak_.load(std::memory_order_relaxed); }
 
         // Select a capture device by stable id ("" = system default). Restarts
         // capture if running (Stop -> set -> Start), so the swap is atomic to callers.
@@ -73,6 +77,7 @@ namespace StayPutVR {
         std::atomic<bool> running_{false};
         std::atomic<bool> connected_{false};
         std::atomic<float> level_{0.0f};
+        std::atomic<float> peak_{0.0f};
 
         mutable std::mutex meta_mutex_;          // guards the strings below
         std::string selected_device_id_;         // only mutated while stopped

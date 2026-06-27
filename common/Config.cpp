@@ -51,9 +51,10 @@ Config::Config()
     , mic_enabled(false)
     , mic_user_agreement(false)
     , mic_device_id("")
-    , mic_warning_margin(0.08f)
-    , mic_disobedience_margin(0.18f)
+    , mic_warning_margin(0.05f)
+    , mic_disobedience_margin(0.10f)
     , mic_grace_seconds(2.0f)
+    , mic_disobedience_cooldown_seconds(3.0f)
     , osc_collar_toggle_path("/avatar/parameters/SPVR_Collar_ToggleButton")
     , pishock_enabled(false)
     , pishock_group(0)
@@ -246,9 +247,10 @@ bool Config::LoadFromFile(const std::string& filename) {
         mic_enabled = j.value("mic_enabled", false);
         mic_user_agreement = j.value("mic_user_agreement", false);
         mic_device_id = j.value("mic_device_id", std::string(""));
-        mic_warning_margin = j.value("mic_warning_margin", 0.08f);
-        mic_disobedience_margin = j.value("mic_disobedience_margin", 0.18f);
+        mic_warning_margin = j.value("mic_warning_margin", 0.05f);
+        mic_disobedience_margin = j.value("mic_disobedience_margin", 0.10f);
         mic_grace_seconds = j.value("mic_grace_seconds", 2.0f);
+        mic_disobedience_cooldown_seconds = j.value("mic_disobedience_cooldown_seconds", 3.0f);
         osc_collar_toggle_path = j.value("osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
         osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = j.value("osc_bite_enabled", true);
@@ -551,7 +553,16 @@ bool Config::LoadFromFile(const std::string& filename) {
         audio.unlock = j.value("unlock_audio", true);
         audio.haptic_enabled = j.value("haptic_enabled", true);
         audio.haptic_intensity = j.value("haptic_intensity", 0.5f);
-        
+
+        // In-game sound effects
+        ingame_sfx_enabled = j.value("ingame_sfx_enabled", true);
+        ingame_sfx_lock = j.value("ingame_sfx_lock", true);
+        ingame_sfx_unlock = j.value("ingame_sfx_unlock", true);
+        ingame_sfx_warning = j.value("ingame_sfx_warning", true);
+        ingame_sfx_disobedience = j.value("ingame_sfx_disobedience", true);
+        ingame_sfx_collar_mode = j.value("ingame_sfx_collar_mode", true);
+        osc_sound_effect_path = j.value("osc_sound_effect_path", "/avatar/parameters/SPVR_SoundEffect");
+
         // Load application settings
         start_with_steamvr = j.value("start_with_steamvr", true);
         minimize_to_tray = j.value("minimize_to_tray", false);
@@ -752,6 +763,7 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["mic_warning_margin"] = mic_warning_margin;
         j["mic_disobedience_margin"] = mic_disobedience_margin;
         j["mic_grace_seconds"] = mic_grace_seconds;
+        j["mic_disobedience_cooldown_seconds"] = mic_disobedience_cooldown_seconds;
         j["osc_collar_toggle_path"] = osc_collar_toggle_path;
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;
@@ -986,7 +998,15 @@ bool Config::SaveToFile(const std::string& filename) const {
         j["unlock_audio"] = audio.unlock;
         j["haptic_enabled"] = audio.haptic_enabled;
         j["haptic_intensity"] = audio.haptic_intensity;
-        
+
+        j["ingame_sfx_enabled"] = ingame_sfx_enabled;
+        j["ingame_sfx_lock"] = ingame_sfx_lock;
+        j["ingame_sfx_unlock"] = ingame_sfx_unlock;
+        j["ingame_sfx_warning"] = ingame_sfx_warning;
+        j["ingame_sfx_disobedience"] = ingame_sfx_disobedience;
+        j["ingame_sfx_collar_mode"] = ingame_sfx_collar_mode;
+        j["osc_sound_effect_path"] = osc_sound_effect_path;
+
         // Application settings
         j["start_with_steamvr"] = start_with_steamvr;
         j["minimize_to_tray"] = minimize_to_tray;
