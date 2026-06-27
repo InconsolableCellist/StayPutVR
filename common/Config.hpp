@@ -143,7 +143,7 @@ public:
     float mic_warning_margin = 0.05f;           // (level-baseline) > this => warning
     float mic_disobedience_margin = 0.10f;      // (level-baseline) > this => disobedience
     float mic_grace_seconds = 2.0f;             // ambient-floor capture window after HMD lock
-    float mic_disobedience_cooldown_seconds = 3.0f; // refractory period after a mic disobedience fires
+    float mic_disobedience_cooldown_seconds = 1.0f; // refractory period after a mic disobedience fires
 
     // Unified collar mode runtime gate. The avatar's momentary SPVR_Collar_ToggleButton
     // cycles SPVR_Collar_Mode (0=Neither,1=Jaw,2=Mic,3=Both) among the integrations the

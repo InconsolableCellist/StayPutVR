@@ -54,7 +54,7 @@ Config::Config()
     , mic_warning_margin(0.05f)
     , mic_disobedience_margin(0.10f)
     , mic_grace_seconds(2.0f)
-    , mic_disobedience_cooldown_seconds(3.0f)
+    , mic_disobedience_cooldown_seconds(1.0f)
     , osc_collar_toggle_path("/avatar/parameters/SPVR_Collar_ToggleButton")
     , pishock_enabled(false)
     , pishock_group(0)
@@ -250,7 +250,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         mic_warning_margin = j.value("mic_warning_margin", 0.05f);
         mic_disobedience_margin = j.value("mic_disobedience_margin", 0.10f);
         mic_grace_seconds = j.value("mic_grace_seconds", 2.0f);
-        mic_disobedience_cooldown_seconds = j.value("mic_disobedience_cooldown_seconds", 3.0f);
+        mic_disobedience_cooldown_seconds = j.value("mic_disobedience_cooldown_seconds", 1.0f);
         osc_collar_toggle_path = j.value("osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
         osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = j.value("osc_bite_enabled", true);
