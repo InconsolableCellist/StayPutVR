@@ -708,6 +708,15 @@ namespace StayPutVR {
 
         OSCManager::GetInstance().SendDeviceStatus(device, status);
 
+        // Re-assert the collar mode on every status edge. VRChat resets all avatar
+        // params to default on avatar load/reload, and nothing else re-pushes
+        // SPVR_Collar_Mode between collar-toggle presses - so without this the collar
+        // display blanks after a reload and stays stale until the next toggle. Every
+        // lock/unlock/warning/disobedience/safe edge funnels through here (all callers
+        // are edge-triggered), so this self-heals the display on any interaction. The
+        // send is idempotent and cheap (one UDP int).
+        OSCManager::GetInstance().SendCollarMode(collar_mode_.load());
+
         // Central hook for the warning/disobedience in-game sound effects: the
         // position, jaw, and mic constraints all route their zone-entry edges
         // through here, so triggering the SFX on these two statuses covers every
@@ -1262,6 +1271,12 @@ namespace StayPutVR {
         // never silently carries over to a freshly-loaded avatar.
         collar_mode_.store(static_cast<int>(CollarMode::Neither));
         SendCollarMode(static_cast<int>(CollarMode::Neither));
+
+        // The pushes above race VRChat's avatar load and are often dropped. Schedule a
+        // one-shot re-push (ProcessAvatarResyncTimer) for after the avatar is ready so
+        // the display restores even if the user never interacts post-reload.
+        avatar_resync_pending_ = true;
+        avatar_resync_start_ = std::chrono::steady_clock::now();
     }
 
     void UIManager::TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason) {
@@ -1427,15 +1442,61 @@ namespace StayPutVR {
                     }
                     
                     UpdateDeviceStatus(oscDevice, newStatus);
-                    
+
                     if (Logger::IsInitialized()) {
-                        Logger::Debug("Reset device " + device.serial + " to status: " + 
-                                     std::to_string(static_cast<int>(newStatus)) + 
+                        Logger::Debug("Reset device " + device.serial + " to status: " +
+                                     std::to_string(static_cast<int>(newStatus)) +
                                      " (should_be_locked=" + std::to_string(should_be_locked) + ")");
                     }
                 }
             }
         }
+    }
+
+    // One-shot re-push scheduled by HandleAvatarChange. The immediate push there races
+    // VRChat's avatar load (params reset to default, avatar not yet ready to take the
+    // echo), so we re-assert the current state once after a short delay - by which time
+    // the avatar is loaded - so the display restores even if the user never interacts.
+    // We re-send the *current* per-device status (not a stale snapshot) so a lock made
+    // during the delay window isn't clobbered, plus the current collar mode.
+    void UIManager::ProcessAvatarResyncTimer() {
+        if (!avatar_resync_pending_) {
+            return;
+        }
+
+        auto current_time = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(current_time - avatar_resync_start_);
+        if (elapsed.count() / 1000.0f < AVATAR_RESYNC_DELAY) {
+            return;
+        }
+
+        avatar_resync_pending_ = false;
+
+        if (Logger::IsInitialized()) {
+            Logger::Info("Avatar re-sync delay elapsed - re-pushing device statuses and collar mode");
+        }
+
+        // Re-assert each tracked device's current status (same logic as ProcessBiteTimer).
+        for (auto& device : device_positions_) {
+            if (device.role != DeviceRole::None) {
+                OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
+                DeviceStatus newStatus = DeviceStatus::Unlocked;
+                if (should_be_locked) {
+                    newStatus = DeviceStatus::LockedSafe;
+                    if (device.exceeds_threshold) {
+                        newStatus = DeviceStatus::LockedDisobedience;
+                    } else if (device.in_warning_zone) {
+                        newStatus = DeviceStatus::LockedWarning;
+                    }
+                }
+                UpdateDeviceStatus(oscDevice, newStatus);
+            }
+        }
+
+        // Re-assert the collar mode explicitly: UpdateDeviceStatus also re-pushes it,
+        // but on builds/avatars with no role-mapped devices the loop above sends nothing.
+        SendCollarMode(collar_mode_.load());
     }
 
 } // namespace StayPutVR

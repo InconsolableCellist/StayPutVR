@@ -320,6 +320,7 @@ namespace StayPutVR {
         
         ProcessGlobalOutOfBoundsTimer();
         ProcessBiteTimer();
+        ProcessAvatarResyncTimer();
         
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();

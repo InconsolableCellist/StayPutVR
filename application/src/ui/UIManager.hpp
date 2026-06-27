@@ -493,6 +493,16 @@ namespace StayPutVR {
         bool bite_timer_active_ = false;
         std::chrono::steady_clock::time_point bite_timer_start_;
         static constexpr float BITE_DURATION = 3.0f; // Duration in seconds
+
+        // Avatar-change re-sync: VRChat resets all avatar params on avatar load and
+        // isn't ready to receive the echo at the instant /avatar/change fires, so the
+        // immediate status/collar-mode push from HandleAvatarChange() races the load
+        // and is often dropped. Schedule a one-shot delayed re-push that lands after
+        // the avatar is ready, so the display restores even if the user never interacts.
+        void ProcessAvatarResyncTimer();
+        bool avatar_resync_pending_ = false;
+        std::chrono::steady_clock::time_point avatar_resync_start_;
+        static constexpr float AVATAR_RESYNC_DELAY = 1.0f; // Seconds after /avatar/change
         
         // Twitch donation callbacks
             void OnTwitchDonation(const std::string& username, float amount, const std::string& message);
