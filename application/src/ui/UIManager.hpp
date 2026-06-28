@@ -380,6 +380,13 @@ namespace StayPutVR {
         // the UI thread recomputes so the OSC thread never touches config_ directly.
         std::atomic<int> collar_mode_{0};
         std::atomic<int> collar_valid_mask_{0x1}; // bit i set => mode i selectable; Neither always
+        // Mirrors the incoming collar latch (SPVR_HMD_Latch_IsPosed) regardless of
+        // whether a device is assigned to the HMD role. When the collar is latched on
+        // the avatar but no HMD device is assigned, this lets the mic/jaw constraints
+        // still engage off the latch alone -- the collar is real on the avatar even
+        // when StayPutVR isn't locking a physical tracker's position. Set on the OSC
+        // thread (OnDeviceLocked), read every frame by the constraint code.
+        std::atomic<bool> collar_latched_via_osc_{false};
         bool collar_toggle_prev_ = false;         // rising-edge debounce (OSC thread only)
         // Time-based debounce: ignore toggle presses that arrive within this window of
         // the last accepted one (contact bounce / rapid repeats). OSC thread only.

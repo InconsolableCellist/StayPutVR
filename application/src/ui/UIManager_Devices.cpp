@@ -760,9 +760,14 @@ namespace StayPutVR {
     // window), then enforce |current - baseline| against the warning/disobedience
     // margins, reusing the same punishment + audio + OSC-status pipeline.
     void UIManager::CheckJawOpenConstraint() {
-        // Is the HMD currently locked (individually or via a global lock)?
-        bool hmd_locked = false;
+        // Is the collar latched? Either a device assigned to the HMD role is locked
+        // (individually or via a global lock), OR the avatar's collar latch
+        // (SPVR_HMD_Latch_IsPosed) is posed with no HMD device assigned. In the latter
+        // case the collar is still real on the avatar, so we honor it and let the
+        // constraint engage off the latch alone -- without locking a tracker position.
+        bool hmd_locked = collar_latched_via_osc_.load();
         for (const auto& d : device_positions_) {
+            if (hmd_locked) break;
             if (d.role == DeviceRole::HMD &&
                 (d.locked || (d.include_in_locking && global_lock_active_))) {
                 hmd_locked = true;
@@ -910,9 +915,14 @@ namespace StayPutVR {
         // Live level pulled from the capture manager (jaw gets its value pushed via OSC).
         mic_.current = microphone_manager_ ? microphone_manager_->GetLevel() : 0.0f;
 
-        // Is the HMD currently locked (individually or via a global lock)?
-        bool hmd_locked = false;
+        // Is the collar latched? Either a device assigned to the HMD role is locked
+        // (individually or via a global lock), OR the avatar's collar latch
+        // (SPVR_HMD_Latch_IsPosed) is posed with no HMD device assigned. In the latter
+        // case the collar is still real on the avatar, so we honor it and let the
+        // constraint engage off the latch alone -- without locking a tracker position.
+        bool hmd_locked = collar_latched_via_osc_.load();
         for (const auto& d : device_positions_) {
+            if (hmd_locked) break;
             if (d.role == DeviceRole::HMD &&
                 (d.locked || (d.include_in_locking && global_lock_active_))) {
                 hmd_locked = true;
