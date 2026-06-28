@@ -452,7 +452,11 @@ namespace StayPutVR {
             ImGuiWindowFlags_AlwaysVerticalScrollbar);
 
         RenderTabBar();
-        
+
+        // Persistent config-health warning sits directly under the tabs so it is
+        // visible from any tab whenever settings can't be read or saved.
+        RenderConfigHealthWarning();
+
         switch (current_tab_) {
             case TabType::MAIN:
                 RenderMainTab();
@@ -497,7 +501,100 @@ namespace StayPutVR {
         // Splash + What's New overlays draw on top of the main window.
         RenderSplashOverlay();
     }
-    
+
+    void UIManager::RenderConfigHealthWarning() {
+        const bool load_problem =
+            config_load_status_ == ConfigStatus::AccessDenied ||
+            config_load_status_ == ConfigStatus::Corrupt ||
+            config_load_status_ == ConfigStatus::OtherError;
+        const bool problem = load_problem || config_save_failing_;
+
+        // The folder we want the user to inspect / fix permissions on.
+        const std::string configDir = GetAppDataPath() + "\\config";
+
+        auto open_config_folder = []() {
+            std::string dir = GetAppDataPath() + "/config";
+#ifdef _WIN32
+            ShellExecuteA(NULL, "open", dir.c_str(), NULL, NULL, SW_SHOWDEFAULT);
+#else
+            (void)std::system(("xdg-open '" + dir + "' >/dev/null 2>&1 &").c_str());
+#endif
+        };
+
+        if (problem) {
+            // Headline tuned to the dominant problem: a blocked save ("settings
+            // won't stick") is what users actually feel, so it wins the banner.
+            const char* headline =
+                config_save_failing_ ? "Your settings are NOT being saved."
+                : config_load_status_ == ConfigStatus::Corrupt ? "Your saved settings could not be read (file was corrupt)."
+                : config_load_status_ == ConfigStatus::AccessDenied ? "Your saved settings could not be read (access denied)."
+                : "There is a problem with your settings file.";
+
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.35f, 0.10f, 0.10f, 1.0f));
+            ImGui::BeginChild("##config_health", ImVec2(0, 0),
+                              ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "\xe2\x9a\xa0  %s", headline);
+            ImGui::TextWrapped(
+                "Likely a permissions problem with the config folder -- often left over from "
+                "running StayPutVR (or its installer) as Administrator, a read-only file, or "
+                "antivirus / Controlled Folder Access blocking it.");
+            ImGui::TextWrapped("Folder: %s", configDir.c_str());
+            if (!config_health_detail_.empty()) {
+                ImGui::TextWrapped("Details: %s", config_health_detail_.c_str());
+            }
+            if (ImGui::Button("Open Config Folder##health")) open_config_folder();
+            ImGui::SameLine();
+            if (ImGui::Button("How to fix##health")) {
+                config_health_modal_pending_ = true;
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+        }
+
+        // One-time (per problem) explanatory modal with remediation steps.
+        if (config_health_modal_pending_) {
+            ImGui::OpenPopup("Settings File Problem");
+            config_health_modal_pending_ = false;
+        }
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Settings File Problem", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped(
+                "StayPutVR can't %s your settings file.",
+                config_save_failing_ ? "save" : "read");
+            ImGui::Spacing();
+            ImGui::TextWrapped("File location:");
+            ImGui::TextWrapped("    %s", config_health_path_.empty()
+                               ? (configDir + "\\config.ini").c_str()
+                               : config_health_path_.c_str());
+            if (!config_health_detail_.empty()) {
+                ImGui::Spacing();
+                ImGui::TextWrapped("System error: %s", config_health_detail_.c_str());
+            }
+            ImGui::Spacing();
+            ImGui::SeparatorText("How to fix");
+            ImGui::TextWrapped(
+                "1. Close StayPutVR and SteamVR.\n"
+                "2. Do NOT run StayPutVR 'as Administrator' -- if you have been, that is the\n"
+                "   most likely cause. Launch it normally instead.\n"
+                "3. Open the config folder (button below). If the config.ini or its folder is\n"
+                "   owned by another account or marked read-only, right-click > Properties and\n"
+                "   either clear Read-only or take ownership (Security tab).\n"
+                "4. If you use antivirus or Windows 'Controlled Folder Access', allow StayPutVR\n"
+                "   to write to AppData.\n"
+                "5. As a last resort, delete config.ini and reconfigure -- a fresh one will be\n"
+                "   written with correct permissions.");
+            ImGui::Spacing();
+            if (ImGui::Button("Open Config Folder##modal")) open_config_folder();
+            ImGui::SameLine();
+            if (ImGui::Button("Close##modal")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+    }
+
+
 
 
     void UIManager::RenderTabBar() {
@@ -631,8 +728,26 @@ namespace StayPutVR {
                 StayPutVR::Logger::Info("UIManager: Loading config from " + configDir + "\\" + config_file_);
             }
             
-            // Pass just the filename to LoadFromFile
-            bool result = config_.LoadFromFile(config_file_);
+            // Pass just the filename to LoadFromFile. The Ex variant tells us
+            // WHY a load failed so we can warn the user about a real permissions
+            // or corruption problem while staying quiet on a benign first run.
+            ConfigResult load = config_.LoadFromFileEx(config_file_);
+            config_load_status_ = load.status;
+            config_health_path_ = load.path;
+            config_health_detail_ = load.detail;
+            bool result = (load.status == ConfigStatus::Ok);
+
+            // A missing config is normal (first run / fresh profile); only a
+            // denied or corrupt load is worth interrupting the user for.
+            if (load.status == ConfigStatus::AccessDenied ||
+                load.status == ConfigStatus::Corrupt ||
+                load.status == ConfigStatus::OtherError) {
+                config_health_modal_pending_ = true;
+                if (load.status == ConfigStatus::Corrupt && !load.quarantine_path.empty()) {
+                    config_health_detail_ = "Corrupt config was moved to: " + load.quarantine_path;
+                }
+            }
+
             if (result) {
                 UpdateUIFromConfig();
 
@@ -652,8 +767,10 @@ namespace StayPutVR {
                 // AppData location. If the config was read from a legacy spot
                 // (older builds wrote next to the working dir), this moves it to
                 // where the app and the Folders tab now expect it -- without
-                // losing any of the user's existing settings.
-                config_.SaveToFile(config_file_);
+                // losing any of the user's existing settings. A failure here is
+                // the classic "my settings don't stick" symptom, so record it.
+                ConfigResult migrate = config_.SaveToFileEx(config_file_);
+                NoteSaveResult(migrate);
 
                 if (StayPutVR::Logger::IsInitialized()) {
                     StayPutVR::Logger::Info("UIManager: Config loaded successfully");
@@ -691,18 +808,37 @@ namespace StayPutVR {
                 StayPutVR::Logger::Info("UIManager: Saving config to " + configDir + "\\" + config_file_);
             }
             
-            // Pass just the filename to SaveToFile
-            bool result = config_.SaveToFile(config_file_);
-            if (!result && StayPutVR::Logger::IsInitialized()) {
+            // Pass just the filename to SaveToFile. The Ex variant lets us latch
+            // a persistent "settings are not being saved" warning when the write
+            // is refused, instead of failing silently as before.
+            ConfigResult save = config_.SaveToFileEx(config_file_);
+            NoteSaveResult(save);
+            if (!save.ok() && StayPutVR::Logger::IsInitialized()) {
                 StayPutVR::Logger::Error("UIManager: Failed to save config");
             }
-            return result;
+            return save.ok();
         }
         catch (const std::exception& e) {
             if (StayPutVR::Logger::IsInitialized()) {
                 StayPutVR::Logger::Error("UIManager: Exception in SaveConfig: " + std::string(e.what()));
             }
             return false;
+        }
+    }
+
+    void UIManager::NoteSaveResult(const ConfigResult& r) {
+        if (r.ok()) {
+            // A successful save clears any prior "not saving" warning -- e.g. the
+            // user fixed the folder permissions and the next save went through.
+            config_save_failing_ = false;
+            return;
+        }
+        config_save_failing_ = true;
+        config_health_path_ = r.path;
+        config_health_detail_ = r.detail;
+        // First time we discover saves are blocked, raise the explanatory modal.
+        if (r.status == ConfigStatus::AccessDenied) {
+            config_health_modal_pending_ = true;
         }
     }
 

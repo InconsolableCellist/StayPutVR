@@ -10,6 +10,38 @@
 
 namespace StayPutVR {
 
+// Outcome of a config load/save attempt. The point of the enum (vs. a bare
+// bool) is to tell apart the cases that look identical to std::ifstream but
+// mean very different things to the user:
+//   - NotFound:     no file yet — a benign first run; defaults are fine.
+//   - AccessDenied: the file (or its folder) exists but the OS refused access.
+//                   Usually a permissions/ownership problem left over from a
+//                   build that ran elevated, a read-only file, antivirus /
+//                   Controlled Folder Access, or another process holding it
+//                   open. THIS is the one worth surfacing to the user.
+//   - Corrupt:      the file opened but its contents are not valid JSON.
+//   - OtherError:   anything else (unexpected I/O failure).
+enum class ConfigStatus {
+    Ok = 0,
+    NotFound,
+    AccessDenied,
+    Corrupt,
+    OtherError
+};
+
+// Rich result for LoadFromFileEx / SaveToFileEx. Carries the resolved path and
+// an OS error string so the UI and the logs can give the user a specific,
+// actionable message instead of a generic "failed to open config file".
+struct ConfigResult {
+    ConfigStatus status = ConfigStatus::Ok;
+    std::string path;            // the path actually acted upon
+    std::string detail;          // human-readable OS / parse error, if any
+    int os_error = 0;            // errno snapshot at the point of failure (0 if none)
+    std::string quarantine_path; // where a corrupt file was moved aside, if any
+
+    bool ok() const { return status == ConfigStatus::Ok; }
+};
+
 // Thread-safety contract:
 // - Manager lifetime must be a subset of Config lifetime. UIManager enforces
 //   this by shutting down all managers before its own destructor destroys
@@ -39,9 +71,24 @@ public:
 
     // These methods expect just the filename (e.g., "config.ini"), not a full path.
     // The path will be constructed internally using GetAppDataPath() + "\\config\\" + filename
-    bool LoadFromFile(const std::string& filename);
-    bool SaveToFile(const std::string& filename) const;
+    //
+    // The *Ex variants report exactly what happened (missing / access denied /
+    // corrupt / ok) so callers can distinguish a benign first run from a real
+    // permissions failure. The bool overloads are thin wrappers kept for the
+    // many existing call sites; they return true only on ConfigStatus::Ok.
+    ConfigResult LoadFromFileEx(const std::string& filename);
+    ConfigResult SaveToFileEx(const std::string& filename) const;
+    bool LoadFromFile(const std::string& filename) { return LoadFromFileEx(filename).ok(); }
+    bool SaveToFile(const std::string& filename) const { return SaveToFileEx(filename).ok(); }
     bool CreateDefaultConfigFile(const std::string& filename);
+
+    // Startup self-check: logs the resolved config path, whether it exists and
+    // its read/write permissions, and actively write-probes the config folder so
+    // a "settings won't save" permissions problem is detected and logged up front
+    // (and reflected in the returned status) rather than only when the user first
+    // changes a setting. Returns the writability verdict (Ok / AccessDenied /
+    // OtherError) for the config directory.
+    static ConfigResult RunStartupDiagnostics(const std::string& filename);
 
     // Config versioning (for one-time migrations)
     int config_version = 0;
