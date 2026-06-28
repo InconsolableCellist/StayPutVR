@@ -86,6 +86,13 @@ static int RunStayPutVR() {
         StayPutVR::Logger::Info("Log path: " + logPath);
         StayPutVR::Logger::Info("Current directory: " + std::filesystem::current_path().string());
         
+        // Self-check the config store up front: log the resolved path, any
+        // legacy location that will be migrated, file permissions, and an active
+        // write-probe. This puts a definitive "can settings be saved?" answer at
+        // the top of every log so permission problems are diagnosable from the
+        // log alone, before the user touches a single setting.
+        StayPutVR::Config::RunStartupDiagnostics("config.ini");
+
         // Load configuration to get log level setting
         StayPutVR::Config config;
         if (config.LoadFromFile("config.ini")) {

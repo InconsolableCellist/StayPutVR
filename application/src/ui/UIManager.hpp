@@ -180,6 +180,12 @@ namespace StayPutVR {
         // Load and save application configuration
         bool LoadConfig();
         bool SaveConfig();
+
+        // Record the outcome of a config save so the UI can warn (or stop
+        // warning) about settings that are / are no longer being persisted.
+        void NoteSaveResult(const ConfigResult& r);
+        // Draw the config-health warning banner + one-time startup modal.
+        void RenderConfigHealthWarning();
         
     private:
         // Main window
@@ -211,6 +217,17 @@ namespace StayPutVR {
         // Application configuration
         Config config_;
         std::string config_file_ = "config.ini"; // Just the filename, not the full path
+
+        // Config health, surfaced to the user. config_load_status_ is the outcome
+        // of the startup load (NotFound is benign; AccessDenied/Corrupt are not).
+        // config_save_failing_ latches true when a save is refused so the main
+        // window can warn that settings are not being persisted. The detail/path
+        // strings feed the warning banner and the modal shown once at startup.
+        ConfigStatus config_load_status_ = ConfigStatus::Ok;
+        bool config_save_failing_ = false;
+        std::string config_health_detail_;   // OS error text for the most recent failure
+        std::string config_health_path_;     // the config path involved
+        bool config_health_modal_pending_ = false; // show the startup modal next frame
         
         // OSC status
         bool osc_enabled_ = false;

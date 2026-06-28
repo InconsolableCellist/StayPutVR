@@ -5,6 +5,9 @@
 #include <sstream>
 #include <iostream>
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
+#include <ctime>
 #include "Logger.hpp"
 #include <nlohmann/json.hpp>
 #include "PathUtils.hpp"
@@ -155,6 +158,68 @@ namespace {
         if (std::filesystem::exists(exeLocal, ec)) return exeLocal;            // exe dir (legacy)
         return canonical;
     }
+
+    // Per-field type isolation. nlohmann's jval(j, key, default) THROWS
+    // (type_error.302) when the key is present but holds an incompatible type --
+    // and that single throw, caught at the top of LoadFromFile, used to discard
+    // the ENTIRE config and silently revert every setting to its default. jval
+    // contains the damage to the one offending field: a hand-edited or partially
+    // corrupt value is logged and replaced with its default while every other
+    // setting still loads.
+    template <typename T>
+    T jval(const nlohmann::json& j, const char* key, T def) {
+        auto it = j.find(key);
+        if (it == j.end() || it->is_null()) return def;
+        try {
+            return it->template get<T>();
+        } catch (const std::exception& e) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning(std::string("Config field '") + key +
+                                "' has an unexpected type; using default (" + e.what() + ")");
+            }
+            return def;
+        }
+    }
+
+    // Overload for string-literal defaults: deduce std::string rather than
+    // const char* (nlohmann can't get<const char*>()). Lets call sites keep the
+    // natural jval(j, "key", "default") form.
+    inline std::string jval(const nlohmann::json& j, const char* key, const char* def) {
+        return jval<std::string>(j, key, std::string(def));
+    }
+
+    // Map a C errno (set by the CRT when std::ifstream/ofstream fails to open) to
+    // a ConfigStatus. On Windows the CRT translates Win32 errors -- including
+    // sharing violations and ACL denials -- to EACCES, so this classification
+    // works the same on both platforms.
+    ConfigStatus ClassifyOpenErrno(int err) {
+        switch (err) {
+            case 0:        return ConfigStatus::OtherError; // open failed but errno unset
+            case ENOENT:   return ConfigStatus::NotFound;
+            case EACCES:
+#ifdef EPERM
+            case EPERM:
+#endif
+                           return ConfigStatus::AccessDenied;
+            default:       return ConfigStatus::OtherError;
+        }
+    }
+
+    // A filesystem-safe local timestamp (YYYYMMDD-HHMMSS) for naming quarantined
+    // copies of a corrupt config so successive failures don't overwrite earlier
+    // evidence.
+    std::string TimestampSuffix() {
+        std::time_t t = std::time(nullptr);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &t);
+#else
+        localtime_r(&t, &tmv);
+#endif
+        char buf[32];
+        std::strftime(buf, sizeof(buf), "%Y%m%d-%H%M%S", &tmv);
+        return std::string(buf);
+    }
 }
 
 bool Config::CreateDefaultConfigFile(const std::string& filename) {
@@ -170,119 +235,244 @@ bool Config::CreateDefaultConfigFile(const std::string& filename) {
     }
 }
 
-bool Config::LoadFromFile(const std::string& filename) {
+ConfigResult Config::RunStartupDiagnostics(const std::string& filename) {
+    ConfigResult result;
+    std::error_code ec;
+
+    const std::string canonical = HasDirComponent(filename)
+        ? filename : CanonicalConfigPath(filename);
+    const std::string dir = std::filesystem::path(canonical).parent_path().string();
+    result.path = canonical;
+
+    auto log = [](const std::string& m) { if (Logger::IsInitialized()) Logger::Info(m); };
+    auto warn = [](const std::string& m) { if (Logger::IsInitialized()) Logger::Warning(m); };
+
+    log("Config diagnostics: canonical config path = " + canonical);
+
+    // Where would we actually READ from? Surfacing a legacy hit explains "my old
+    // settings are being picked up from somewhere unexpected" reports.
+    if (!HasDirComponent(filename)) {
+        const std::string resolved = ResolveConfigForRead(filename);
+        if (resolved != canonical) {
+            warn("Config diagnostics: an existing config will be read from a LEGACY location "
+                 "and migrated: " + resolved);
+        }
+    }
+
+    // Report existence + perms of the config file itself.
+    if (std::filesystem::exists(canonical, ec)) {
+        auto st = std::filesystem::status(canonical, ec);
+        auto p = st.permissions();
+        const bool owner_read  = (p & std::filesystem::perms::owner_read)  != std::filesystem::perms::none;
+        const bool owner_write = (p & std::filesystem::perms::owner_write) != std::filesystem::perms::none;
+        auto size = std::filesystem::file_size(canonical, ec);
+        log("Config diagnostics: config.ini exists (size=" +
+            std::to_string(ec ? 0 : size) + " bytes, owner_read=" +
+            (owner_read ? "yes" : "no") + ", owner_write=" + (owner_write ? "yes" : "no") + ")");
+        if (!owner_write) {
+            warn("Config diagnostics: config.ini is NOT writable by the current user -- saved "
+                 "settings will not persist until this is fixed (read-only attribute or an ACL "
+                 "from a past elevated/admin run).");
+        }
+    } else {
+        log("Config diagnostics: config.ini does not exist yet (first run / fresh profile).");
+    }
+
+    // Active write-probe: the definitive test of "can settings be saved here?".
+    std::filesystem::create_directories(dir, ec);
+    const std::string probe = dir + "/.spvr_write_probe";
+    errno = 0;
+    {
+        std::ofstream f(probe, std::ios::trunc);
+        if (!f.is_open()) {
+            int err = errno;
+            result.status = ClassifyOpenErrno(err);
+            if (result.status == ConfigStatus::NotFound) result.status = ConfigStatus::OtherError;
+            result.os_error = err;
+            result.detail = err ? std::strerror(err) : "unknown error";
+            if (Logger::IsInitialized()) {
+                Logger::Error("Config diagnostics: CONFIG FOLDER IS NOT WRITABLE: " + dir +
+                              " (" + result.detail + "). Settings cannot be saved. Likely causes: "
+                              "StayPutVR was run as Administrator before, the folder is owned by "
+                              "another account, or antivirus / Controlled Folder Access is blocking it.");
+            }
+            return result;
+        }
+        f << "ok";
+    }
+    std::error_code rmec;
+    std::filesystem::remove(probe, rmec);
+    log("Config diagnostics: config folder is writable -- settings can be saved.");
+    result.status = ConfigStatus::Ok;
+    return result;
+}
+
+ConfigResult Config::LoadFromFileEx(const std::string& filename) {
+    // Resolve a bare filename to the canonical store, falling back to legacy
+    // locations so an existing config is migrated rather than ignored.
+    std::string path = HasDirComponent(filename) ? filename : ResolveConfigForRead(filename);
+    ConfigResult result;
+    result.path = path;
+
     try {
         auto lock = WriteLock();
-        // Resolve a bare filename to the canonical store, falling back to legacy
-        // locations so an existing config is migrated rather than ignored.
-        std::string path = HasDirComponent(filename) ? filename : ResolveConfigForRead(filename);
+
+        // Distinguish "no config yet" (a benign first run) from "config exists
+        // but I can't read it" (a real permissions problem) BEFORE we blame the
+        // open. exists() with an error_code never throws; a true ec here means
+        // even the existence check was denied (e.g. a locked-down parent dir).
+        std::error_code ec;
+        bool exists = std::filesystem::exists(path, ec);
+        if (!exists && !ec) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Config not found (first run or fresh profile): " + path +
+                             " -- using defaults until first save");
+            }
+            result.status = ConfigStatus::NotFound;
+            return result;
+        }
+
+        errno = 0;
         std::ifstream file(path);
         if (!file.is_open()) {
+            int err = errno;
+            ConfigStatus st = ec ? ConfigStatus::AccessDenied : ClassifyOpenErrno(err);
+            result.status = st;
+            result.os_error = err;
+            result.detail = err ? std::strerror(err) : (ec ? ec.message() : "unknown error");
             if (Logger::IsInitialized()) {
-                Logger::Error("Failed to open config file: " + path);
+                if (st == ConfigStatus::AccessDenied) {
+                    Logger::Error("ACCESS DENIED opening config file: " + path +
+                                  " (" + result.detail + "). The file or its folder may be "
+                                  "owned by another account, marked read-only, locked by another "
+                                  "process, or blocked by antivirus / Controlled Folder Access.");
+                } else {
+                    Logger::Error("Failed to open config file: " + path +
+                                  " (" + result.detail + ")");
+                }
             }
-            return false;
+            return result;
         }
         if (Logger::IsInitialized()) {
             Logger::Info("Loading config from: " + path);
         }
 
         nlohmann::json j;
-        file >> j;
+        // Parse in its own scope so a syntax error is reported as Corrupt (and
+        // the bad file quarantined) instead of looking like an I/O failure.
+        try {
+            file >> j;
+        } catch (const std::exception& e) {
+            file.close();
+            result.status = ConfigStatus::Corrupt;
+            result.detail = e.what();
+            // Move the unreadable file aside so the next SaveToFile doesn't
+            // silently overwrite it -- the user (or we) may want to recover it.
+            std::error_code rec;
+            std::string quarantine = path + ".corrupt-" + TimestampSuffix();
+            std::filesystem::rename(path, quarantine, rec);
+            if (!rec) result.quarantine_path = quarantine;
+            if (Logger::IsInitialized()) {
+                Logger::Error("Config file is corrupt (not valid JSON): " + path +
+                              " (" + result.detail + ")" +
+                              (rec ? "" : " -- moved aside to " + quarantine));
+            }
+            return result;
+        }
 
         // Config versioning. Capture the on-disk version up front: each migration
         // below gates on this original value, and we only stamp the member to the
         // current version once at the end. (Previously the PiShock migration wrote
         // config_version inline, which would cause a later migration gated on a
         // higher version to be skipped.)
-        config_version = j.value("config_version", 0);
+        config_version = jval(j, "config_version", 0);
         const int loaded_config_version = config_version;
 
         // OSC settings
-        osc_enabled = j.value("osc_enabled", true);
-        osc_address = j.value("osc_address", "127.0.0.1");
+        osc_enabled = jval(j, "osc_enabled", true);
+        osc_address = jval(j, "osc_address", "127.0.0.1");
         
         // Check if we're loading from an old config that had a single osc_port
         if (j.contains("osc_port")) {
-            int old_port = j.value("osc_port", 9000);
+            int old_port = jval(j, "osc_port", 9000);
             osc_send_port = old_port;
             osc_receive_port = 9001;
         } else {
-            osc_send_port = j.value("osc_send_port", 9000);
-            osc_receive_port = j.value("osc_receive_port", 9001);
+            osc_send_port = jval(j, "osc_send_port", 9000);
+            osc_receive_port = jval(j, "osc_receive_port", 9001);
         }
         
-        osc_query_enabled = j.value("osc_query_enabled", true);
-        chaining_mode = j.value("chaining_mode", false);
+        osc_query_enabled = jval(j, "osc_query_enabled", true);
+        chaining_mode = jval(j, "chaining_mode", false);
 
         // Load OSC lock paths
-        osc_lock_path_hmd = j.value("osc_lock_path_hmd", "/avatar/parameters/SPVR_HMD_Latch_IsPosed");
-        osc_lock_path_left_hand = j.value("osc_lock_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed");
-        osc_lock_path_right_hand = j.value("osc_lock_path_right_hand", "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed");
-        osc_lock_path_left_foot = j.value("osc_lock_path_left_foot", "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed");
-        osc_lock_path_right_foot = j.value("osc_lock_path_right_foot", "/avatar/parameters/SPVR_FootRight_Latch_IsPosed");
-        osc_lock_path_hip = j.value("osc_lock_path_hip", "/avatar/parameters/SPVR_Hip_Latch_IsPosed");
+        osc_lock_path_hmd = jval(j, "osc_lock_path_hmd", "/avatar/parameters/SPVR_HMD_Latch_IsPosed");
+        osc_lock_path_left_hand = jval(j, "osc_lock_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_Latch_IsPosed");
+        osc_lock_path_right_hand = jval(j, "osc_lock_path_right_hand", "/avatar/parameters/SPVR_ControllerRight_Latch_IsPosed");
+        osc_lock_path_left_foot = jval(j, "osc_lock_path_left_foot", "/avatar/parameters/SPVR_FootLeft_Latch_IsPosed");
+        osc_lock_path_right_foot = jval(j, "osc_lock_path_right_foot", "/avatar/parameters/SPVR_FootRight_Latch_IsPosed");
+        osc_lock_path_hip = jval(j, "osc_lock_path_hip", "/avatar/parameters/SPVR_Hip_Latch_IsPosed");
         
         // Load OSC include paths
-        osc_include_path_hmd = j.value("osc_include_path_hmd", "/avatar/parameters/SPVR_HMD_include");
-        osc_include_path_left_hand = j.value("osc_include_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_include");
-        osc_include_path_right_hand = j.value("osc_include_path_right_hand", "/avatar/parameters/SPVR_ControllerRight_include");
-        osc_include_path_left_foot = j.value("osc_include_path_left_foot", "/avatar/parameters/SPVR_FootLeft_include");
-        osc_include_path_right_foot = j.value("osc_include_path_right_foot", "/avatar/parameters/SPVR_FootRight_include");
-        osc_include_path_hip = j.value("osc_include_path_hip", "/avatar/parameters/SPVR_Hip_include");
+        osc_include_path_hmd = jval(j, "osc_include_path_hmd", "/avatar/parameters/SPVR_HMD_include");
+        osc_include_path_left_hand = jval(j, "osc_include_path_left_hand", "/avatar/parameters/SPVR_ControllerLeft_include");
+        osc_include_path_right_hand = jval(j, "osc_include_path_right_hand", "/avatar/parameters/SPVR_ControllerRight_include");
+        osc_include_path_left_foot = jval(j, "osc_include_path_left_foot", "/avatar/parameters/SPVR_FootLeft_include");
+        osc_include_path_right_foot = jval(j, "osc_include_path_right_foot", "/avatar/parameters/SPVR_FootRight_include");
+        osc_include_path_hip = jval(j, "osc_include_path_hip", "/avatar/parameters/SPVR_Hip_include");
         
         // Load global lock/unlock paths
-        osc_global_lock_path = j.value("osc_global_lock_path", "/avatar/parameters/SPVR_Global_Lock");
-        osc_global_unlock_path = j.value("osc_global_unlock_path", "/avatar/parameters/SPVR_Global_Unlock");
-        osc_global_out_of_bounds_path = j.value("osc_global_out_of_bounds_path", "/avatar/parameters/SPVR_Global_OutOfBounds");
-        osc_global_out_of_bounds_enabled = j.value("osc_global_out_of_bounds_enabled", true);
-        osc_estop_stretch_path = j.value("osc_estop_stretch_path", "/avatar/parameters/SPVR_EStop_Stretch");
-        osc_estop_stretch_enabled = j.value("osc_estop_stretch_enabled", true);
-        jawopen_enabled = j.value("jawopen_enabled", false);
-        jawopen_user_agreement = j.value("jawopen_user_agreement", false);
-        osc_jawopen_path = j.value("osc_jawopen_path", "/avatar/parameters/SPVR_JawOpen");
-        jawopen_warning_margin = j.value("jawopen_warning_margin", 0.10f);
-        jawopen_disobedience_margin = j.value("jawopen_disobedience_margin", 0.20f);
-        jawopen_grace_seconds = j.value("jawopen_grace_seconds", 1.0f);
-        mic_enabled = j.value("mic_enabled", false);
-        mic_user_agreement = j.value("mic_user_agreement", false);
-        mic_device_id = j.value("mic_device_id", std::string(""));
-        mic_warning_margin = j.value("mic_warning_margin", 0.05f);
-        mic_disobedience_margin = j.value("mic_disobedience_margin", 0.10f);
-        mic_grace_seconds = j.value("mic_grace_seconds", 2.0f);
-        mic_disobedience_cooldown_seconds = j.value("mic_disobedience_cooldown_seconds", 1.0f);
-        osc_collar_toggle_path = j.value("osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
-        osc_bite_path = j.value("osc_bite_path", "/avatar/parameters/SPVR_Bite");
-        osc_bite_enabled = j.value("osc_bite_enabled", true);
-        osc_shock_path = j.value("osc_shock_path", "/avatar/parameters/Shock");
-        osc_shock_enabled = j.value("osc_shock_enabled", true);
-        osc_shock_intensity = j.value("osc_shock_intensity", 0.25f);
-        osc_shock_duration = j.value("osc_shock_duration", 1.0f);
-        osc_bite_intensity = j.value("osc_bite_intensity", 0.25f);
-        osc_bite_duration = j.value("osc_bite_duration", 1.0f);
-        osc_bite_use_individual_intensities = j.value("osc_bite_use_individual_intensities", false);
-        osc_shock_use_individual_intensities = j.value("osc_shock_use_individual_intensities", false);
+        osc_global_lock_path = jval(j, "osc_global_lock_path", "/avatar/parameters/SPVR_Global_Lock");
+        osc_global_unlock_path = jval(j, "osc_global_unlock_path", "/avatar/parameters/SPVR_Global_Unlock");
+        osc_global_out_of_bounds_path = jval(j, "osc_global_out_of_bounds_path", "/avatar/parameters/SPVR_Global_OutOfBounds");
+        osc_global_out_of_bounds_enabled = jval(j, "osc_global_out_of_bounds_enabled", true);
+        osc_estop_stretch_path = jval(j, "osc_estop_stretch_path", "/avatar/parameters/SPVR_EStop_Stretch");
+        osc_estop_stretch_enabled = jval(j, "osc_estop_stretch_enabled", true);
+        jawopen_enabled = jval(j, "jawopen_enabled", false);
+        jawopen_user_agreement = jval(j, "jawopen_user_agreement", false);
+        osc_jawopen_path = jval(j, "osc_jawopen_path", "/avatar/parameters/SPVR_JawOpen");
+        jawopen_warning_margin = jval(j, "jawopen_warning_margin", 0.10f);
+        jawopen_disobedience_margin = jval(j, "jawopen_disobedience_margin", 0.20f);
+        jawopen_grace_seconds = jval(j, "jawopen_grace_seconds", 1.0f);
+        mic_enabled = jval(j, "mic_enabled", false);
+        mic_user_agreement = jval(j, "mic_user_agreement", false);
+        mic_device_id = jval(j, "mic_device_id", std::string(""));
+        mic_warning_margin = jval(j, "mic_warning_margin", 0.05f);
+        mic_disobedience_margin = jval(j, "mic_disobedience_margin", 0.10f);
+        mic_grace_seconds = jval(j, "mic_grace_seconds", 2.0f);
+        mic_disobedience_cooldown_seconds = jval(j, "mic_disobedience_cooldown_seconds", 1.0f);
+        osc_collar_toggle_path = jval(j, "osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
+        osc_bite_path = jval(j, "osc_bite_path", "/avatar/parameters/SPVR_Bite");
+        osc_bite_enabled = jval(j, "osc_bite_enabled", true);
+        osc_shock_path = jval(j, "osc_shock_path", "/avatar/parameters/Shock");
+        osc_shock_enabled = jval(j, "osc_shock_enabled", true);
+        osc_shock_intensity = jval(j, "osc_shock_intensity", 0.25f);
+        osc_shock_duration = jval(j, "osc_shock_duration", 1.0f);
+        osc_bite_intensity = jval(j, "osc_bite_intensity", 0.25f);
+        osc_bite_duration = jval(j, "osc_bite_duration", 1.0f);
+        osc_bite_use_individual_intensities = jval(j, "osc_bite_use_individual_intensities", false);
+        osc_shock_use_individual_intensities = jval(j, "osc_shock_use_individual_intensities", false);
 
         // PiShock settings
-        pishock_enabled = j.value("pishock_enabled", false);
-        pishock_group = j.value("pishock_group", 0);
-        pishock_user_agreement = j.value("pishock_user_agreement", false);
+        pishock_enabled = jval(j, "pishock_enabled", false);
+        pishock_group = jval(j, "pishock_group", 0);
+        pishock_user_agreement = jval(j, "pishock_user_agreement", false);
         // New installs default to WebSocket v2. Preserve existing legacy users:
         // if pishock_mode was never saved but a legacy share code is present, the
         // user configured the legacy HTTP API, so keep them on LEGACY_API.
         if (j.contains("pishock_mode")) {
-            pishock_mode = static_cast<PiShockMode>(j.value("pishock_mode", static_cast<int>(PiShockMode::WEBSOCKET_V2)));
+            pishock_mode = static_cast<PiShockMode>(jval(j, "pishock_mode", static_cast<int>(PiShockMode::WEBSOCKET_V2)));
         } else {
-            bool has_legacy_share_code = !j.value("pishock_share_code", std::string("")).empty();
+            bool has_legacy_share_code = !jval(j, "pishock_share_code", std::string("")).empty();
             pishock_mode = has_legacy_share_code ? PiShockMode::LEGACY_API : PiShockMode::WEBSOCKET_V2;
         }
         
         // PiShock API settings
-        pishock_api_key = j.value("pishock_api_key", "");
-        pishock_username = j.value("pishock_username", "");
-        pishock_user_id = j.value("pishock_user_id", 0);
-        pishock_share_code = j.value("pishock_share_code", "");
-        pishock_client_id = j.value("pishock_client_id", "");
+        pishock_api_key = jval(j, "pishock_api_key", "");
+        pishock_username = jval(j, "pishock_username", "");
+        pishock_user_id = jval(j, "pishock_user_id", 0);
+        pishock_share_code = jval(j, "pishock_share_code", "");
+        pishock_client_id = jval(j, "pishock_client_id", "");
         
         // Load multiple shocker IDs - support both old single ID and new array format
         if (j.contains("pishock_shocker_ids") && j["pishock_shocker_ids"].is_array()) {
@@ -298,18 +488,18 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
         
         // Warning Zone PiShock Settings
-        pishock_warning_beep = j.value("pishock_warning_beep", false);
-        pishock_warning_shock = j.value("pishock_warning_shock", false);
-        pishock_warning_vibrate = j.value("pishock_warning_vibrate", false);
-        pishock_warning_intensity = j.value("pishock_warning_intensity", 0.25f);
-        pishock_warning_duration = j.value("pishock_warning_duration", 1.0f);
+        pishock_warning_beep = jval(j, "pishock_warning_beep", false);
+        pishock_warning_shock = jval(j, "pishock_warning_shock", false);
+        pishock_warning_vibrate = jval(j, "pishock_warning_vibrate", false);
+        pishock_warning_intensity = jval(j, "pishock_warning_intensity", 0.25f);
+        pishock_warning_duration = jval(j, "pishock_warning_duration", 1.0f);
 
         // Disobedience (Out of Bounds) PiShock Settings
-        pishock_disobedience_beep = j.value("pishock_disobedience_beep", false);
-        pishock_disobedience_shock = j.value("pishock_disobedience_shock", false);
-        pishock_disobedience_vibrate = j.value("pishock_disobedience_vibrate", false);
-        pishock_disobedience_intensity = j.value("pishock_disobedience_intensity", 0.25f);
-        pishock_disobedience_duration = j.value("pishock_disobedience_duration", 1.0f);
+        pishock_disobedience_beep = jval(j, "pishock_disobedience_beep", false);
+        pishock_disobedience_shock = jval(j, "pishock_disobedience_shock", false);
+        pishock_disobedience_vibrate = jval(j, "pishock_disobedience_vibrate", false);
+        pishock_disobedience_intensity = jval(j, "pishock_disobedience_intensity", 0.25f);
+        pishock_disobedience_duration = jval(j, "pishock_disobedience_duration", 1.0f);
 
         // Migrate old normalized PiShock durations (0.0-1.0) to seconds (1.0-15.0).
         // Only for configs that predate seconds-based PiShock durations (v < 1).
@@ -323,7 +513,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
         
         // Individual device intensities for PiShock
-        pishock_use_individual_disobedience_intensities = j.value("pishock_use_individual_disobedience_intensities", false);
+        pishock_use_individual_disobedience_intensities = jval(j, "pishock_use_individual_disobedience_intensities", false);
         
         if (j.contains("pishock_individual_disobedience_intensities") && j["pishock_individual_disobedience_intensities"].is_array()) {
             auto intensities_json = j["pishock_individual_disobedience_intensities"];
@@ -335,11 +525,11 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
 
         // OpenShock Settings
-        openshock_enabled = j.value("openshock_enabled", false);
-        openshock_user_agreement = j.value("openshock_user_agreement", false);
+        openshock_enabled = jval(j, "openshock_enabled", false);
+        openshock_user_agreement = jval(j, "openshock_user_agreement", false);
         
         // OpenShock API Settings
-        openshock_api_token = j.value("openshock_api_token", "");
+        openshock_api_token = jval(j, "openshock_api_token", "");
         
         // Load multiple device IDs - support both old single ID and new array format
         if (j.contains("openshock_device_ids") && j["openshock_device_ids"].is_array()) {
@@ -354,17 +544,17 @@ bool Config::LoadFromFile(const std::string& filename) {
             openshock_device_ids[0] = j["openshock_device_id"];
         }
         
-        openshock_server_url = j.value("openshock_server_url", "https://api.openshock.app");
+        openshock_server_url = jval(j, "openshock_server_url", "https://api.openshock.app");
         
         // Warning Zone OpenShock Settings
-        openshock_warning_action = j.value("openshock_warning_action", 0);
-        openshock_warning_intensity = j.value("openshock_warning_intensity", 0.25f);
-        openshock_warning_duration = j.value("openshock_warning_duration", 0.25f);
+        openshock_warning_action = jval(j, "openshock_warning_action", 0);
+        openshock_warning_intensity = jval(j, "openshock_warning_intensity", 0.25f);
+        openshock_warning_duration = jval(j, "openshock_warning_duration", 0.25f);
         
         // Disobedience (Out of Bounds) OpenShock Settings
-        openshock_disobedience_action = j.value("openshock_disobedience_action", 0);
-        openshock_disobedience_intensity = j.value("openshock_disobedience_intensity", 0.25f);
-        openshock_disobedience_duration = j.value("openshock_disobedience_duration", 0.25f);
+        openshock_disobedience_action = jval(j, "openshock_disobedience_action", 0);
+        openshock_disobedience_intensity = jval(j, "openshock_disobedience_intensity", 0.25f);
+        openshock_disobedience_duration = jval(j, "openshock_disobedience_duration", 0.25f);
 
         // Migrate old normalized OpenShock durations (0.0-1.0) to seconds (v < 2).
         // The old API mapping was ms = 300 + norm*10714, so convert back to the
@@ -382,10 +572,10 @@ bool Config::LoadFromFile(const std::string& filename) {
         config_version = CURRENT_CONFIG_VERSION;
 
         // Master intensity settings for OpenShock
-        openshock_use_individual_warning_intensities = j.value("openshock_use_individual_warning_intensities", false);
-        openshock_use_individual_disobedience_intensities = j.value("openshock_use_individual_disobedience_intensities", false);
-        openshock_master_warning_intensity = j.value("openshock_master_warning_intensity", 0.25f);
-        openshock_master_disobedience_intensity = j.value("openshock_master_disobedience_intensity", 0.25f);
+        openshock_use_individual_warning_intensities = jval(j, "openshock_use_individual_warning_intensities", false);
+        openshock_use_individual_disobedience_intensities = jval(j, "openshock_use_individual_disobedience_intensities", false);
+        openshock_master_warning_intensity = jval(j, "openshock_master_warning_intensity", 0.25f);
+        openshock_master_disobedience_intensity = jval(j, "openshock_master_disobedience_intensity", 0.25f);
         
         // Individual device intensities for OpenShock
         if (j.contains("openshock_individual_warning_intensities") && j["openshock_individual_warning_intensities"].is_array()) {
@@ -407,12 +597,12 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
 
         // Buttplug/Intiface Settings
-        buttplug_enabled = j.value("buttplug_enabled", false);
-        buttplug_user_agreement = j.value("buttplug_user_agreement", false);
+        buttplug_enabled = jval(j, "buttplug_enabled", false);
+        buttplug_user_agreement = jval(j, "buttplug_user_agreement", false);
         
         // Buttplug Server Settings
-        buttplug_server_address = j.value("buttplug_server_address", "localhost");
-        buttplug_server_port = j.value("buttplug_server_port", 12345);
+        buttplug_server_address = jval(j, "buttplug_server_address", "localhost");
+        buttplug_server_port = jval(j, "buttplug_server_port", 12345);
         
         // Load multiple device indices
         if (j.contains("buttplug_device_indices") && j["buttplug_device_indices"].is_array()) {
@@ -425,29 +615,29 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
         
         // Zone activation settings
-        buttplug_safe_zone_enabled = j.value("buttplug_safe_zone_enabled", false);
-        buttplug_warning_zone_enabled = j.value("buttplug_warning_zone_enabled", true);
-        buttplug_disobedience_zone_enabled = j.value("buttplug_disobedience_zone_enabled", true);
+        buttplug_safe_zone_enabled = jval(j, "buttplug_safe_zone_enabled", false);
+        buttplug_warning_zone_enabled = jval(j, "buttplug_warning_zone_enabled", true);
+        buttplug_disobedience_zone_enabled = jval(j, "buttplug_disobedience_zone_enabled", true);
         
         // Safe Zone Buttplug Settings
-        buttplug_safe_intensity = j.value("buttplug_safe_intensity", 0.15f);
-        buttplug_safe_duration = j.value("buttplug_safe_duration", 1.0f);
+        buttplug_safe_intensity = jval(j, "buttplug_safe_intensity", 0.15f);
+        buttplug_safe_duration = jval(j, "buttplug_safe_duration", 1.0f);
         
         // Warning Zone Buttplug Settings
-        buttplug_warning_intensity = j.value("buttplug_warning_intensity", 0.25f);
-        buttplug_warning_duration = j.value("buttplug_warning_duration", 1.0f);
+        buttplug_warning_intensity = jval(j, "buttplug_warning_intensity", 0.25f);
+        buttplug_warning_duration = jval(j, "buttplug_warning_duration", 1.0f);
         
         // Disobedience (Out of Bounds) Buttplug Settings
-        buttplug_disobedience_intensity = j.value("buttplug_disobedience_intensity", 0.5f);
-        buttplug_disobedience_duration = j.value("buttplug_disobedience_duration", 2.0f);
+        buttplug_disobedience_intensity = jval(j, "buttplug_disobedience_intensity", 0.5f);
+        buttplug_disobedience_duration = jval(j, "buttplug_disobedience_duration", 2.0f);
         
         // Master intensity settings for Buttplug
-        buttplug_use_individual_safe_intensities = j.value("buttplug_use_individual_safe_intensities", false);
-        buttplug_use_individual_warning_intensities = j.value("buttplug_use_individual_warning_intensities", false);
-        buttplug_use_individual_disobedience_intensities = j.value("buttplug_use_individual_disobedience_intensities", false);
-        buttplug_master_safe_intensity = j.value("buttplug_master_safe_intensity", 0.15f);
-        buttplug_master_warning_intensity = j.value("buttplug_master_warning_intensity", 0.25f);
-        buttplug_master_disobedience_intensity = j.value("buttplug_master_disobedience_intensity", 0.5f);
+        buttplug_use_individual_safe_intensities = jval(j, "buttplug_use_individual_safe_intensities", false);
+        buttplug_use_individual_warning_intensities = jval(j, "buttplug_use_individual_warning_intensities", false);
+        buttplug_use_individual_disobedience_intensities = jval(j, "buttplug_use_individual_disobedience_intensities", false);
+        buttplug_master_safe_intensity = jval(j, "buttplug_master_safe_intensity", 0.15f);
+        buttplug_master_warning_intensity = jval(j, "buttplug_master_warning_intensity", 0.25f);
+        buttplug_master_disobedience_intensity = jval(j, "buttplug_master_disobedience_intensity", 0.5f);
         
         // Individual device intensities for Buttplug
         if (j.contains("buttplug_individual_safe_intensities") && j["buttplug_individual_safe_intensities"].is_array()) {
@@ -478,95 +668,95 @@ bool Config::LoadFromFile(const std::string& filename) {
         }
 
         // Twitch Integration Settings
-        twitch_enabled = j.value("twitch_enabled", false);
-        twitch_user_agreement = j.value("twitch_user_agreement", false);
+        twitch_enabled = jval(j, "twitch_enabled", false);
+        twitch_user_agreement = jval(j, "twitch_user_agreement", false);
         
         // Twitch API Authentication
-        twitch_client_id = j.value("twitch_client_id", "");
-        twitch_client_secret = j.value("twitch_client_secret", "");
-        twitch_access_token = j.value("twitch_access_token", "");
-        twitch_refresh_token = j.value("twitch_refresh_token", "");
-        twitch_channel_name = j.value("twitch_channel_name", "");
-        twitch_bot_username = j.value("twitch_bot_username", "");
+        twitch_client_id = jval(j, "twitch_client_id", "");
+        twitch_client_secret = jval(j, "twitch_client_secret", "");
+        twitch_access_token = jval(j, "twitch_access_token", "");
+        twitch_refresh_token = jval(j, "twitch_refresh_token", "");
+        twitch_channel_name = jval(j, "twitch_channel_name", "");
+        twitch_bot_username = jval(j, "twitch_bot_username", "");
         
         // Twitch Chat Bot Settings
-        twitch_chat_enabled = j.value("twitch_chat_enabled", false);
-        twitch_command_prefix = j.value("twitch_command_prefix", "!");
-        twitch_lock_command = j.value("twitch_lock_command", "lock");
-        twitch_unlock_command = j.value("twitch_unlock_command", "unlock");
-        twitch_status_command = j.value("twitch_status_command", "status");
+        twitch_chat_enabled = jval(j, "twitch_chat_enabled", false);
+        twitch_command_prefix = jval(j, "twitch_command_prefix", "!");
+        twitch_lock_command = jval(j, "twitch_lock_command", "lock");
+        twitch_unlock_command = jval(j, "twitch_unlock_command", "unlock");
+        twitch_status_command = jval(j, "twitch_status_command", "status");
         
         // Twitch Donation Trigger Settings
-        twitch_bits_enabled = j.value("twitch_bits_enabled", false);
-        twitch_bits_minimum = j.value("twitch_bits_minimum", 100);
-        twitch_subs_enabled = j.value("twitch_subs_enabled", false);
-        twitch_donations_enabled = j.value("twitch_donations_enabled", false);
-        twitch_donation_minimum = j.value("twitch_donation_minimum", 5.0f);
+        twitch_bits_enabled = jval(j, "twitch_bits_enabled", false);
+        twitch_bits_minimum = jval(j, "twitch_bits_minimum", 100);
+        twitch_subs_enabled = jval(j, "twitch_subs_enabled", false);
+        twitch_donations_enabled = jval(j, "twitch_donations_enabled", false);
+        twitch_donation_minimum = jval(j, "twitch_donation_minimum", 5.0f);
         
         // Twitch Lock Duration Settings
-        twitch_lock_duration_enabled = j.value("twitch_lock_duration_enabled", false);
-        twitch_lock_base_duration = j.value("twitch_lock_base_duration", 60.0f);
-        twitch_lock_per_dollar = j.value("twitch_lock_per_dollar", 30.0f);
-        twitch_lock_max_duration = j.value("twitch_lock_max_duration", 600.0f);
+        twitch_lock_duration_enabled = jval(j, "twitch_lock_duration_enabled", false);
+        twitch_lock_base_duration = jval(j, "twitch_lock_base_duration", 60.0f);
+        twitch_lock_per_dollar = jval(j, "twitch_lock_per_dollar", 30.0f);
+        twitch_lock_max_duration = jval(j, "twitch_lock_max_duration", 600.0f);
         
         // Twitch Device Targeting
-        twitch_target_all_devices = j.value("twitch_target_all_devices", true);
-        twitch_target_hmd = j.value("twitch_target_hmd", false);
-        twitch_target_left_hand = j.value("twitch_target_left_hand", false);
-        twitch_target_right_hand = j.value("twitch_target_right_hand", false);
-        twitch_target_left_foot = j.value("twitch_target_left_foot", false);
-        twitch_target_right_foot = j.value("twitch_target_right_foot", false);
-        twitch_target_hip = j.value("twitch_target_hip", false);
+        twitch_target_all_devices = jval(j, "twitch_target_all_devices", true);
+        twitch_target_hmd = jval(j, "twitch_target_hmd", false);
+        twitch_target_left_hand = jval(j, "twitch_target_left_hand", false);
+        twitch_target_right_hand = jval(j, "twitch_target_right_hand", false);
+        twitch_target_left_foot = jval(j, "twitch_target_left_foot", false);
+        twitch_target_right_foot = jval(j, "twitch_target_right_foot", false);
+        twitch_target_hip = jval(j, "twitch_target_hip", false);
         
         // Unlock Timer Settings
-        unlock_timer_enabled = j.value("unlock_timer_enabled", false);
-        unlock_timer_duration = j.value("unlock_timer_duration", 300.0f);
-        unlock_timer_show_remaining = j.value("unlock_timer_show_remaining", true);
-        unlock_timer_audio_warnings = j.value("unlock_timer_audio_warnings", true);
+        unlock_timer_enabled = jval(j, "unlock_timer_enabled", false);
+        unlock_timer_duration = jval(j, "unlock_timer_duration", 300.0f);
+        unlock_timer_show_remaining = jval(j, "unlock_timer_show_remaining", true);
+        unlock_timer_audio_warnings = jval(j, "unlock_timer_audio_warnings", true);
 
         // Load logging settings
-        log_level = j.value("log_level", "WARNING");
-        ui_font_scale = j.value("ui_font_scale", 1.0f);
-        splash_auto_close = j.value("splash_auto_close", false);
-        whats_new_seen_version = j.value("whats_new_seen_version", std::string(""));
+        log_level = jval(j, "log_level", "WARNING");
+        ui_font_scale = jval(j, "ui_font_scale", 1.0f);
+        splash_auto_close = jval(j, "splash_auto_close", false);
+        whats_new_seen_version = jval(j, "whats_new_seen_version", std::string(""));
 
         // Load boundary settings
-        warning_threshold = j.value("warning_threshold", 0.1f);
-        bounds_threshold = j.value("bounds_threshold", 0.2f);
-        disable_threshold = j.value("disable_threshold", 0.5f);
+        warning_threshold = jval(j, "warning_threshold", 0.1f);
+        bounds_threshold = jval(j, "bounds_threshold", 0.2f);
+        disable_threshold = jval(j, "disable_threshold", 0.5f);
         
         // Load timer settings
-        cooldown_enabled = j.value("cooldown_enabled", false);
-        cooldown_seconds = j.value("cooldown_seconds", 5.0f);
-        countdown_enabled = j.value("countdown_enabled", false);
-        countdown_seconds = j.value("countdown_seconds", 3.0f);
-        shock_cooldown_enabled = j.value("shock_cooldown_enabled", false);
-        shock_cooldown_seconds = j.value("shock_cooldown_seconds", 5.0f);
+        cooldown_enabled = jval(j, "cooldown_enabled", false);
+        cooldown_seconds = jval(j, "cooldown_seconds", 5.0f);
+        countdown_enabled = jval(j, "countdown_enabled", false);
+        countdown_seconds = jval(j, "countdown_seconds", 3.0f);
+        shock_cooldown_enabled = jval(j, "shock_cooldown_enabled", false);
+        shock_cooldown_seconds = jval(j, "shock_cooldown_seconds", 5.0f);
         
         // Load notification settings
         // Audio settings — read flat keys for backward compatibility with pre-1.3 configs
-        audio.enabled = j.value("audio_enabled", true);
-        audio.volume = j.value("audio_volume", 0.8f);
-        audio.warning = j.value("warning_audio", true);
-        audio.out_of_bounds = j.value("out_of_bounds_audio", true);
-        audio.lock = j.value("lock_audio", true);
-        audio.unlock = j.value("unlock_audio", true);
-        audio.haptic_enabled = j.value("haptic_enabled", true);
-        audio.haptic_intensity = j.value("haptic_intensity", 0.5f);
+        audio.enabled = jval(j, "audio_enabled", true);
+        audio.volume = jval(j, "audio_volume", 0.8f);
+        audio.warning = jval(j, "warning_audio", true);
+        audio.out_of_bounds = jval(j, "out_of_bounds_audio", true);
+        audio.lock = jval(j, "lock_audio", true);
+        audio.unlock = jval(j, "unlock_audio", true);
+        audio.haptic_enabled = jval(j, "haptic_enabled", true);
+        audio.haptic_intensity = jval(j, "haptic_intensity", 0.5f);
 
         // In-game sound effects
-        ingame_sfx_enabled = j.value("ingame_sfx_enabled", true);
-        ingame_sfx_lock = j.value("ingame_sfx_lock", true);
-        ingame_sfx_unlock = j.value("ingame_sfx_unlock", true);
-        ingame_sfx_warning = j.value("ingame_sfx_warning", true);
-        ingame_sfx_disobedience = j.value("ingame_sfx_disobedience", true);
-        ingame_sfx_collar_mode = j.value("ingame_sfx_collar_mode", true);
-        osc_sound_effect_path = j.value("osc_sound_effect_path", "/avatar/parameters/SPVR_SoundEffect");
+        ingame_sfx_enabled = jval(j, "ingame_sfx_enabled", true);
+        ingame_sfx_lock = jval(j, "ingame_sfx_lock", true);
+        ingame_sfx_unlock = jval(j, "ingame_sfx_unlock", true);
+        ingame_sfx_warning = jval(j, "ingame_sfx_warning", true);
+        ingame_sfx_disobedience = jval(j, "ingame_sfx_disobedience", true);
+        ingame_sfx_collar_mode = jval(j, "ingame_sfx_collar_mode", true);
+        osc_sound_effect_path = jval(j, "osc_sound_effect_path", "/avatar/parameters/SPVR_SoundEffect");
 
         // Load application settings
-        start_with_steamvr = j.value("start_with_steamvr", true);
-        minimize_to_tray = j.value("minimize_to_tray", false);
-        show_notifications = j.value("show_notifications", true);
+        start_with_steamvr = jval(j, "start_with_steamvr", true);
+        minimize_to_tray = jval(j, "minimize_to_tray", false);
+        show_notifications = jval(j, "show_notifications", true);
         
         // Clear existing device data
         device_names.clear();
@@ -657,7 +847,7 @@ bool Config::LoadFromFile(const std::string& filename) {
         
         // Also check the old format (devices array) for backward compatibility
         // This will add any devices that weren't already loaded from the direct properties
-        const nlohmann::json& devices = j.value("devices", nlohmann::json::array());
+        const nlohmann::json& devices = jval(j, "devices", nlohmann::json::array());
         for (const auto& device : devices) {
             if (!device.contains("serial")) continue;
             
@@ -698,21 +888,25 @@ bool Config::LoadFromFile(const std::string& filename) {
         
         if (Logger::IsInitialized()) {
             Logger::Info("Loaded config file: " + filename);
-            Logger::Debug("Loaded " + std::to_string(device_roles.size()) + " device roles, " + 
-                         std::to_string(device_settings.size()) + " device settings, and " + 
+            Logger::Debug("Loaded " + std::to_string(device_roles.size()) + " device roles, " +
+                         std::to_string(device_settings.size()) + " device settings, and " +
                          std::to_string(device_names.size()) + " device names");
         }
-        return true;
+        result.status = ConfigStatus::Ok;
+        return result;
     }
     catch (const std::exception& e) {
         if (Logger::IsInitialized()) {
             Logger::Error("Error loading config: " + std::string(e.what()));
         }
-        return false;
+        result.status = ConfigStatus::OtherError;
+        result.detail = e.what();
+        return result;
     }
 }
 
-bool Config::SaveToFile(const std::string& filename) const {
+ConfigResult Config::SaveToFileEx(const std::string& filename) const {
+    ConfigResult result;
     try {
         auto lock = ReadLock();
         nlohmann::json j;
@@ -1110,33 +1304,91 @@ bool Config::SaveToFile(const std::string& filename) const {
         // Resolve a bare filename to the canonical AppData store and make sure
         // its directory exists, so saves always land in one well-known place.
         std::string path = HasDirComponent(filename) ? filename : CanonicalConfigPath(filename);
+        result.path = path;
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
 
-        // Write the JSON to file
-        std::ofstream file(path);
-        if (!file.is_open()) {
-            if (Logger::IsInitialized()) {
-                Logger::Error("Failed to open config file for writing: " + path);
+        // Write to a sibling temp file first, then atomically rename it over the
+        // real config. A crash or a disk-full midway can no longer leave a
+        // half-written (corrupt) config.ini -- the original stays intact until
+        // the complete new copy is in place.
+        std::string tmp = path + ".tmp";
+        errno = 0;
+        {
+            std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+            if (!file.is_open()) {
+                int err = errno;
+                result.status = ClassifyOpenErrno(err);
+                if (result.status == ConfigStatus::NotFound) result.status = ConfigStatus::OtherError;
+                result.os_error = err;
+                result.detail = err ? std::strerror(err) : "unknown error";
+                if (Logger::IsInitialized()) {
+                    if (result.status == ConfigStatus::AccessDenied) {
+                        Logger::Error("ACCESS DENIED writing config file: " + path +
+                                      " (" + result.detail + "). Settings cannot be saved -- the "
+                                      "config folder may be owned by another account, read-only, or "
+                                      "blocked by antivirus / Controlled Folder Access.");
+                    } else {
+                        Logger::Error("Failed to open config file for writing: " + path +
+                                      " (" + result.detail + ")");
+                    }
+                }
+                return result;
             }
-            return false;
-        }
 
-        file << j.dump(4);
+            file << j.dump(4);
+            file.flush();
+            // Catch write failures (e.g. disk full) that don't show up at open time.
+            if (!file.good()) {
+                result.status = ConfigStatus::OtherError;
+                result.detail = "write/flush failed (disk full?)";
+                if (Logger::IsInitialized()) {
+                    Logger::Error("Failed while writing config file: " + tmp + " (" + result.detail + ")");
+                }
+                file.close();
+                std::error_code rmec;
+                std::filesystem::remove(tmp, rmec);
+                return result;
+            }
+        } // ofstream closed here, before the rename
+
+        std::error_code rnec;
+        std::filesystem::rename(tmp, path, rnec);
+        if (rnec) {
+            // Some Windows configurations refuse a replace-rename (e.g. the
+            // destination is locked). Fall back to a direct overwrite so we at
+            // least try to persist, and report the underlying error if that fails too.
+            std::error_code cpec;
+            std::filesystem::copy_file(tmp, path,
+                std::filesystem::copy_options::overwrite_existing, cpec);
+            std::error_code rmec;
+            std::filesystem::remove(tmp, rmec);
+            if (cpec) {
+                result.status = ConfigStatus::AccessDenied;
+                result.detail = rnec.message() + " / " + cpec.message();
+                if (Logger::IsInitialized()) {
+                    Logger::Error("Could not replace config file: " + path + " (" + result.detail + ")");
+                }
+                return result;
+            }
+        }
 
         if (Logger::IsInitialized()) {
             Logger::Info("Saved config file: " + path);
-            Logger::Debug("Saved " + std::to_string(device_roles.size()) + " device roles, " + 
-                         std::to_string(device_settings.size()) + " device settings, and " + 
+            Logger::Debug("Saved " + std::to_string(device_roles.size()) + " device roles, " +
+                         std::to_string(device_settings.size()) + " device settings, and " +
                          std::to_string(device_names.size()) + " device names");
         }
-        return true;
+        result.status = ConfigStatus::Ok;
+        return result;
     }
     catch (const std::exception& e) {
         if (Logger::IsInitialized()) {
             Logger::Error("Error saving config: " + std::string(e.what()));
         }
-        return false;
+        result.status = ConfigStatus::OtherError;
+        result.detail = e.what();
+        return result;
     }
 }
 
