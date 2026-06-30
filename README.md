@@ -108,6 +108,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list.
 - Added the **VRCFT JawOpen constraint**: while locked, your jaw must stay where it was when locked
 - Added a **Microphone enforced-mute constraint**: stay quiet while locked, with adaptive ambient-floor detection, a background-noise calibration button, and a configurable cooldown
 - Added a **unified collar mode** (Neither / Jaw / Mic / Both) driven by a single in-game toggle button, replacing the per-feature `SPVR_JawEnabled` radial
+- The in-game collar-mode display now self-heals after an avatar reload instead of blanking out until the next toggle
 - Added **in-game sound effects**: pulse an OSC enum so your avatar can play a sound on lock, unlock, warning, disobedience, and collar-mode switch
 - Added a full **Warning Zone** action section for PiShock (beep / vibrate / shock with their own intensity & duration)
 - Fixed: repeated warnings could starve the disobedience shock so it never fired (warning and disobedience now throttle independently)
@@ -123,6 +124,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full list.
 - OSC is now enabled by default, with the advanced path settings collapsed behind clearer defaults and per-section reset buttons
 - Settings now auto-save instantly (no more "Save All Settings" button) and include an adjustable UI font scale
 - Fixed config location: settings now always load and save from `%APPDATA%\StayPutVR\config` (existing configs are migrated automatically), and the Settings > Folders buttons now open the correct config/log/resources folders
+- Clearer settings errors: StayPutVR now tells a first run apart from a real permissions problem, warns you (with fix-it steps) when settings can't be read or saved, moves a corrupt settings file aside instead of overwriting it, and no longer throws away all your settings over one bad value
 - Refreshed the application theme
 - Updated Dear ImGui
 - Added a Linux development build (GUI + OSC simulation, no SteamVR driver) for avatar prefab iteration

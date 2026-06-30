@@ -25,6 +25,11 @@ per-feature `SPVR_JawEnabled` radial is retired in favor of the unified collar t
 - **Unified collar mode** — one in-game momentary button (`SPVR_Collar_ToggleButton`)
   cycles `SPVR_Collar_Mode` between Neither / Jaw / Mic / Both, skipping any feature
   you haven't enabled. Replaces the per-feature `SPVR_JawEnabled` radial.
+- **Collar display self-heals** — the in-game collar-mode display no longer blanks out
+  and stays stale after an avatar reload. The app re-asserts the current collar mode on
+  every lock/unlock/warning/disobedience edge and again ~1s after an avatar change, so a
+  param reset on avatar load is corrected automatically instead of waiting for the next
+  collar toggle.
 - **In-game sound effects** — on lock, unlock, warning, disobedience, and collar-mode
   switch, the app can pulse an int enum on `SPVR_SoundEffect` so an avatar animation
   layer plays a sound. Per-event toggles (on by default) under
@@ -45,6 +50,17 @@ per-feature `SPVR_JawEnabled` radial is retired in favor of the unified collar t
   *disobedience* vibrate; warnings are now silent unless explicitly configured.
 
 ### General
+- **Clearer config errors & settings that actually stick** — StayPutVR now tells the
+  difference between a first run (no settings yet) and a real problem reading or saving
+  your settings. If the settings file can't be read or saved — typically a permissions
+  leftover from a past "Run as administrator", a read-only file, or antivirus /
+  Controlled Folder Access blocking the folder — a warning banner appears with step-by-step
+  fixes and an "Open Config Folder" button. A corrupt settings file is moved aside
+  (`config.ini.corrupt-<timestamp>`) instead of being silently overwritten, a single bad
+  value no longer discards all your other settings, and saves are written atomically so a
+  crash mid-save can't corrupt the file. A startup self-check logs exactly where settings
+  live and whether the folder is writable, so "my settings don't save" is diagnosable from
+  the log alone.
 - Settings → Notifications: "Audio Notifications" renamed to **"App Sound Effects"**
   (the on-PC cues), distinct from the new in-game sound effects.
 - JawOpen input callbacks are registered on startup auto-connect (not only on a manual
