@@ -140,7 +140,10 @@ namespace StayPutVR {
         // backoff so a later Connect() starts clean.
         want_connected_ = false;
         connect_backoff_.Resume();
-        if (ws_client_ && connected_) {
+        // Tear down the client even if connected_ is already false: an unexpected
+        // drop leaves the client in ERROR_STATE with handles still open, and only
+        // ws_client_->Disconnect() (idempotent when already disconnected) frees it.
+        if (ws_client_) {
             Logger::Info("Disconnecting from PiShock WebSocket");
             ws_client_->Disconnect();
             connected_ = false;

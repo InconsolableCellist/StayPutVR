@@ -115,6 +115,16 @@ bool WebSocketClient::ParseUrl(const std::string& url) {
 }
 
 bool WebSocketClient::Connect(const std::string& url) {
+    // A dropped connection (e.g. the socket dying silently across a sleep/resume)
+    // leaves the receive thread setting state_ to ERROR_STATE/DISCONNECTING and
+    // exiting without cleaning up. Tear that dead connection down here so a
+    // reconnect can proceed, instead of wedging on the guard below until the app
+    // is restarted. Disconnect() joins the stale receive thread and frees handles.
+    if (state_ == WebSocketState::ERROR_STATE ||
+        state_ == WebSocketState::DISCONNECTING) {
+        Disconnect();
+    }
+
     if (state_ != WebSocketState::DISCONNECTED) {
         SetError("Already connected or connecting");
         return false;
@@ -437,6 +447,10 @@ void WebSocketClient::ReceiveThreadFunction() {
         }
     }
     
+    // Reflect reality on every exit path (the receive-error path above breaks
+    // without clearing this), so Disconnect()'s join completes promptly instead
+    // of timing out and detaching an already-finished thread.
+    receive_thread_running_ = false;
     Logger::Debug("WebSocket receive thread stopped");
 }
 

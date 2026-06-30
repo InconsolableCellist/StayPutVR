@@ -17,11 +17,13 @@ public:
     static bool Initialize();
     static void Shutdown();
     
-    // Simple POST request with JSON body and response
+    // Simple POST request with JSON body and response.
+    // extraHeaders are merged on top of the default Content-Type header.
     static bool PostJson(
         const std::string& url,
         const nlohmann::json& requestBody,
         std::string& responseText,
+        const std::map<std::string, std::string>& extraHeaders = {},
         std::function<void(int progress)> progressCallback = nullptr
     );
     

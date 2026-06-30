@@ -315,7 +315,7 @@ Section "Install"
     WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
     WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\bin\stayputvr_app.exe,0"
     WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "StayPutVR Team"
-    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.4"
+    WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "1.4.1"
     
     ; Get size of installation directory
     ${GetSize} "$INSTDIR" "/S=0K" $0 $1 $2
