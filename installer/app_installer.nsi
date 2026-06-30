@@ -9,7 +9,7 @@
 
 ; Define installer name and output file
 Name "StayPutVR"
-OutFile "StayPutVR v1.4 Setup.exe"
+OutFile "StayPutVR v1.4.1 Setup.exe"
 
 ; Default installation directory
 InstallDir "$PROGRAMFILES\StayPutVR"
