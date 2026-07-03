@@ -598,6 +598,15 @@ namespace StayPutVR {
     }
 
     void UIManager::OnDeviceLocked(OSCDeviceType device, bool locked) {
+        // Track the collar latch independently of device assignment. The collar maps
+        // to the HMD role; when SPVR_HMD_Latch_IsPosed arrives the collar is latched on
+        // the avatar, which is true whether or not a tracker is assigned to the HMD
+        // slot. The jaw/mic constraints OR this in so they engage off the latch even
+        // when no HMD device exists to lock the head's position.
+        if (device == OSCDeviceType::HMD) {
+            collar_latched_via_osc_ = locked;
+        }
+
         // Find devices with the appropriate role
         for (auto& dev : device_positions_) {
             // Check if this device has the role that matches the OSC device type

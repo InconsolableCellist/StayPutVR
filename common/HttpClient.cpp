@@ -161,15 +161,19 @@ bool HttpClient::PostJson(
     const std::string& url,
     const nlohmann::json& requestBody,
     std::string& responseText,
+    const std::map<std::string, std::string>& extraHeaders,
     std::function<void(int progress)> progressCallback) {
-    
+
     // Serialize JSON
     std::string body = requestBody.dump();
-    
-    // Set headers
+
+    // Set headers (caller-supplied headers override the defaults)
     std::map<std::string, std::string> headers;
     headers["Content-Type"] = "application/json";
-    
+    for (const auto& header : extraHeaders) {
+        headers[header.first] = header.second;
+    }
+
     // Send request
     return SendHttpRequest(url, "POST", headers, body, responseText, progressCallback);
 }
@@ -433,12 +437,18 @@ bool SendPiShockCommand(
                  ", Intensity: " + std::to_string(intensity) + 
                  ", Duration: " + std::to_string(duration));
     
+    // PiShock asks that the API key also be sent as a header (mirroring the
+    // Apikey we put in the body) ahead of the api.pishock.com migration.
+    std::map<std::string, std::string> headers;
+    headers["X-PiShock-Api-Key"] = apiKey;
+
     bool success = HttpClient::PostJson(
         "https://do.pishock.com/api/apioperate",
         requestBody,
-        response
+        response,
+        headers
     );
-    
+
     if (success) {
         Logger::Info("PiShock command succeeded: " + response);
     } else {
@@ -492,12 +502,18 @@ void SendPiShockCommandAsync(
                     ", Intensity: " + std::to_string(clampedIntensity) + 
                     ", Duration: " + std::to_string(clampedDuration));
         
+        // PiShock asks that the API key also be sent as a header (mirroring the
+        // Apikey we put in the body) ahead of the api.pishock.com migration.
+        std::map<std::string, std::string> headers;
+        headers["X-PiShock-Api-Key"] = apiKey;
+
         bool success = HttpClient::PostJson(
             "https://do.pishock.com/api/apioperate",
             requestBody,
-            response
+            response,
+            headers
         );
-        
+
         if (success) {
             Logger::Info("Async PiShock command succeeded: " + response);
         } else {
@@ -756,7 +772,7 @@ bool HttpClient::Initialize() { initialized_ = true; return true; }
 void HttpClient::Shutdown() { initialized_ = false; }
 
 bool HttpClient::PostJson(const std::string&, const nlohmann::json&, std::string& responseText,
-                          std::function<void(int)>) {
+                          const std::map<std::string, std::string>&, std::function<void(int)>) {
     responseText = "HTTP disabled on Linux development build";
     return false;
 }
