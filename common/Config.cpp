@@ -58,6 +58,12 @@ Config::Config()
     , mic_disobedience_margin(0.10f)
     , mic_grace_seconds(2.0f)
     , mic_disobedience_cooldown_seconds(1.0f)
+    , muteself_enabled(false)
+    , osc_muteself_path("/avatar/parameters/MuteSelf")
+    , muteself_grace_seconds(3.0f)
+    , muteself_cooldown_seconds(5.0f)
+    , muteself_require_lock(true)
+    , muteself_warning_audio(true)
     , osc_collar_toggle_path("/avatar/parameters/SPVR_Collar_ToggleButton")
     , pishock_enabled(false)
     , pishock_group(0)
@@ -441,6 +447,12 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         mic_disobedience_margin = jval(j, "mic_disobedience_margin", 0.10f);
         mic_grace_seconds = jval(j, "mic_grace_seconds", 2.0f);
         mic_disobedience_cooldown_seconds = jval(j, "mic_disobedience_cooldown_seconds", 1.0f);
+        muteself_enabled = jval(j, "muteself_enabled", false);
+        osc_muteself_path = jval(j, "osc_muteself_path", "/avatar/parameters/MuteSelf");
+        muteself_grace_seconds = jval(j, "muteself_grace_seconds", 3.0f);
+        muteself_cooldown_seconds = jval(j, "muteself_cooldown_seconds", 5.0f);
+        muteself_require_lock = jval(j, "muteself_require_lock", true);
+        muteself_warning_audio = jval(j, "muteself_warning_audio", true);
         osc_collar_toggle_path = jval(j, "osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
         osc_bite_path = jval(j, "osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = jval(j, "osc_bite_enabled", true);
@@ -958,6 +970,12 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["mic_disobedience_margin"] = mic_disobedience_margin;
         j["mic_grace_seconds"] = mic_grace_seconds;
         j["mic_disobedience_cooldown_seconds"] = mic_disobedience_cooldown_seconds;
+        j["muteself_enabled"] = muteself_enabled;
+        j["osc_muteself_path"] = osc_muteself_path;
+        j["muteself_grace_seconds"] = muteself_grace_seconds;
+        j["muteself_cooldown_seconds"] = muteself_cooldown_seconds;
+        j["muteself_require_lock"] = muteself_require_lock;
+        j["muteself_warning_audio"] = muteself_warning_audio;
         j["osc_collar_toggle_path"] = osc_collar_toggle_path;
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;

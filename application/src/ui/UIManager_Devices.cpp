@@ -274,6 +274,7 @@ namespace StayPutVR {
         // the HMD lock state itself (so it works for both global and individual locks).
         CheckJawOpenConstraint();
         CheckMicrophoneConstraint();
+        CheckMuteSelfConstraint();
         UpdateMicCalibration();      // finalize a background-noise sample if one is running
         UpdateInGameSoundPulse();    // reset the SPVR_SoundEffect pulse to 0 when it expires
 
@@ -983,9 +984,11 @@ namespace StayPutVR {
 
         bool play_success = false;
 
-        // Returned to safe (quiet) zone.
+        // Returned to safe (quiet) zone. The enforced-unmute constraint shares the
+        // Mic status param; don't clobber a warning/disobedience it is reporting.
         if (!was_safe && is_safe) {
-            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+            if (!muteself_.in_grace && !muteself_.punishing)
+                UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
             if (buttplug_manager_ && buttplug_manager_->IsEnabled())
                 buttplug_manager_->TriggerSafeZoneActions(kMicSerial);
             play_success = true;
@@ -1055,6 +1058,139 @@ namespace StayPutVR {
                     played = true;
                 }
                 if (played) last_sound_time_ = now;
+            }
+        }
+    }
+
+    // Enforced-unmute constraint: punishes MUTING in VRChat (the inverse of the mic
+    // constraint above). The live MuteSelf bool is pushed by the OSC receive thread;
+    // this runs every frame on the UI thread to do the timing. A mute shorter than
+    // the grace window is forgiven entirely; staying muted past it fires the
+    // disobedience actions, repeating with a gap of (longest enabled action duration
+    // + cooldown) so a repeat never overlaps the action itself. Status is reported
+    // on the shared Mic OSC status param so the HUD overlay needs no new params.
+    void UIManager::CheckMuteSelfConstraint() {
+        // Gate: enabled + agreed (shares the mic tab's safety agreement) and not
+        // e-stopped; optionally also HMD-locked with the collar mode including Mic,
+        // mirroring the mic constraint's gate.
+        bool gate = config_.muteself_enabled && config_.mic_user_agreement &&
+                    !emergency_stop_active_;
+        if (gate && config_.muteself_require_lock) {
+            bool hmd_locked = false;
+            for (const auto& d : device_positions_) {
+                if (d.role == DeviceRole::HMD &&
+                    (d.locked || (d.include_in_locking && global_lock_active_))) {
+                    hmd_locked = true;
+                    break;
+                }
+            }
+            gate = CollarModeIncludesMic() && hmd_locked;
+        }
+
+        auto now = std::chrono::steady_clock::now();
+        bool muted = muteself_.muted.load();
+
+        // The WASAPI mic constraint shares the Mic status param; don't clobber a
+        // warning/disobedience it is currently reporting with our "safe" edges.
+        bool mic_holds_status = mic_.active && (mic_.in_warning_zone || mic_.exceeds_threshold);
+
+        // Falling edge: gate dropped -> suspend, clearing any pending punishment.
+        if (!gate) {
+            if (muteself_.gate_active) {
+                if ((muteself_.in_grace || muteself_.punishing) && !mic_holds_status)
+                    UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+                muteself_.gate_active = false;
+                muteself_.in_grace = false;
+                muteself_.punishing = false;
+                muteself_.prev_muted = false;
+            }
+            return;
+        }
+
+        // Rising edge: gate just engaged. Treat a pre-existing mute as starting now
+        // so the user always gets a full grace window after engaging.
+        if (!muteself_.gate_active) {
+            muteself_.gate_active = true;
+            muteself_.prev_muted = false;
+            muteself_.in_grace = false;
+            muteself_.punishing = false;
+        }
+
+        // Mute rising edge -> start the grace window.
+        if (muted && !muteself_.prev_muted) {
+            muteself_.mute_start = now;
+            muteself_.in_grace = true;
+            muteself_.punishing = false;
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedWarning);
+        }
+        // Unmute edge -> all forgiven, whether in grace or mid-punishment.
+        if (!muted && muteself_.prev_muted) {
+            bool was_flagged = muteself_.in_grace || muteself_.punishing;
+            muteself_.in_grace = false;
+            muteself_.punishing = false;
+            if (was_flagged) {
+                if (!mic_holds_status)
+                    UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+                if (config_.audio.enabled) {
+                    std::string fp = StayPutVR::GetResourcesPath() + "/success.wav";
+                    if (std::filesystem::exists(fp)) {
+                        AudioManager::StopSound();
+                        AudioManager::PlaySound("success.wav", config_.audio.volume);
+                        last_sound_time_ = now;
+                    }
+                }
+            }
+        }
+        muteself_.prev_muted = muted;
+
+        if (!muted) return;
+
+        // Grace window: optionally nag with the warning sound (1 s cadence on the
+        // shared audio cooldown), then escalate to punishment when it elapses.
+        if (muteself_.in_grace) {
+            float since_mute = std::chrono::duration_cast<std::chrono::duration<float>>(
+                now - muteself_.mute_start).count();
+            if (since_mute < config_.muteself_grace_seconds) {
+                if (config_.muteself_warning_audio && config_.audio.enabled && config_.audio.warning) {
+                    float elapsed = std::chrono::duration_cast<std::chrono::duration<float>>(
+                        now - last_sound_time_).count();
+                    if (elapsed >= 1.0f) {
+                        AudioManager::PlayWarningSound(config_.audio.volume);
+                        last_sound_time_ = now;
+                    }
+                }
+                return;
+            }
+            muteself_.in_grace = false;
+            muteself_.punishing = true;
+            muteself_.next_fire_time = now; // first action fires immediately
+            UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedDisobedience);
+        }
+
+        // Repeated punishment while the mute persists. The next fire waits out the
+        // longest enabled action's duration plus the cooldown so repeats never
+        // overlap the action itself. Each shocker's own rate limit still applies.
+        if (muteself_.punishing && now >= muteself_.next_fire_time) {
+            TriggerPiShockDisobedience(kMuteSelfSerial);
+            if (openshock_manager_ && openshock_manager_->IsEnabled())
+                openshock_manager_->TriggerDisobedienceActions(kMuteSelfSerial);
+
+            float action_dur = 0.0f;
+            if (config_.pishock_enabled)
+                action_dur = std::max(action_dur, config_.pishock_disobedience_duration);
+            if (config_.openshock_enabled)
+                action_dur = std::max(action_dur, config_.openshock_disobedience_duration);
+            if (config_.buttplug_enabled)
+                action_dur = std::max(action_dur, config_.buttplug_disobedience_duration);
+            muteself_.next_fire_time = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                std::chrono::duration<float>(action_dur + config_.muteself_cooldown_seconds));
+
+            if (config_.audio.enabled && config_.audio.out_of_bounds) {
+                std::string fp = StayPutVR::GetResourcesPath() + "/disobedience.wav";
+                if (std::filesystem::exists(fp)) {
+                    AudioManager::PlaySound("disobedience.wav", config_.audio.volume);
+                    last_sound_time_ = now;
+                }
             }
         }
     }
@@ -1581,6 +1717,15 @@ namespace StayPutVR {
             mic_.openshock_enabled = it->second;
         if (auto it = config_.device_vibration_ids.find(kMicSerial); it != config_.device_vibration_ids.end())
             mic_.vibration_device_enabled = it->second;
+    }
+
+    void UIManager::LoadMuteSelfBindingsFromConfig() {
+        if (auto it = config_.device_pishock_ids.find(kMuteSelfSerial); it != config_.device_pishock_ids.end())
+            muteself_.pishock_enabled = it->second;
+        if (auto it = config_.device_openshock_ids.find(kMuteSelfSerial); it != config_.device_openshock_ids.end())
+            muteself_.openshock_enabled = it->second;
+        if (auto it = config_.device_vibration_ids.find(kMuteSelfSerial); it != config_.device_vibration_ids.end())
+            muteself_.vibration_device_enabled = it->second;
     }
 
     // Begin a background-noise sample. Captures the quiet-room level fluctuation for

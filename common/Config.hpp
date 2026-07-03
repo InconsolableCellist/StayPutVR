@@ -192,6 +192,20 @@ public:
     float mic_grace_seconds = 2.0f;             // ambient-floor capture window after HMD lock
     float mic_disobedience_cooldown_seconds = 1.0f; // refractory period after a mic disobedience fires
 
+    // Enforced-unmute constraint (see UIManager_Devices CheckMuteSelfConstraint).
+    // The inverse of the mic constraint: punishes MUTING in VRChat. Listens for the
+    // built-in MuteSelf parameter (VRChat sends it to any OSC listener; no avatar
+    // setup needed). Staying muted past the grace window fires the disobedience
+    // actions, repeating while muted with a gap of (action duration + cooldown) so
+    // repeats never overlap the action itself. Shares mic_user_agreement (same tab,
+    // same physical-restraint category). Off by default.
+    bool muteself_enabled = false;
+    std::string osc_muteself_path = "/avatar/parameters/MuteSelf"; // VRChat built-in (bool)
+    float muteself_grace_seconds = 3.0f;        // may stay muted this long before punishment
+    float muteself_cooldown_seconds = 5.0f;     // extra gap between repeats, on top of the action duration
+    bool muteself_require_lock = true;          // gate on HMD lock + collar-includes-Mic (false => always armed)
+    bool muteself_warning_audio = true;         // play the warning sound during the muted grace window
+
     // Unified collar mode runtime gate. The avatar's momentary SPVR_Collar_ToggleButton
     // cycles SPVR_Collar_Mode (0=Neither,1=Jaw,2=Mic,3=Both) among the integrations the
     // user has enabled+agreed; it replaces the old per-feature SPVR_JawEnabled radial.

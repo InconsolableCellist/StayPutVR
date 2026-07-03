@@ -972,6 +972,14 @@ namespace StayPutVR {
             }
         );
 
+        // VRChat built-in MuteSelf: store the live mute state; all timing decisions
+        // (grace, repeats) happen on the UI thread in CheckMuteSelfConstraint.
+        OSCManager::GetInstance().SetMuteSelfCallback(
+            [this](bool muted) {
+                muteself_.muted.store(muted);
+            }
+        );
+
         // Unified collar-mode toggle button (momentary contact). Runs on the OSC
         // receive thread: rising-edge detect, advance to the next enabled+agreed mode,
         // and echo SPVR_Collar_Mode. Reads only collar_valid_mask_ (atomic), never config_.

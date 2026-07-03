@@ -428,6 +428,109 @@ namespace StayPutVR {
         ImGui::SameLine();
         if (ImGui::Button("Test disobedience action")) TriggerPiShockDisobedience(kMicSerial);
 
+        // ---- Enforced unmute (VRChat MuteSelf) ----------------------------------
+        // The inverse constraint: punishes MUTING in VRChat. Lives under the same
+        // safety agreement as the mic feature (same tab, same category of play).
+        ImGui::Separator();
+        ImGui::Text("Enforced Unmute (VRChat mute)");
+        ImGui::TextWrapped(
+            "Punishes muting yourself in VRChat. Uses VRChat's built-in MuteSelf OSC "
+            "parameter, so no avatar setup is needed. Staying muted past the grace window "
+            "triggers the disobedience actions, repeating while you stay muted; each repeat "
+            "waits for the action to finish plus the cooldown below.");
+        ImGui::Spacing();
+
+        bool ms_enabled = config_.muteself_enabled;
+        if (ImGui::Checkbox("Enable Enforced Unmute", &ms_enabled)) {
+            config_.muteself_enabled = ms_enabled;
+            if (ms_enabled) LoadMuteSelfBindingsFromConfig();
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Master switch (off by default). Punishes muting in VRChat while active.");
+
+        // Live readout of the inbound MuteSelf state so the OSC link can be verified
+        // at a glance (VRChat only sends MuteSelf on change and on avatar load, so
+        // the state is unknown until the first toggle after the app starts).
+        ImGui::SameLine();
+        ImGui::Text("| VRChat mute:");
+        ImGui::SameLine();
+        if (muteself_.muted.load()) ImGui::TextColored(ImVec4(0.9f, 0.4f, 0.4f, 1.0f), "MUTED");
+        else ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "UNMUTED");
+
+        bool ms_require_lock = config_.muteself_require_lock;
+        if (ImGui::Checkbox("Only enforce while collar is locked", &ms_require_lock)) {
+            config_.muteself_require_lock = ms_require_lock;
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Checked: enforced only while the HMD is locked AND the collar mode includes Mic\n"
+                                  "(like the mic constraint). Unchecked: enforced whenever the feature is enabled.");
+
+        bool ms_warn_audio = config_.muteself_warning_audio;
+        if (ImGui::Checkbox("Audio warning while muted (before punishment)", &ms_warn_audio)) {
+            config_.muteself_warning_audio = ms_warn_audio;
+            SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Plays the warning sound during the grace window, up until the disobedience\n"
+                                  "action fires. Requires audio feedback to be enabled on the Settings tab.");
+
+        float ms_grace = config_.muteself_grace_seconds;
+        if (ImGuiHelpers::SliderFloatWithButtons("Mute grace period (s)", &ms_grace, 0.0f, 30.0f, 0.5f, "%.1f")) {
+            config_.muteself_grace_seconds = ms_grace; SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("How long you may stay muted before the first disobedience action fires.\n"
+                                  "Unmuting within this window is forgiven entirely.");
+
+        float ms_cooldown = config_.muteself_cooldown_seconds;
+        if (ImGuiHelpers::SliderFloatWithButtons("Repeat cooldown (s)", &ms_cooldown, 0.0f, 60.0f, 0.5f, "%.1f")) {
+            config_.muteself_cooldown_seconds = ms_cooldown; SaveConfig();
+        }
+        ImGuiHelpers::HelpTooltip("Extra wait between repeated disobedience actions while you stay muted,\n"
+                                  "on top of the action's own duration (so repeats never overlap).");
+
+        ImGui::Spacing();
+        ImGui::Text("Shocker / Vibrator bindings (Enforced Unmute)");
+        ImGui::TextWrapped("Which devices fire when you stay muted.");
+
+        bool ms_changed = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.pishock_shocker_ids[i] != 0) {
+                ImGui::PushID(300 + i);
+                bool b = muteself_.pishock_enabled[i];
+                if (ImGui::Checkbox(("PiShock " + std::to_string(i)).c_str(), &b)) {
+                    muteself_.pishock_enabled[i] = b; ms_changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        for (int i = 0; i < 5; ++i) {
+            if (!config_.openshock_device_ids[i].empty()) {
+                ImGui::PushID(400 + i);
+                bool b = muteself_.openshock_enabled[i];
+                if (ImGui::Checkbox(("OpenShock " + std::to_string(i)).c_str(), &b)) {
+                    muteself_.openshock_enabled[i] = b; ms_changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        for (int i = 0; i < 5; ++i) {
+            if (config_.buttplug_device_indices[i] >= 0) {
+                ImGui::PushID(500 + i);
+                bool b = muteself_.vibration_device_enabled[i];
+                if (ImGui::Checkbox(("BPIO " + std::to_string(i)).c_str(), &b)) {
+                    muteself_.vibration_device_enabled[i] = b; ms_changed = true;
+                }
+                ImGui::PopID();
+            }
+        }
+        if (ms_changed) {
+            config_.device_pishock_ids[kMuteSelfSerial] = muteself_.pishock_enabled;
+            config_.device_openshock_ids[kMuteSelfSerial] = muteself_.openshock_enabled;
+            config_.device_vibration_ids[kMuteSelfSerial] = muteself_.vibration_device_enabled;
+            SaveConfig();
+        }
+
+        if (ImGui::Button("Test unmute disobedience action")) TriggerPiShockDisobedience(kMuteSelfSerial);
+
         ImGui::EndDisabled(); // end of mic_user_agreement gate
     }
 

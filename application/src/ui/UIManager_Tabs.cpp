@@ -554,6 +554,35 @@ namespace StayPutVR {
                 if (engaged) ImGui::TextColored(col, "%.2f", mic_.deviation);
                 else ImGui::TextDisabled("-");
             }
+
+            // Enforced unmute (VRChat MuteSelf), shown only when enabled. "Dist"
+            // column carries how long the user has been muted, in seconds.
+            if (config_.muteself_enabled) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted("Unmute");
+
+                bool muted = muteself_.muted.load();
+                const char* state; ImVec4 col;
+                if (config_.muteself_require_lock && !CollarModeIncludesMic())
+                                                 { state = "mode off"; col = ImVec4(0.6f, 0.6f, 0.6f, 1.0f); }
+                else if (!muteself_.gate_active) { state = "armed"; col = ImVec4(0.55f, 0.7f, 0.95f, 1.0f); }
+                else if (muteself_.punishing)    { state = "out"; col = ImVec4(1.0f, 0.2f, 0.2f, 1.0f); }
+                else if (muteself_.in_grace)     { state = "warning"; col = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); }
+                else if (muted)                  { state = "muted"; col = ImVec4(1.0f, 1.0f, 0.0f, 1.0f); }
+                else                             { state = "unmuted"; col = ImVec4(0.0f, 1.0f, 0.0f, 1.0f); }
+
+                ImGui::TableNextColumn();
+                ImGui::TextColored(col, "%s", state);
+                ImGui::TableNextColumn();
+                if (muteself_.gate_active && (muteself_.in_grace || muteself_.punishing)) {
+                    float since = std::chrono::duration_cast<std::chrono::duration<float>>(
+                        std::chrono::steady_clock::now() - muteself_.mute_start).count();
+                    ImGui::TextColored(col, "%.1f s", since);
+                } else {
+                    ImGui::TextDisabled("-");
+                }
+            }
             ImGui::EndTable();
 
             // Unified collar-mode readout + live mic VU (when the mic feature is on).

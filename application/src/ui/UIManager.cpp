@@ -271,6 +271,7 @@ namespace StayPutVR {
             microphone_manager_->Start();
         }
         LoadMicBindingsFromConfig();
+        LoadMuteSelfBindingsFromConfig();
         RecomputeCollarValidMask();
 
         return true;

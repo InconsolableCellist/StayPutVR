@@ -236,6 +236,7 @@ void OSCManager::SetConfig(const Config& config) {
     osc_estop_stretch_path_ = config.osc_estop_stretch_path;
     osc_jawopen_path_ = config.osc_jawopen_path;
     osc_collar_toggle_path_ = config.osc_collar_toggle_path;
+    osc_muteself_path_ = config.osc_muteself_path;
 
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Updated OSC paths from config (jawopen='" +
@@ -482,6 +483,12 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                 // true and false so the UI can rising-edge detect and advance the mode.
                 else if (address == osc_collar_toggle_path_ && collar_toggle_callback_) {
                     collar_toggle_callback_(value_bool);
+                }
+
+                // VRChat built-in MuteSelf (bool). Pass both true and false so the
+                // enforced-unmute constraint can edge-detect mute and unmute.
+                else if (address == osc_muteself_path_ && muteself_callback_) {
+                    muteself_callback_(value_bool);
                 }
                 
                 // Latch_IsPosed paths: direct state change (not toggle)

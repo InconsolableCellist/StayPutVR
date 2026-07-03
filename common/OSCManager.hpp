@@ -136,6 +136,11 @@ public:
     // do rising-edge detection and advance SPVR_Collar_Mode.
     void SetCollarToggleCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); collar_toggle_callback_ = std::move(callback); }
 
+    // Set callback for VRChat's built-in MuteSelf parameter (bool). Fired on every
+    // inbound value (true and false) so the UI can edge-detect mute/unmute for the
+    // enforced-unmute constraint.
+    void SetMuteSelfCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); muteself_callback_ = std::move(callback); }
+
     // VRCOSC PiShock methods
     void SendPiShockGroup(int group);
     void SendPiShockDuration(float duration); // 0-1 float
@@ -218,6 +223,10 @@ private:
     // Unified collar-mode toggle button (momentary contact). Inbound only.
     std::string osc_collar_toggle_path_ = "/avatar/parameters/SPVR_Collar_ToggleButton";
 
+    // VRChat built-in self-mute state (bool). Inbound only; VRChat sends it to any
+    // OSC listener without avatar setup.
+    std::string osc_muteself_path_ = "/avatar/parameters/MuteSelf";
+
     // Helper methods for sending OSC messages
     bool SendOSCMessage(const std::string& path, int value);
     bool SendOSCMessage(const std::string& path, float value);
@@ -256,6 +265,9 @@ private:
 
     // Callback for the unified collar-mode toggle button (momentary contact, bool)
     std::function<void(bool)> collar_toggle_callback_;
+
+    // Callback for VRChat's built-in MuteSelf parameter (bool)
+    std::function<void(bool)> muteself_callback_;
 };
 
 } // namespace StayPutVR 

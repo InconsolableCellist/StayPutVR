@@ -151,6 +151,24 @@ namespace StayPutVR {
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
+    // Enforced-unmute constraint state. The inverse of MicrophoneConstraint: the
+    // live value is VRChat's built-in MuteSelf bool (pushed by the OSC receive
+    // thread), and staying muted past the grace window is the violation. While the
+    // violation persists, disobedience repeats with a gap of (action duration +
+    // cooldown) so repeats never overlap the action itself.
+    struct MuteSelfConstraint {
+        std::atomic<bool> muted{false};   // live MuteSelf from OSC (receive thread)
+        bool prev_muted = false;          // UI-thread edge detection
+        bool gate_active = false;         // previous-frame gate value
+        bool in_grace = false;            // muted, but still within the grace window
+        bool punishing = false;           // muted past grace; disobedience repeating
+        std::chrono::steady_clock::time_point mute_start;
+        std::chrono::steady_clock::time_point next_fire_time;
+        std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
+    };
+
     // Unified collar mode (replaces the old SPVR_JawEnabled radial). The avatar's
     // momentary SPVR_Collar_ToggleButton cycles through the modes whose integration
     // is enabled+agreed; the app echoes the result on SPVR_Collar_Mode.
@@ -364,6 +382,12 @@ namespace StayPutVR {
         void StartMicCalibration();             // begin a background-noise sample
         void UpdateMicCalibration();            // per-frame: accumulate + finalize calibration
 
+        // Enforced-unmute constraint (VRChat MuteSelf). Reserved serial keys its
+        // shocker / vibrator bindings like the jaw and mic constraints.
+        static constexpr const char* kMuteSelfSerial = "SPVR_MUTESELF";
+        void CheckMuteSelfConstraint();         // called every frame from UpdateDevicePositions
+        void LoadMuteSelfBindingsFromConfig();  // populate muteself_ binding arrays from config maps
+
         // In-game sound effects: pulse SPVR_SoundEffect for a configured event, then
         // reset to 0 a moment later (UpdateInGameSoundPulse, called every frame).
         void TriggerInGameSound(InGameSound type);
@@ -388,6 +412,8 @@ namespace StayPutVR {
 
         // Microphone enforced-mute constraint runtime state (see CheckMicrophoneConstraint).
         MicrophoneConstraint mic_;
+        // Enforced-unmute constraint runtime state (see CheckMuteSelfConstraint).
+        MuteSelfConstraint muteself_;
         // Live mic capture (WASAPI). Started when mic_enabled is on.
         std::unique_ptr<MicrophoneManager> microphone_manager_;
 
