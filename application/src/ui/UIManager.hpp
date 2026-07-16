@@ -31,6 +31,7 @@
 #include "../../../common/Logger.hpp"
 #include "../../../common/PathUtils.hpp"
 #include "../DeviceManager/DeviceManager.hpp"
+#include "../Dataset/DatasetRecorder.hpp"
 #include "../../../common/OSCManager.hpp"
 #include "../../../common/OSCQueryServer.hpp"
 #include "../managers/TwitchManager.hpp"
@@ -59,7 +60,8 @@ namespace StayPutVR {
         OPENSHOCK,
         BUTTPLUG,
         TWITCH,
-        INTEGRATIONS
+        INTEGRATIONS,
+        DATASET
     };
 
     struct DevicePosition {
@@ -309,6 +311,9 @@ namespace StayPutVR {
         void RenderVRCFTTab();
         // Integrations tab: hosts PiShock / OpenShock / BPIO / Twitch / OSC Triggers as sub-tabs.
         void RenderIntegrationsTab();
+        // Dataset tab: raw tracker-pose capture for training datasets
+        // (record/pause controls, live stats, session management table).
+        void RenderDatasetTab();
         // OSC Triggers sub-tab: bite/shock enable + intensity/duration (paths live in Settings > OSC).
         void RenderOSCTriggersTab();
 
@@ -452,6 +457,16 @@ namespace StayPutVR {
         float mic_calib_max_ = 0.0f;
 
         DeviceManager* device_manager_ = nullptr;
+
+        // Dataset capture (Dataset tab). The recorder is fed by DeviceManager
+        // on the IPC reader thread; the UI only starts/stops/pauses it and
+        // reads its atomic stats.
+        std::unique_ptr<DatasetRecorder> dataset_recorder_;
+        std::string DatasetBaseDir() const;      // config override or default
+        std::vector<DatasetSessionInfo> dataset_sessions_;   // cached table rows
+        bool dataset_sessions_dirty_ = true;     // rescan on next tab render
+        std::string dataset_delete_target_;      // session path pending delete confirm
+        bool dataset_simulate_ = false;          // dev synthetic 90 Hz feed active
         
         std::unique_ptr<TwitchManager> twitch_manager_;
         

@@ -17,8 +17,10 @@ namespace StayPutVR {
         // Message types for IPC communication
         enum class MessageType : uint8_t {
             UNKNOWN = 0,
-            DEVICE_UPDATE = 1,
-            COMMAND = 2
+            DEVICE_UPDATE = 1,        // legacy v1: pos/rot/connected only
+            COMMAND = 2,
+            DEVICE_UPDATE_V2 = 3      // adds sample timestamps, velocities,
+                                      // pose validity, tracking result
         };
 
         IPCServer();

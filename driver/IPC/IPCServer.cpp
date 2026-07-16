@@ -147,18 +147,27 @@ namespace StayPutVR {
         }
         
         try {
-            // Create message buffer
+            // Create message buffer (DEVICE_UPDATE_V2 wire format)
             std::vector<uint8_t> buffer;
-            
-            // Message type: 1 = device update
-            uint8_t msgType = static_cast<uint8_t>(MessageType::DEVICE_UPDATE);
+
+            uint8_t msgType = static_cast<uint8_t>(MessageType::DEVICE_UPDATE_V2);
             buffer.push_back(msgType);
-            
+
+            // Batch-level sample timestamps: all devices in a batch were read
+            // from GetRawTrackedDevicePoses in the same driver frame, so one
+            // clock pair describes them all (taken from the first device).
+            double sampleWall = devices[0].sample_time_wall;
+            double sampleMono = devices[0].sample_time_mono;
+            buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&sampleWall),
+                         reinterpret_cast<uint8_t*>(&sampleWall) + sizeof(sampleWall));
+            buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&sampleMono),
+                         reinterpret_cast<uint8_t*>(&sampleMono) + sizeof(sampleMono));
+
             // Number of devices
             uint32_t deviceCount = static_cast<uint32_t>(devices.size());
             buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&deviceCount),
                          reinterpret_cast<uint8_t*>(&deviceCount) + sizeof(deviceCount));
-            
+
             // Device data
             for (const auto& device : devices) {
                 // Serial length and string
@@ -166,24 +175,34 @@ namespace StayPutVR {
                 buffer.insert(buffer.end(), reinterpret_cast<uint8_t*>(&serialLen),
                              reinterpret_cast<uint8_t*>(&serialLen) + sizeof(serialLen));
                 buffer.insert(buffer.end(), device.serial.begin(), device.serial.end());
-                
+
                 // Device type
                 uint8_t deviceType = static_cast<uint8_t>(device.type);
                 buffer.push_back(deviceType);
-                
+
                 // Position (3 floats)
                 buffer.insert(buffer.end(), reinterpret_cast<const uint8_t*>(device.position),
                              reinterpret_cast<const uint8_t*>(device.position) + 3 * sizeof(float));
-                
-                // Rotation (4 floats)  
+
+                // Rotation (4 floats)
                 buffer.insert(buffer.end(), reinterpret_cast<const uint8_t*>(device.rotation),
                              reinterpret_cast<const uint8_t*>(device.rotation) + 4 * sizeof(float));
-                
-                // Connected flag
-                uint8_t connectedFlag = device.connected ? 1 : 0;
-                buffer.push_back(connectedFlag);
+
+                // Velocity + angular velocity (3 + 3 floats)
+                buffer.insert(buffer.end(), reinterpret_cast<const uint8_t*>(device.velocity),
+                             reinterpret_cast<const uint8_t*>(device.velocity) + 3 * sizeof(float));
+                buffer.insert(buffer.end(), reinterpret_cast<const uint8_t*>(device.angular_velocity),
+                             reinterpret_cast<const uint8_t*>(device.angular_velocity) + 3 * sizeof(float));
+
+                // Flags: bit0 = connected, bit1 = pose_valid
+                uint8_t flags = (device.connected ? 0x01 : 0x00) |
+                                (device.pose_valid ? 0x02 : 0x00);
+                buffer.push_back(flags);
+
+                // Raw SteamVR tracking result
+                buffer.push_back(device.tracking_result);
             }
-            
+
             // Send the message
             WriteMessageAsync(buffer);
         }

@@ -101,6 +101,10 @@ public:
     bool splash_auto_close = false;          // auto-dismiss the startup splash after a brief delay
     std::string whats_new_seen_version = ""; // last app version whose What's New the user dismissed
 
+    // Dataset capture (Dataset tab). Raw tracker-pose recording for training data.
+    bool dataset_auto_record = false;   // start a capture session on app launch
+    std::string dataset_dir = "";       // override root; empty => <AppData>/StayPutVR/datasets
+
     // OSC Settings
     bool osc_enabled = false;
     std::string osc_address = "127.0.0.1";

@@ -83,11 +83,19 @@ std::vector<StayPutVR::TrackedDeviceInfo> StayPutVR::VRDriver::GetAllTrackedDevi
                     // Copy position and rotation from the tracked device pose
                     if (trackedDevicePoses[idx].bPoseIsValid) {
                         const auto& mat = trackedDevicePoses[idx].mDeviceToAbsoluteTracking;
-                        
+
                         // Extract position from the transformation matrix
                         info.pose.vecPosition[0] = mat.m[0][3];
                         info.pose.vecPosition[1] = mat.m[1][3];
                         info.pose.vecPosition[2] = mat.m[2][3];
+
+                        // Carry the raw velocities through for dataset capture -
+                        // they're free from SteamVR and de-noise derived action
+                        // labels at training time.
+                        for (int axis = 0; axis < 3; ++axis) {
+                            info.pose.vecVelocity[axis] = trackedDevicePoses[idx].vVelocity.v[axis];
+                            info.pose.vecAngularVelocity[axis] = trackedDevicePoses[idx].vAngularVelocity.v[axis];
+                        }
                         
                         try {
                             // Convert rotation matrix to quaternion
@@ -155,13 +163,18 @@ std::vector<StayPutVR::TrackedDeviceInfo> StayPutVR::VRDriver::GetAllTrackedDevi
                             info.pose.qRotation.w = 1.0f;
                         }
                         
-                        // Set tracking result based on the pose validity
+                        // Preserve SteamVR's actual tracking result rather than
+                        // collapsing it to OK - dropouts and recoveries are real
+                        // data for the capture stream.
                         info.pose.poseIsValid = true;
-                        info.pose.result = vr::TrackingResult_Running_OK;
+                        info.pose.result = trackedDevicePoses[idx].eTrackingResult;
                     } else {
-                        // If pose is not valid, mark it as such
+                        // If pose is not valid, mark it as such but keep the raw
+                        // tracking result (OutOfRange, Calibrating, ...).
                         info.pose.poseIsValid = false;
-                        info.pose.result = vr::TrackingResult_Running_OutOfRange;
+                        info.pose.result = trackedDevicePoses[idx].eTrackingResult != vr::TrackingResult_Uninitialized
+                            ? trackedDevicePoses[idx].eTrackingResult
+                            : vr::TrackingResult_Running_OutOfRange;
                     }
                     
                     result.push_back(info);
@@ -254,9 +267,18 @@ void StayPutVR::VRDriver::RunFrame()
         // Lazy initialization: Only initialize IPC when we have data to send
         // This prevents aggressive connection attempts when no companion app is available
         
+        // Stamp the sample clocks immediately before reading poses so the
+        // timestamp describes when the poses were true, not when the pipe got
+        // around to delivering them. One clock pair per frame, copied onto
+        // every device in the batch.
+        const double sample_wall = std::chrono::duration<double>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        const double sample_mono = std::chrono::duration<double>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+
         // Collect device positions from all tracked devices
         auto tracked_devices = GetAllTrackedDeviceInfo();
-        
+
         // Only attempt IPC operations if we have devices to send
         if (!tracked_devices.empty()) {
             // Convert to DevicePositionData for IPC
@@ -266,19 +288,28 @@ void StayPutVR::VRDriver::RunFrame()
                     DevicePositionData pos_data;
                     pos_data.serial = device.serial;
                     pos_data.type = device.type;
-                    
+
                     // Get position and rotation from device pose
                     pos_data.position[0] = device.pose.vecPosition[0];
                     pos_data.position[1] = device.pose.vecPosition[1];
                     pos_data.position[2] = device.pose.vecPosition[2];
-                    
+
                     pos_data.rotation[0] = device.pose.qRotation.x;
                     pos_data.rotation[1] = device.pose.qRotation.y;
                     pos_data.rotation[2] = device.pose.qRotation.z;
                     pos_data.rotation[3] = device.pose.qRotation.w;
-                    
+
                     pos_data.connected = device.pose.deviceIsConnected;
-                    
+
+                    for (int axis = 0; axis < 3; ++axis) {
+                        pos_data.velocity[axis] = static_cast<float>(device.pose.vecVelocity[axis]);
+                        pos_data.angular_velocity[axis] = static_cast<float>(device.pose.vecAngularVelocity[axis]);
+                    }
+                    pos_data.pose_valid = device.pose.poseIsValid;
+                    pos_data.tracking_result = static_cast<uint8_t>(device.pose.result);
+                    pos_data.sample_time_wall = sample_wall;
+                    pos_data.sample_time_mono = sample_mono;
+
                     device_positions.push_back(pos_data);
                 }
                 catch (const std::exception& e) {
@@ -286,7 +317,7 @@ void StayPutVR::VRDriver::RunFrame()
                     continue;
                 }
             }
-            
+
             // Send device positions via IPC - completely non-blocking
             try {
                 ipc_server_.SendDeviceUpdates(device_positions);

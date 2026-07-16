@@ -2,6 +2,25 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
+## dataset-capture branch (in development)
+
+### Dataset capture
+- **New Dataset tab** — record every tracked device's raw pose stream (~90 Hz:
+  position, rotation, velocity, angular velocity, connection/tracking state) to
+  per-session dataset files for ML training. Controls: Start/Stop, **Pause**
+  (paused spans are logged in the session manifest), start-on-launch option,
+  **Open Datasets Folder**, and a session table (duration, paused time, frames,
+  size, devices, source) with per-session Open and Delete (confirmed).
+  Capture is deliberately unfiltered: dropouts, drift, and AFK periods are kept
+  and flagged — filtering happens at training time. Format documented in
+  `docs/DATASET_FORMAT.md`.
+- **Driver-side timestamps** — the SteamVR driver now stamps each pose batch at
+  the moment poses are read (wall + monotonic clocks) and sends a v2 IPC message
+  including velocities and per-device tracking state. The app remains compatible
+  with older drivers (v1 messages fall back to receipt-time stamps).
+- **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
+  the capture path without SteamVR (also used by the Linux dev build).
+
 ## 1.4 — Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 
 **Requires the new 1.4 avatar prefab** — reduces synced params and adds/renames OSC

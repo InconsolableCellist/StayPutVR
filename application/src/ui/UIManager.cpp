@@ -245,6 +245,16 @@ namespace StayPutVR {
                 // Don't return false here, just continue with the UI
             }
         }
+
+        // Dataset capture: recorder exists for the app's lifetime; sessions are
+        // started from the Dataset tab (or automatically here if configured).
+        dataset_recorder_ = std::make_unique<DatasetRecorder>();
+        if (device_manager_) {
+            device_manager_->SetDatasetRecorder(dataset_recorder_.get());
+        }
+        if (config_.dataset_auto_record) {
+            dataset_recorder_->StartSession(DatasetBaseDir(), "steamvr-driver");
+        }
         
         InitializeTwitchManager();
         InitializePiShockManager();
@@ -399,6 +409,16 @@ namespace StayPutVR {
         // Give managers time to properly clean up (especially WebSocket connections)
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         
+        // Finalize any active dataset session BEFORE the device manager stops
+        // feeding it, and detach the recorder so no late IPC callback can touch
+        // a destroyed object.
+        if (device_manager_) {
+            device_manager_->SetDatasetRecorder(nullptr);
+        }
+        if (dataset_recorder_) {
+            dataset_recorder_->StopSession();
+        }
+
         // Shutdown device manager and IPC connection
         if (device_manager_) {
             Logger::Info("UIManager: Shutting down device manager");
@@ -491,6 +511,9 @@ namespace StayPutVR {
                 break;
             case TabType::INTEGRATIONS:
                 RenderIntegrationsTab();
+                break;
+            case TabType::DATASET:
+                RenderDatasetTab();
                 break;
             case TabType::SETTINGS:
                 RenderSettingsTab();
@@ -612,6 +635,11 @@ namespace StayPutVR {
 
             if (ImGui::BeginTabItem("Integrations")) {
                 current_tab_ = TabType::INTEGRATIONS;
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Dataset")) {
+                current_tab_ = TabType::DATASET;
                 ImGui::EndTabItem();
             }
 

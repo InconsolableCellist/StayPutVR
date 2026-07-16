@@ -242,10 +242,13 @@ namespace StayPutVR {
                 // Process the message
                 if (!buffer.empty()) {
                     uint8_t msgType = buffer[0];
-                    
+
                     switch (msgType) {
-                        case 1: // Device update
+                        case 1: // Device update (legacy v1)
                             ProcessDeviceUpdateMessage(buffer);
+                            break;
+                        case 3: // Device update v2 (timestamps + velocities + validity)
+                            ProcessDeviceUpdateMessageV2(buffer);
                             break;
                         default:
                             Logger::Warning("IPCClient: Unknown message type: " + std::to_string(msgType));
@@ -466,6 +469,79 @@ namespace StayPutVR {
         }
     }
 
+    void IPCClient::ProcessDeviceUpdateMessageV2(const std::vector<uint8_t>& buffer) {
+        // Layout: [u8 type=3][f64 wall][f64 mono][u32 count] then per device
+        // [u32 serialLen][serial][u8 type][3f pos][4f quat][3f vel][3f angvel]
+        // [u8 flags][u8 tracking_result]
+        if (!device_update_callback_ || buffer.size() < 1 + 2 * sizeof(double) + sizeof(uint32_t)) {
+            return;
+        }
+
+        try {
+            size_t offset = 1; // skip message type
+
+            double sampleWall = 0.0, sampleMono = 0.0;
+            memcpy(&sampleWall, buffer.data() + offset, sizeof(sampleWall));
+            offset += sizeof(sampleWall);
+            memcpy(&sampleMono, buffer.data() + offset, sizeof(sampleMono));
+            offset += sizeof(sampleMono);
+
+            uint32_t numDevices;
+            memcpy(&numDevices, buffer.data() + offset, sizeof(numDevices));
+            offset += sizeof(numDevices);
+
+            std::vector<DevicePositionData> devices;
+            devices.reserve(numDevices);
+
+            for (uint32_t i = 0; i < numDevices; i++) {
+                if (offset + sizeof(uint32_t) > buffer.size()) {
+                    Logger::Error("IPCClient: V2 buffer too small for serial length");
+                    break;
+                }
+                uint32_t serialLen;
+                memcpy(&serialLen, buffer.data() + offset, sizeof(serialLen));
+                offset += sizeof(serialLen);
+
+                // Fixed-size remainder of one device record after the serial.
+                constexpr size_t kFixedTail = 1 + (3 + 4 + 3 + 3) * sizeof(float) + 1 + 1;
+                if (offset + serialLen + kFixedTail > buffer.size()) {
+                    Logger::Error("IPCClient: V2 buffer too small for device record");
+                    break;
+                }
+
+                DevicePositionData device;
+                device.serial.assign(reinterpret_cast<const char*>(buffer.data() + offset), serialLen);
+                offset += serialLen;
+
+                device.type = static_cast<DeviceType>(buffer[offset++]);
+
+                memcpy(device.position, buffer.data() + offset, sizeof(float) * 3);
+                offset += sizeof(float) * 3;
+                memcpy(device.rotation, buffer.data() + offset, sizeof(float) * 4);
+                offset += sizeof(float) * 4;
+                memcpy(device.velocity, buffer.data() + offset, sizeof(float) * 3);
+                offset += sizeof(float) * 3;
+                memcpy(device.angular_velocity, buffer.data() + offset, sizeof(float) * 3);
+                offset += sizeof(float) * 3;
+
+                uint8_t flags = buffer[offset++];
+                device.connected = (flags & 0x01) != 0;
+                device.pose_valid = (flags & 0x02) != 0;
+                device.tracking_result = buffer[offset++];
+
+                device.sample_time_wall = sampleWall;
+                device.sample_time_mono = sampleMono;
+
+                devices.push_back(std::move(device));
+            }
+
+            device_update_callback_(devices);
+        }
+        catch (const std::exception& e) {
+            Logger::Error("IPCClient: Exception in ProcessDeviceUpdateMessageV2: " + std::string(e.what()));
+        }
+    }
+
 #else // !_WIN32 — Linux development build: no SteamVR driver, IPC is stubbed.
 
     IPCClient::IPCClient() : pipe_handle_(INVALID_HANDLE_VALUE), connected_(false), running_(false) {}
@@ -483,6 +559,7 @@ namespace StayPutVR {
     bool IPCClient::ReadMessage(std::vector<uint8_t>&) { return false; }
     bool IPCClient::WriteMessage(const std::vector<uint8_t>&) { return false; }
     void IPCClient::ProcessDeviceUpdateMessage(const std::vector<uint8_t>&) {}
+    void IPCClient::ProcessDeviceUpdateMessageV2(const std::vector<uint8_t>&) {}
 
 #endif // _WIN32
 }

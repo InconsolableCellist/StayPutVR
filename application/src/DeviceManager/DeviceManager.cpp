@@ -1,7 +1,9 @@
 #include "DeviceManager.hpp"
 #include "../../../common/Logger.hpp"
+#include "../Dataset/DatasetRecorder.hpp"
 #include <thread>
 #include <chrono>
+#include <cmath>
 
 namespace StayPutVR {
     bool DeviceManager::Initialize() {
@@ -35,6 +37,7 @@ namespace StayPutVR {
     }
 
     void DeviceManager::Shutdown() {
+        StopSimulation();
         StopReconnectThread();
         ipc_client_.Disconnect();
     }
@@ -65,9 +68,17 @@ namespace StayPutVR {
     }
 
     void DeviceManager::OnDeviceUpdate(const std::vector<DevicePositionData>& devices) {
+        // Dataset capture first: this callback runs on the IPC reader thread at
+        // the full driver rate (~90 Hz), which is exactly the stream the
+        // recorder wants. The UI's GetDevices() poll only sees the latest
+        // snapshot, so recording there would silently decimate the data.
+        if (DatasetRecorder* recorder = dataset_recorder_.load()) {
+            recorder->OnDeviceUpdate(devices);
+        }
+
         // Update local device cache
         devices_ = devices;
-        
+
         // Update device map
         device_map_.clear();
         for (size_t i = 0; i < devices_.size(); ++i) {
@@ -165,6 +176,93 @@ namespace StayPutVR {
         return ipc_client_.Connect();
     }
     
+    void DeviceManager::StartSimulation() {
+        if (simulate_thread_running_) {
+            return;
+        }
+        if (simulate_thread_.joinable()) {
+            simulate_thread_.join();
+        }
+        simulate_thread_running_ = true;
+        simulate_thread_ = std::thread(&DeviceManager::SimulateThreadFunction, this);
+        if (Logger::IsInitialized()) {
+            Logger::Info("DeviceManager: simulated device feed started");
+        }
+    }
+
+    void DeviceManager::StopSimulation() {
+        if (!simulate_thread_running_) {
+            return;
+        }
+        simulate_thread_running_ = false;
+        if (simulate_thread_.joinable()) {
+            simulate_thread_.join();
+        }
+        if (Logger::IsInitialized()) {
+            Logger::Info("DeviceManager: simulated device feed stopped");
+        }
+    }
+
+    void DeviceManager::SimulateThreadFunction() {
+        // A plausible full-body tracker set moving in slow sinusoids, with an
+        // occasional tracking dropout on the hip tracker — deliberately, so the
+        // capture pipeline is exercised on the messy cases (dropouts are data).
+        struct SimDevice { const char* serial; DeviceType type; float base_y; float phase; };
+        const SimDevice sim_devices[] = {
+            {"SIM-HMD-001",       DeviceType::HMD,        1.70f, 0.0f},
+            {"SIM-CTRL-LEFT",     DeviceType::CONTROLLER, 1.20f, 1.1f},
+            {"SIM-CTRL-RIGHT",    DeviceType::CONTROLLER, 1.20f, 2.2f},
+            {"SIM-TRACKER-HIP",   DeviceType::TRACKER,    0.95f, 3.3f},
+            {"SIM-TRACKER-LFOOT", DeviceType::TRACKER,    0.10f, 4.4f},
+            {"SIM-TRACKER-RFOOT", DeviceType::TRACKER,    0.10f, 5.5f},
+        };
+
+        const auto start = std::chrono::steady_clock::now();
+        while (simulate_thread_running_) {
+            const double t = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - start).count();
+            const double wall = std::chrono::duration<double>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            const double mono = std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+
+            std::vector<DevicePositionData> devices;
+            devices.reserve(std::size(sim_devices));
+            for (const auto& sim : sim_devices) {
+                DevicePositionData d;
+                d.serial = sim.serial;
+                d.type = sim.type;
+                const float sway = 0.15f * static_cast<float>(std::sin(t * 0.7 + sim.phase));
+                const float bob  = 0.03f * static_cast<float>(std::sin(t * 2.1 + sim.phase));
+                d.position[0] = sway;
+                d.position[1] = sim.base_y + bob;
+                d.position[2] = 0.1f * static_cast<float>(std::cos(t * 0.5 + sim.phase));
+                const float yaw = 0.3f * static_cast<float>(std::sin(t * 0.4 + sim.phase));
+                d.rotation[0] = 0.0f;
+                d.rotation[1] = std::sin(yaw * 0.5f);
+                d.rotation[2] = 0.0f;
+                d.rotation[3] = std::cos(yaw * 0.5f);
+                d.velocity[0] = 0.15f * 0.7f * static_cast<float>(std::cos(t * 0.7 + sim.phase));
+                d.velocity[1] = 0.03f * 2.1f * static_cast<float>(std::cos(t * 2.1 + sim.phase));
+                d.velocity[2] = -0.1f * 0.5f * static_cast<float>(std::sin(t * 0.5 + sim.phase));
+                d.angular_velocity[1] = 0.3f * 0.4f * static_cast<float>(std::cos(t * 0.4 + sim.phase));
+                d.connected = true;
+                // Hip tracker drops out for ~2 s every 20 s.
+                const bool dropout = (sim.type == DeviceType::TRACKER) &&
+                                     (sim.phase > 3.0f && sim.phase < 4.0f) &&
+                                     (std::fmod(t, 20.0) > 18.0);
+                d.pose_valid = !dropout;
+                d.tracking_result = dropout ? 201 /*Running_OutOfRange*/ : 200 /*Running_OK*/;
+                d.sample_time_wall = wall;
+                d.sample_time_mono = mono;
+                devices.push_back(std::move(d));
+            }
+
+            OnDeviceUpdate(devices);
+            std::this_thread::sleep_for(std::chrono::microseconds(11111)); // ~90 Hz
+        }
+    }
+
     bool DeviceManager::ManualReconnect() {
         if (Logger::IsInitialized()) {
             Logger::Info("DeviceManager: Manual reconnection requested");

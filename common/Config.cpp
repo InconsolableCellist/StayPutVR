@@ -732,6 +732,10 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         splash_auto_close = jval(j, "splash_auto_close", false);
         whats_new_seen_version = jval(j, "whats_new_seen_version", std::string(""));
 
+        // Dataset capture settings
+        dataset_auto_record = jval(j, "dataset_auto_record", false);
+        dataset_dir = jval(j, "dataset_dir", std::string(""));
+
         // Load boundary settings
         warning_threshold = jval(j, "warning_threshold", 0.1f);
         bounds_threshold = jval(j, "bounds_threshold", 0.2f);
@@ -1187,6 +1191,10 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["ui_font_scale"] = ui_font_scale;
         j["splash_auto_close"] = splash_auto_close;
         j["whats_new_seen_version"] = whats_new_seen_version;
+
+        // Dataset capture settings
+        j["dataset_auto_record"] = dataset_auto_record;
+        j["dataset_dir"] = dataset_dir;
 
         // Boundary settings
         j["warning_threshold"] = warning_threshold;

@@ -48,5 +48,6 @@ namespace StayPutVR {
         bool ReadMessage(std::vector<uint8_t>& buffer);
         bool WriteMessage(const std::vector<uint8_t>& buffer);
         void ProcessDeviceUpdateMessage(const std::vector<uint8_t>& buffer);
+        void ProcessDeviceUpdateMessageV2(const std::vector<uint8_t>& buffer);
     };
 }
