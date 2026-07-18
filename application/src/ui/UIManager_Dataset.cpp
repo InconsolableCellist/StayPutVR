@@ -161,9 +161,7 @@ namespace StayPutVR {
         }
 
         ImGui::Spacing();
-        ImGui::TextDisabled("Everything is recorded raw at the full driver rate - tracking errors, drift,");
-        ImGui::TextDisabled("and AFK periods included. They're training signal; filtering happens at");
-        ImGui::TextDisabled("training time, never at capture. Use Pause for anything you want kept out.");
+        ImGui::TextDisabled("Records your trackers' positions in realtime and saves them as datasets.");
 
         // ----- Dataset folder + sessions table ----------------------------
         ImGui::Spacing();
