@@ -2,8 +2,19 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
-## 1.4.2 — Bug fixes (7/23/2026)
+## 1.4.2 — Enforced Unmute + bug fixes (7/23/2026)
 
+### New feature
+- **Enforced Unmute (VRChat mute):** the inverse of the microphone constraint —
+  while your collar is locked, muting yourself in VRChat (via the built-in
+  `MuteSelf` parameter) is punished. After a grace window, staying muted fires your
+  configured disobedience actions and repeats until you unmute; unmuting at any
+  point is instantly forgiven. Can be gated on the collar lock + Mic mode or left
+  always armed, with an optional warning-audio nag, its own shocker/vibrator
+  bindings, and a configurable cooldown. Reported on the shared `SPVR_Mic_Status`
+  HUD param and configured on the Integrations → Mic tab.
+
+### Bug fixes
 - **OpenShock multi-shocker:** Bite and the OSC Shock/broadcast triggers now fire
   **all** of your configured OpenShock shockers instead of only the first one,
   matching PiShock's behavior.

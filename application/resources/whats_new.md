@@ -8,6 +8,12 @@ As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
 
 ## New in 1.4.2
+- **Enforced Unmute (new feature):** while your collar is locked, muting yourself
+  in VRChat is now punished — after a short grace period, staying muted fires your
+  shockers and repeats until you unmute (unmuting is instantly forgiven). Set it up
+  on the Integrations → Mic tab, with its own shocker bindings and cooldown.
+
+Bug fixes:
 - OpenShock: Bite and the OSC Shock trigger now fire **all** your configured
   shockers, not just the first one (like PiShock already did)
 - Moving a locked device far out (past the disable distance) now auto-unlocks
