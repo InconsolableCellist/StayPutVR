@@ -94,6 +94,11 @@ namespace StayPutVR {
         float movement_heat = 0.0f;
         bool exceeds_threshold = false;
         bool in_warning_zone = false;
+        // Transient: set when this device crossed the "disable" distance and was
+        // auto-released (issue #4). While set, the device is excluded from lock
+        // enforcement so it stays unlocked even if it drifts back into range.
+        // Cleared whenever the device is (re)locked individually or globally.
+        bool disable_dist_unlocked = false;
         
         // PiShock / OpenShock device selection - which shocker slots this device uses.
         // Tracked separately so a device can bind PiShock and OpenShock independently.

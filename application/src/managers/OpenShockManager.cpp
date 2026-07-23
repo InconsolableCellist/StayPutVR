@@ -201,9 +201,14 @@ namespace StayPutVR {
             std::vector<int> device_indices;
 
             if (device_serial.empty()) {
-                if (!device_ids[0].empty()) {
-                    device_ids_to_use.push_back(device_ids[0]);
-                    device_indices.push_back(0);
+                // Empty serial == "ALL": fire every configured shocker, mirroring
+                // the PiShock WebSocket manager. (Previously this only hit
+                // device_ids[0], so a bite/global broadcast shocked one device.)
+                for (int i = 0; i < 5; ++i) {
+                    if (!device_ids[i].empty()) {
+                        device_ids_to_use.push_back(device_ids[i]);
+                        device_indices.push_back(i);
+                    }
                 }
             } else {
                 auto shock_it = device_shock_map.find(device_serial);
@@ -310,9 +315,13 @@ namespace StayPutVR {
             std::vector<int> device_indices;
 
             if (device_serial.empty()) {
-                if (!device_ids[0].empty()) {
-                    device_ids_to_use.push_back(device_ids[0]);
-                    device_indices.push_back(0);
+                // Empty serial == "ALL": fire every configured shocker (see the
+                // shock path above for the rationale).
+                for (int i = 0; i < 5; ++i) {
+                    if (!device_ids[i].empty()) {
+                        device_ids_to_use.push_back(device_ids[i]);
+                        device_indices.push_back(i);
+                    }
                 }
             } else {
                 auto shock_it = device_shock_map.find(device_serial);
@@ -568,8 +577,13 @@ namespace StayPutVR {
             std::vector<std::string> device_ids_to_use;
 
             if (device_serial.empty()) {
-                if (!device_ids[0].empty()) {
-                    device_ids_to_use.push_back(device_ids[0]);
+                // Empty serial == "ALL": fire every configured shocker, matching
+                // PiShock. (Previously only device_ids[0] fired, so a bite/global
+                // broadcast reached a single OpenShock device.)
+                for (int i = 0; i < 5; ++i) {
+                    if (!device_ids[i].empty()) {
+                        device_ids_to_use.push_back(device_ids[i]);
+                    }
                 }
             } else {
                 auto shock_it = device_shock_map.find(device_serial);

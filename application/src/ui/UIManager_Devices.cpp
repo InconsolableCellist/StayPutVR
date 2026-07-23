@@ -317,6 +317,7 @@ namespace StayPutVR {
                 device_positions_[index].position_deviation = 0.0f;
                 device_positions_[index].exceeds_threshold = false;
                 device_positions_[index].in_warning_zone = false;
+                device_positions_[index].disable_dist_unlocked = false; // re-arm after any disable-distance release
                 
                 // Trigger Buttplug safe zone actions for newly locked device
                 if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
@@ -410,6 +411,7 @@ namespace StayPutVR {
                     for (int i = 0; i < 4; i++) device.original_rotation[i] = device.rotation[i];
                     device.position_deviation = 0.0f;
                     device.exceeds_threshold = false;
+                    device.disable_dist_unlocked = false; // re-arm after any disable-distance release
                     
                     // Send OSC status update for global lock
                     if (device.role != DeviceRole::None) {
@@ -490,8 +492,11 @@ namespace StayPutVR {
         auto current_time = std::chrono::steady_clock::now();
         
         for (auto& device : device_positions_) {
-            // Check both globally locked devices AND individually locked devices
-            if ((device.include_in_locking && global_lock_active_) || device.locked) {
+            // Check both globally locked devices AND individually locked devices.
+            // A device auto-released past the disable distance (issue #4) is
+            // excluded until it is explicitly (re)locked.
+            if (!device.disable_dist_unlocked &&
+                (((device.include_in_locking && global_lock_active_) || device.locked))) {
                 // Calculate Euclidean distance between current position and original position
                 float deviation = 0.0f;
                 for (int i = 0; i < 3; i++) {
@@ -513,12 +518,35 @@ namespace StayPutVR {
                 // If any device exceeds the disable threshold, we'll skip all alerts
                 if (beyond_disable_threshold) {
                     disable_threshold_exceeded = true;
-                    
+
                     if (Logger::IsInitialized()) {
-                        Logger::Debug("Device " + device.serial + " exceeded disable threshold: " + 
+                        Logger::Debug("Device " + device.serial + " exceeded disable threshold: " +
                                     std::to_string(device.position_deviation) + " > " + std::to_string(disable_threshold_));
                     }
-                    
+
+                    // Issue #4: crossing the disable distance means the tracker was
+                    // removed / left the play space, so auto-release ONLY this device
+                    // (other locked devices keep enforcing). Latch disable_dist_unlocked
+                    // so it stays unlocked even if it drifts back into range; it is
+                    // cleared when the device is explicitly (re)locked.
+                    device.locked = false;
+                    device.disable_dist_unlocked = true;
+                    device.exceeds_threshold = false;
+                    device.in_warning_zone = false;
+
+                    if (device.role != DeviceRole::None) {
+                        OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
+                        UpdateDeviceStatus(oscDevice, DeviceStatus::Unlocked);
+                    }
+                    if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+                        buttplug_manager_->ClearZoneState(device.serial);
+                    }
+                    TriggerInGameSound(InGameSound::Unlock);
+
+                    if (Logger::IsInitialized()) {
+                        Logger::Info("Device " + device.serial + " auto-unlocked (crossed disable distance)");
+                    }
+
                     // Don't update zone status for devices beyond disable threshold
                     continue;
                 }
@@ -1094,7 +1122,9 @@ namespace StayPutVR {
                     break;
                 }
             }
-            gate = CollarModeIncludesMic() && hmd_locked;
+            // Keep the base gate terms (enabled + agreement + !emergency_stop)
+            // rather than replacing them, so estop can never be dropped here.
+            gate = gate && CollarModeIncludesMic() && hmd_locked;
         }
 
         auto now = std::chrono::steady_clock::now();
@@ -1104,11 +1134,20 @@ namespace StayPutVR {
         // warning/disobedience it is currently reporting with our "safe" edges.
         bool mic_holds_status = mic_.active && (mic_.in_warning_zone || mic_.exceeds_threshold);
 
+        // The Mic HUD icon only stays steady-lit (LockedSafe) when the WASAPI mic
+        // loudness monitor owns it. When Enforced Unmute is the sole user of the
+        // Mic status, an idle/forgiven state must return the icon to Unlocked
+        // (dark) -- it should flash only for the grace-warning and punishment,
+        // never sit lit. mic_.gate_active means the loudness constraint is engaged
+        // and will keep its own LockedSafe up.
+        DeviceStatus mic_idle_status = mic_.gate_active ? DeviceStatus::LockedSafe
+                                                        : DeviceStatus::Unlocked;
+
         // Falling edge: gate dropped -> suspend, clearing any pending punishment.
         if (!gate) {
             if (muteself_.gate_active) {
                 if ((muteself_.in_grace || muteself_.punishing) && !mic_holds_status)
-                    UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+                    UpdateDeviceStatus(OSCDeviceType::Mic, mic_idle_status);
                 muteself_.gate_active = false;
                 muteself_.in_grace = false;
                 muteself_.punishing = false;
@@ -1140,7 +1179,7 @@ namespace StayPutVR {
             muteself_.punishing = false;
             if (was_flagged) {
                 if (!mic_holds_status)
-                    UpdateDeviceStatus(OSCDeviceType::Mic, DeviceStatus::LockedSafe);
+                    UpdateDeviceStatus(OSCDeviceType::Mic, mic_idle_status);
                 if (config_.audio.enabled) {
                     std::string fp = StayPutVR::GetResourcesPath() + "/success.wav";
                     if (std::filesystem::exists(fp)) {
@@ -1187,11 +1226,11 @@ namespace StayPutVR {
 
             float action_dur = 0.0f;
             if (config_.pishock_enabled)
-                action_dur = std::max(action_dur, config_.pishock_disobedience_duration);
+                action_dur = (std::max)(action_dur, config_.pishock_disobedience_duration);
             if (config_.openshock_enabled)
-                action_dur = std::max(action_dur, config_.openshock_disobedience_duration);
+                action_dur = (std::max)(action_dur, config_.openshock_disobedience_duration);
             if (config_.buttplug_enabled)
-                action_dur = std::max(action_dur, config_.buttplug_disobedience_duration);
+                action_dur = (std::max)(action_dur, config_.buttplug_disobedience_duration);
             muteself_.next_fire_time = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                 std::chrono::duration<float>(action_dur + config_.muteself_cooldown_seconds));
 
