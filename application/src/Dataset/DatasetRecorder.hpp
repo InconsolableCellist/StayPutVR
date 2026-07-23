@@ -81,6 +81,8 @@ namespace StayPutVR {
         double SessionStartWall() const { return session_start_wall_; }
         double PausedSecondsTotal() const;
         std::string SessionDir() const;
+        // Source tag of the active session ("steamvr-driver" or "simulator").
+        std::string Source() const { return source_; }
 
         // Scan base_dir for session directories with manifests. Static so the
         // UI can list sessions without a live recorder.

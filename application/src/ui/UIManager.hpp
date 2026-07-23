@@ -314,6 +314,11 @@ namespace StayPutVR {
         // Dataset tab: raw tracker-pose capture for training datasets
         // (record/pause controls, live stats, session management table).
         void RenderDatasetTab();
+        // Auto-segmentation: finalize the active steamvr-driver session when
+        // the driver disconnects (SteamVR quit/crash/sleep) and start a fresh
+        // one on reconnect, so each dataset maps 1:1 to a SteamVR run instead
+        // of spanning hours of dead air. Called every frame from Update().
+        void UpdateDatasetAutoSegmentation();
         // OSC Triggers sub-tab: bite/shock enable + intensity/duration (paths live in Settings > OSC).
         void RenderOSCTriggersTab();
 
@@ -467,6 +472,9 @@ namespace StayPutVR {
         bool dataset_sessions_dirty_ = true;     // rescan on next tab render
         std::string dataset_delete_target_;      // session path pending delete confirm
         bool dataset_simulate_ = false;          // dev synthetic 90 Hz feed active
+        bool dataset_driver_was_connected_ = false; // last polled driver state (edge detection)
+        bool dataset_resume_on_connect_ = false; // session auto-stopped on disconnect; start anew on reconnect
+        bool dataset_resume_paused_ = false;     // carry the pause state across the split
         
         std::unique_ptr<TwitchManager> twitch_manager_;
         

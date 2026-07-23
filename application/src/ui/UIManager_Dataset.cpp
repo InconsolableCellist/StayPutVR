@@ -57,6 +57,49 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::UpdateDatasetAutoSegmentation() {
+        if (!dataset_recorder_ || !device_manager_) {
+            return;
+        }
+        const bool connected = device_manager_->IsConnected();
+        const bool was_connected = dataset_driver_was_connected_;
+        dataset_driver_was_connected_ = connected;
+        if (connected == was_connected || !config_.dataset_split_on_reconnect) {
+            return;
+        }
+
+        DatasetRecorder& rec = *dataset_recorder_;
+        if (was_connected && !connected) {
+            // Driver went away (SteamVR quit, crashed, or the machine slept).
+            // Finalize now so the session's duration reflects actual tracked
+            // time instead of spanning hours of dead air until the next launch.
+            // Simulator sessions are independent of the driver; leave them be.
+            if (rec.IsRecording() && rec.Source() == "steamvr-driver") {
+                dataset_resume_paused_ = rec.IsPaused();
+                rec.StopSession();
+                dataset_resume_on_connect_ = true;
+                dataset_sessions_dirty_ = true;
+                Logger::Info("UIManager: driver disconnected - dataset session finalized; "
+                             "a new one will start on reconnect");
+            }
+        } else if (dataset_resume_on_connect_) {
+            dataset_resume_on_connect_ = false;
+            // If the user manually started a session while disconnected, keep it.
+            if (!rec.IsRecording()) {
+                if (rec.StartSession(DatasetBaseDir(), "steamvr-driver")) {
+                    // Pause was a deliberate privacy choice; keep it across the split.
+                    if (dataset_resume_paused_) {
+                        rec.SetPaused(true);
+                    }
+                    dataset_sessions_dirty_ = true;
+                    Logger::Info("UIManager: driver reconnected - new dataset session started");
+                } else {
+                    Logger::Error("UIManager: driver reconnected but failed to start dataset session");
+                }
+            }
+        }
+    }
+
     std::string UIManager::DatasetBaseDir() const {
         if (!config_.dataset_dir.empty()) {
             return config_.dataset_dir;
@@ -148,6 +191,17 @@ namespace StayPutVR {
         if (ImGui::Checkbox("Start recording automatically on launch", &auto_record)) {
             config_.dataset_auto_record = auto_record;
             SaveConfig();
+        }
+
+        bool split_on_reconnect = config_.dataset_split_on_reconnect;
+        if (ImGui::Checkbox("New dataset per SteamVR session", &split_on_reconnect)) {
+            config_.dataset_split_on_reconnect = split_on_reconnect;
+            SaveConfig();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("When SteamVR quits or the driver disconnects, the active recording is\n"
+                              "finalized immediately, and a fresh session starts on reconnect. Keeps\n"
+                              "one dataset per play session instead of one spanning the whole day.");
         }
 
         // Dev tool: synthetic 90 Hz device feed to exercise the capture path

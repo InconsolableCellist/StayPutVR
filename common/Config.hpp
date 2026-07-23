@@ -104,6 +104,7 @@ public:
     // Dataset capture (Dataset tab). Raw tracker-pose recording for training data.
     bool dataset_auto_record = false;   // start a capture session on app launch
     std::string dataset_dir = "";       // override root; empty => <AppData>/StayPutVR/datasets
+    bool dataset_split_on_reconnect = true; // finalize session on driver disconnect, start fresh on reconnect
 
     // OSC Settings
     bool osc_enabled = false;

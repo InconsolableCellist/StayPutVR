@@ -18,6 +18,12 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
   the moment poses are read (wall + monotonic clocks) and sends a v2 IPC message
   including velocities and per-device tracking state. The app remains compatible
   with older drivers (v1 messages fall back to receipt-time stamps).
+- **Auto-segmentation on SteamVR restarts** — when the driver disconnects
+  (SteamVR closed, crashed, or the PC slept) the active recording is finalized
+  on the spot, and a fresh session starts automatically on reconnect, so each
+  dataset maps to one SteamVR run instead of one recording spanning a day of
+  dead air. Pause state carries across the split. On by default; toggleable on
+  the Dataset tab.
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
 
