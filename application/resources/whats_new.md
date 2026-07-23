@@ -1,4 +1,4 @@
-# What's New in StayPutVR 1.4
+# What's New in StayPutVR 1.4.2
 
 Thanks for your support! This updated version greatly reduces the number of
 required synced parameters, has lots of bugfixes, a new UI, a better device-
@@ -6,6 +6,21 @@ assignment section, and more.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.4.2
+- **Enforced Unmute (new feature):** while your collar is locked, muting yourself
+  in VRChat is now punished — after a short grace period, staying muted fires your
+  shockers and repeats until you unmute (unmuting is instantly forgiven). Set it up
+  on the Integrations → Mic tab, with its own shocker bindings and cooldown.
+
+Bug fixes:
+- OpenShock: Bite and the OSC Shock trigger now fire **all** your configured
+  shockers, not just the first one (like PiShock already did)
+- Moving a locked device far out (past the disable distance) now auto-unlocks
+  that device
+- With Enforced Unmute on, the mic HUD icon no longer stays lit constantly — it
+  only lights for the warning and punishment
+- Emergency stop now reliably stops the Enforced Unmute / mic enforcement
 
 ## Important
 - **Please update your prefab to 1.4+ to properly use this release.**
