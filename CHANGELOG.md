@@ -2,6 +2,21 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
+## 1.4.2 — Bug fixes (7/23/2026)
+
+- **OpenShock multi-shocker:** Bite and the OSC Shock/broadcast triggers now fire
+  **all** of your configured OpenShock shockers instead of only the first one,
+  matching PiShock's behavior.
+- **Auto-unlock past the disable distance:** moving a locked device beyond the
+  disable distance (e.g. taking a tracker off or leaving the play space) now
+  auto-unlocks that specific device; other locked devices keep enforcing.
+- **Mic HUD icon:** with Enforced Unmute enabled, the shared mic status icon no
+  longer stays lit all the time — it only lights for the mute grace-warning and
+  punishment, unless the mic-loudness monitor is active (which keeps its steady
+  "monitoring" indicator).
+- **Emergency stop hardening:** emergency stop now reliably suspends the Enforced
+  Unmute / microphone enforcement while it is active.
+
 ## 1.4 — Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 
 **Requires the new 1.4 avatar prefab** — reduces synced params and adds/renames OSC

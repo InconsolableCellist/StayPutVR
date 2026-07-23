@@ -104,6 +104,12 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
+**1.4.2** - Bug fixes (7/23/2026)
+- OpenShock: Bite and the OSC Shock/broadcast triggers now fire **all** configured shockers instead of only the first one (matches PiShock)
+- Moving a locked device past the **disable distance** now auto-unlocks that device; other locked devices keep enforcing
+- The mic HUD icon no longer stays lit constantly with **Enforced Unmute** — it only lights for the mute warning and punishment, unless the mic-loudness monitor is active
+- **Emergency stop** now reliably suspends the Enforced Unmute / microphone enforcement while active
+
 **1.4** - Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 - Added the **VRCFT JawOpen constraint**: while locked, your jaw must stay where it was when locked
 - Added a **Microphone enforced-mute constraint**: stay quiet while locked, with adaptive ambient-floor detection, a background-noise calibration button, and a configurable cooldown
