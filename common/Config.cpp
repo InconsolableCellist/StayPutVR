@@ -754,6 +754,7 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         // Dataset capture settings
         dataset_auto_record = jval(j, "dataset_auto_record", false);
         dataset_dir = jval(j, "dataset_dir", std::string(""));
+        dataset_split_on_reconnect = jval(j, "dataset_split_on_reconnect", true);
 
         // Load boundary settings
         warning_threshold = jval(j, "warning_threshold", 0.1f);
@@ -1236,6 +1237,7 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         // Dataset capture settings
         j["dataset_auto_record"] = dataset_auto_record;
         j["dataset_dir"] = dataset_dir;
+        j["dataset_split_on_reconnect"] = dataset_split_on_reconnect;
 
         // Boundary settings
         j["warning_threshold"] = warning_threshold;

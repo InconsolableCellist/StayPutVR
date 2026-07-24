@@ -348,9 +348,11 @@ namespace StayPutVR {
         
         if (device_manager_) {
             device_manager_->Update();
-            
+
+            UpdateDatasetAutoSegmentation();
+
             const auto& devices = device_manager_->GetDevices();
-            
+
             UpdateDevicePositions(devices);
         }
     }
