@@ -284,6 +284,31 @@ public:
     std::array<float, 5> openshock_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
     std::array<float, 5> openshock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
+    // DG-Lab Coyote 3.0 Settings (app-bridged WebSocket: we run a local WS
+    // server, the DG-Lab phone app scans our QR code and relays to the device
+    // over Bluetooth; see DGLabManager).
+    bool dglab_enabled = false;
+    bool dglab_user_agreement = false;
+    std::string dglab_client_id;      // UUID baked into the QR code; generated on first run
+    int dglab_server_port = 28847;
+    std::string dglab_server_ip;      // LAN IP override for the QR code (empty = auto-detect)
+    bool dglab_channel_a = true;      // which output channels punishments fire on
+    bool dglab_channel_b = false;
+    int dglab_limit_a = 20;           // per-channel strength ceiling, hardware scale 0-200
+    int dglab_limit_b = 20;
+    int dglab_frequency = 100;        // pulse frequency, protocol value 10-240
+    int dglab_waveform = 0;           // 0=steady, 1=pulse, 2=ramp
+
+    // Warning Zone DG-Lab Settings (durations in seconds)
+    int dglab_warning_action = 0;     // 0=none, 1=pulse
+    float dglab_warning_intensity = 0.25f;
+    float dglab_warning_duration = 1.0f;
+
+    // Disobedience (Out of Bounds) DG-Lab Settings
+    int dglab_disobedience_action = 0; // 0=none, 1=pulse
+    float dglab_disobedience_intensity = 0.25f;
+    float dglab_disobedience_duration = 1.0f;
+
     // Buttplug/Intiface Settings
     bool buttplug_enabled = false;
     bool buttplug_user_agreement = false;
@@ -422,6 +447,10 @@ public:
     std::unordered_map<std::string, std::array<bool, 5>> device_pishock_ids;   // serial -> which PiShock shocker slots to use
     std::unordered_map<std::string, std::array<bool, 5>> device_openshock_ids; // serial -> which OpenShock device slots to use
     std::unordered_map<std::string, std::array<bool, 5>> device_vibration_ids; // serial -> which vibration IDs to use (for Buttplug)
+    // serial -> which DG-Lab output channels to use. Only slots 0 (channel A)
+    // and 1 (channel B) are ever populated; the array width is shared with the
+    // other integrations so the same binding UI/drag-drop machinery applies.
+    std::unordered_map<std::string, std::array<bool, 5>> device_dglab_ids;
 };
 
 } // namespace StayPutVR 

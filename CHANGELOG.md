@@ -20,6 +20,44 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
   with older drivers (v1 messages fall back to receipt-time stamps).
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
+## 1.4.2 — DG-Lab Coyote, Enforced Unmute + bug fixes (7/23/2026)
+
+### New features
+- **DG-Lab Coyote 3.0 support:** the Coyote joins PiShock and OpenShock as a
+  punishment device. StayPutVR runs a small WebSocket server on your PC and shows a
+  QR code on the Integrations → DG-Lab tab; scanning it with the DG-Lab app (Socket
+  Control) pairs the two, and your phone relays commands to the Coyote over
+  Bluetooth — no dongle, driver, or third-party service required. The Coyote's two
+  output channels (A and B) appear in the Devices tab as draggable green chips, so
+  each tracker, the jaw constraint, or the mic constraint can drive whichever
+  channel you like. Warning and disobedience pulses have their own intensity,
+  duration, frequency, and waveform (steady / pulse / ramp), and the bite and OSC
+  Shock triggers fire it alongside your other devices. Per-channel strength limits
+  are enforced on top of the limits you set in the DG-Lab app itself, and the
+  physical buttons on the Coyote still zero both channels instantly.
+
+- **Enforced Unmute (VRChat mute):** the inverse of the microphone constraint —
+  while your collar is locked, muting yourself in VRChat (via the built-in
+  `MuteSelf` parameter) is punished. After a grace window, staying muted fires your
+  configured disobedience actions and repeats until you unmute; unmuting at any
+  point is instantly forgiven. Can be gated on the collar lock + Mic mode or left
+  always armed, with an optional warning-audio nag, its own shocker/vibrator
+  bindings, and a configurable cooldown. Reported on the shared `SPVR_Mic_Status`
+  HUD param and configured on the Integrations → Mic tab.
+
+### Bug fixes
+- **OpenShock multi-shocker:** Bite and the OSC Shock/broadcast triggers now fire
+  **all** of your configured OpenShock shockers instead of only the first one,
+  matching PiShock's behavior.
+- **Auto-unlock past the disable distance:** moving a locked device beyond the
+  disable distance (e.g. taking a tracker off or leaving the play space) now
+  auto-unlocks that specific device; other locked devices keep enforcing.
+- **Mic HUD icon:** with Enforced Unmute enabled, the shared mic status icon no
+  longer stays lit all the time — it only lights for the mute grace-warning and
+  punishment, unless the mic-loudness monitor is active (which keeps its steady
+  "monitoring" indicator).
+- **Emergency stop hardening:** emergency stop now reliably suspends the Enforced
+  Unmute / microphone enforcement while it is active.
 
 ## 1.4 — Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 

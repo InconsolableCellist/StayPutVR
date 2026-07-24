@@ -20,6 +20,7 @@ if(WIN32)
         ${INIH_SOURCES}
         "${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends/imgui_impl_glfw.cpp"
         "${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends/imgui_impl_opengl3.cpp"
+        "${CMAKE_SOURCE_DIR}/thirdparty/qrcodegen/qrcodegen.cpp"
         resources.rc
     )
 
@@ -69,6 +70,7 @@ else()
         ${GLAD_SOURCES}
         "${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends/imgui_impl_glfw.cpp"
         "${CMAKE_SOURCE_DIR}/thirdparty/imgui/backends/imgui_impl_opengl3.cpp"
+        "${CMAKE_SOURCE_DIR}/thirdparty/qrcodegen/qrcodegen.cpp"
     )
 
     target_include_directories(stayputvr_app PRIVATE

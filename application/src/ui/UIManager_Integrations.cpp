@@ -48,6 +48,10 @@ namespace StayPutVR {
                 RenderOpenShockTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("DG-Lab")) {
+                RenderDGLabTab();
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("OSC Triggers")) {
                 RenderOSCTriggersTab();
                 ImGui::EndTabItem();
@@ -653,6 +657,11 @@ namespace StayPutVR {
         // Also trigger Buttplug warning actions if enabled
         if (buttplug_manager_ && buttplug_manager_->IsEnabled()) {
             buttplug_manager_->TriggerWarningActions(device_serial);
+        }
+
+        // DG-Lab warning pulse (no-op unless its warning action is configured).
+        if (dglab_manager_ && dglab_manager_->IsEnabled()) {
+            dglab_manager_->TriggerWarningActions(device_serial);
         }
     }
 
@@ -1408,6 +1417,40 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::InitializeDGLabManager() {
+        dglab_manager_ = std::make_unique<DGLabManager>();
+
+        if (dglab_manager_->Initialize(&config_)) {
+            dglab_manager_->SetActionCallback(
+                [this](const std::string& action_type, bool success, const std::string& message) {
+                    if (Logger::IsInitialized()) {
+                        Logger::Info("DG-Lab " + action_type + " " + (success ? "succeeded" : "failed") +
+                                   (message.empty() ? "" : ": " + message));
+                    }
+                }
+            );
+
+            if (Logger::IsInitialized()) {
+                Logger::Info("DGLabManager initialized successfully");
+            }
+        } else {
+            if (Logger::IsInitialized()) {
+                Logger::Error("Failed to initialize DGLabManager");
+            }
+        }
+    }
+
+    void UIManager::ShutdownDGLabManager() {
+        if (dglab_manager_) {
+            dglab_manager_->Shutdown();
+            dglab_manager_.reset();
+
+            if (Logger::IsInitialized()) {
+                Logger::Info("DGLabManager shut down");
+            }
+        }
+    }
+
     void UIManager::InitializeButtplugManager() {
         buttplug_manager_ = std::make_unique<ButtplugManager>();
         
@@ -1461,6 +1504,12 @@ namespace StayPutVR {
     void UIManager::RenderOpenShockTab() {
         if (openshock_panel_) {
             openshock_panel_->Render();
+        }
+    }
+
+    void UIManager::RenderDGLabTab() {
+        if (dglab_panel_) {
+            dglab_panel_->Render();
         }
     }
 

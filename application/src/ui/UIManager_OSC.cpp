@@ -956,7 +956,15 @@ namespace StayPutVR {
                 
                 // Enter emergency stop mode
                 emergency_stop_active_ = true;
-                
+
+                // DG-Lab needs an explicit stop, unlike the fire-and-forget HTTP
+                // shockers: a pulse message queues up to 10s of waveform on the
+                // device, so blocking new triggers alone would leave the Coyote
+                // running. StopAll flushes both channel queues and zeroes them.
+                if (dglab_manager_) {
+                    dglab_manager_->StopAll();
+                }
+
                 // Unlock all devices immediately
                 ActivateGlobalLock(false);
                 
@@ -1175,6 +1183,15 @@ namespace StayPutVR {
             }
             openshock_manager_->TriggerDisobedienceActions("GLOBAL");
         }
+
+        // DG-Lab: a global (whole-body) violation isn't attributable to one
+        // tracker, so fire every enabled channel rather than a per-serial binding.
+        if (dglab_manager_ && dglab_manager_->IsEnabled()) {
+            if (Logger::IsInitialized()) {
+                Logger::Info("Triggering DG-Lab disobedience actions for global out-of-bounds");
+            }
+            dglab_manager_->TriggerDisobedienceActions("");
+        }
     }
 
     void UIManager::TriggerBiteActions() {
@@ -1329,6 +1346,11 @@ namespace StayPutVR {
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
             openshock_manager_->TriggerShock(intensity, duration_seconds, reason);
         }
+
+        // DG-Lab Coyote (all enabled channels).
+        if (dglab_manager_ && dglab_manager_->IsEnabled()) {
+            dglab_manager_->TriggerShock(intensity, duration_seconds, reason);
+        }
     }
 
     void UIManager::TriggerExternalShockIndividual(float duration_seconds, const std::string& reason) {
@@ -1359,6 +1381,13 @@ namespace StayPutVR {
 
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
             openshock_manager_->TriggerShockIndividual(duration_seconds, reason);
+        }
+
+        // DG-Lab has no per-channel intensity split (channel strength is pinned
+        // at the configured limit), so the individual variant fires the
+        // configured disobedience intensity on every enabled channel.
+        if (dglab_manager_ && dglab_manager_->IsEnabled()) {
+            dglab_manager_->TriggerDisobedienceActions("");
         }
     }
 

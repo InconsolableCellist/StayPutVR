@@ -59,11 +59,11 @@ In VRChat, you can now use my public test avatar (Foxipso Base), add it to your 
 - **Microphone enforced-mute**: while locked, stay quiet--talking too loud trips warnings and consequences (with background-noise calibration for noisy rooms)
 - **Unified collar mode**: one in-game button cycles which restraints are active (Jaw / Mic / Both / Neither)
 - **In-game sound effects**: drive avatar animation sounds on lock, unlock, warning, disobedience, and collar-mode switch
-- Integration with VRChat, PiShock, OpenShock, BPIO and Twitch (experimental)
+- Integration with VRChat, PiShock, OpenShock, DG-Lab Coyote, BPIO and Twitch (experimental)
 - Integration with Sacred's [VRCBiteTech](https://jinxxy.com/Sacred/VRCBiteTech) (get shocked when bitten!)
 - Audio cues for warnings and boundary violations
 - Configurable timers for automatic unlocking and shock cooldown
-- Multi-shocker support (OpenShock & PiShock)
+- Multi-shocker support (OpenShock & PiShock), and dual-channel support for the DG-Lab Coyote 3.0
 - Supports placement spheres in the prefab
 - Can stop your locomotion in VRChat when locked (recommended with placement spheres)
 - Emergency stop mode
@@ -83,7 +83,7 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 * ~~PiShock WebSocket v2 support~~ Done!
 * ~~Emergency stop support~~ Done!
 * ~~BPIO integration~~ Done!
-* DG-Lab integration
+* ~~DG-Lab integration~~ Done!
 * ~~Placement spheres/hints (attempt #2)~~ Done!
 * In-world audio emitters (attempt #2)
 
@@ -103,6 +103,14 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 ## 📅 Version History
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
+
+**1.4.2** - DG-Lab Coyote, Enforced Unmute + bug fixes (7/23/2026)
+- Added **DG-Lab Coyote 3.0 support**: scan a QR code on the Integrations → DG-Lab tab with the DG-Lab app and your Coyote's two channels become bindable targets in the Devices tab, driven by the same warning/disobedience/bite/Shock triggers as your other devices. Your phone relays over Bluetooth, so no extra hardware or drivers are needed
+- Added **Enforced Unmute**: while locked, muting yourself in VRChat (via the built-in `MuteSelf` param) is punished — after a grace window, staying muted fires your configured disobedience actions and repeats until you unmute (instantly forgiven on unmute). Can be gated on the collar lock + Mic mode or always armed, with its own shocker/vibrator bindings and cooldown. Configured on Integrations → Mic
+- OpenShock: Bite and the OSC Shock/broadcast triggers now fire **all** configured shockers instead of only the first one (matches PiShock)
+- Moving a locked device past the **disable distance** now auto-unlocks that device; other locked devices keep enforcing
+- The mic HUD icon no longer stays lit constantly with **Enforced Unmute** — it only lights for the mute warning and punishment, unless the mic-loudness monitor is active
+- **Emergency stop** now reliably suspends the Enforced Unmute / microphone enforcement while active
 
 **1.4** - Bug fixes, PiShock v2 default, fewer synced params, UI overhaul (in development)
 - Added the **VRCFT JawOpen constraint**: while locked, your jaw must stay where it was when locked

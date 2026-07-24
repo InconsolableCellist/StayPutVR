@@ -56,10 +56,11 @@ namespace StayPutVR {
 
     UIManager::~UIManager() {
         Shutdown();
-        
+
         ShutdownTwitchManager();
         ShutdownPiShockManager();
         ShutdownOpenShockManager();
+        ShutdownDGLabManager();
         ShutdownButtplugManager();
         
         if (device_manager_) {
@@ -260,6 +261,7 @@ namespace StayPutVR {
         InitializePiShockManager();
         InitializePiShockWebSocketManager();
         InitializeOpenShockManager();
+        InitializeDGLabManager();
         InitializeButtplugManager();
 
         // Create UI panels
@@ -268,6 +270,9 @@ namespace StayPutVR {
             [this]() { SaveConfig(); });
         openshock_panel_ = std::make_unique<OpenShockPanel>(
             config_, openshock_manager_,
+            [this]() { SaveConfig(); });
+        dglab_panel_ = std::make_unique<DGLabPanel>(
+            config_, dglab_manager_,
             [this]() { SaveConfig(); });
         buttplug_panel_ = std::make_unique<ButtplugPanel>(
             config_, buttplug_manager_,
@@ -322,7 +327,11 @@ namespace StayPutVR {
         if (pishock_ws_manager_) {
             pishock_ws_manager_->Update();
         }
-        
+
+        if (dglab_manager_) {
+            dglab_manager_->Update();
+        }
+
         if (buttplug_manager_) {
             buttplug_manager_->Update();
         }
@@ -404,6 +413,7 @@ namespace StayPutVR {
         ShutdownTwitchManager();
         ShutdownPiShockManager();
         ShutdownOpenShockManager();
+        ShutdownDGLabManager();
         ShutdownButtplugManager();
         
         // Give managers time to properly clean up (especially WebSocket connections)
