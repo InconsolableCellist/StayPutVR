@@ -608,6 +608,25 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
             }
         }
 
+        // DG-Lab Coyote Settings
+        dglab_enabled = jval(j, "dglab_enabled", false);
+        dglab_user_agreement = jval(j, "dglab_user_agreement", false);
+        dglab_client_id = jval(j, "dglab_client_id", "");
+        dglab_server_port = jval(j, "dglab_server_port", 28847);
+        dglab_server_ip = jval(j, "dglab_server_ip", "");
+        dglab_channel_a = jval(j, "dglab_channel_a", true);
+        dglab_channel_b = jval(j, "dglab_channel_b", false);
+        dglab_limit_a = jval(j, "dglab_limit_a", 20);
+        dglab_limit_b = jval(j, "dglab_limit_b", 20);
+        dglab_frequency = jval(j, "dglab_frequency", 100);
+        dglab_waveform = jval(j, "dglab_waveform", 0);
+        dglab_warning_action = jval(j, "dglab_warning_action", 0);
+        dglab_warning_intensity = jval(j, "dglab_warning_intensity", 0.25f);
+        dglab_warning_duration = jval(j, "dglab_warning_duration", 1.0f);
+        dglab_disobedience_action = jval(j, "dglab_disobedience_action", 0);
+        dglab_disobedience_intensity = jval(j, "dglab_disobedience_intensity", 0.25f);
+        dglab_disobedience_duration = jval(j, "dglab_disobedience_duration", 1.0f);
+
         // Buttplug/Intiface Settings
         buttplug_enabled = jval(j, "buttplug_enabled", false);
         buttplug_user_agreement = jval(j, "buttplug_user_agreement", false);
@@ -777,6 +796,7 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         device_pishock_ids.clear();
         device_openshock_ids.clear();
         device_vibration_ids.clear();
+        device_dglab_ids.clear();
         
         // Load device names, settings, and roles from new format (direct properties)
         if (j.contains("device_names") && j["device_names"].is_object()) {
@@ -827,6 +847,8 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
             load_bool5_map(j["device_pishock_ids"], device_pishock_ids);
         if (j.contains("device_openshock_ids") && j["device_openshock_ids"].is_object())
             load_bool5_map(j["device_openshock_ids"], device_openshock_ids);
+        if (j.contains("device_dglab_ids") && j["device_dglab_ids"].is_object())
+            load_bool5_map(j["device_dglab_ids"], device_dglab_ids);
 
         // Migration: older configs stored a single shared "device_shock_ids" that
         // drove both PiShock and OpenShock. Seed both split maps from it so users
@@ -1077,6 +1099,25 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["openshock_individual_disobedience_intensities"] = disobedience_intensities_json;
 
         // Buttplug/Intiface Settings
+        // DG-Lab Coyote Settings
+        j["dglab_enabled"] = dglab_enabled;
+        j["dglab_user_agreement"] = dglab_user_agreement;
+        j["dglab_client_id"] = dglab_client_id;
+        j["dglab_server_port"] = dglab_server_port;
+        j["dglab_server_ip"] = dglab_server_ip;
+        j["dglab_channel_a"] = dglab_channel_a;
+        j["dglab_channel_b"] = dglab_channel_b;
+        j["dglab_limit_a"] = dglab_limit_a;
+        j["dglab_limit_b"] = dglab_limit_b;
+        j["dglab_frequency"] = dglab_frequency;
+        j["dglab_waveform"] = dglab_waveform;
+        j["dglab_warning_action"] = dglab_warning_action;
+        j["dglab_warning_intensity"] = dglab_warning_intensity;
+        j["dglab_warning_duration"] = dglab_warning_duration;
+        j["dglab_disobedience_action"] = dglab_disobedience_action;
+        j["dglab_disobedience_intensity"] = dglab_disobedience_intensity;
+        j["dglab_disobedience_duration"] = dglab_disobedience_duration;
+
         j["buttplug_enabled"] = buttplug_enabled;
         j["buttplug_user_agreement"] = buttplug_user_agreement;
         
@@ -1265,7 +1306,16 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
             device_openshock_ids_json[serial] = arr;
         }
         j["device_openshock_ids"] = device_openshock_ids_json;
-        
+
+        // Populate device DG-Lab channel bindings (slot 0 = channel A, 1 = B).
+        nlohmann::json device_dglab_ids_json = nlohmann::json::object();
+        for (const auto& [serial, ids] : device_dglab_ids) {
+            nlohmann::json arr = nlohmann::json::array();
+            for (bool enabled : ids) arr.push_back(enabled);
+            device_dglab_ids_json[serial] = arr;
+        }
+        j["device_dglab_ids"] = device_dglab_ids_json;
+
         // Populate device vibration IDs
         for (const auto& [serial, vibration_ids] : device_vibration_ids) {
             nlohmann::json vibration_ids_array = nlohmann::json::array();
@@ -1285,6 +1335,7 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         for (const auto& [serial, _] : device_roles) all_serials.insert(serial);
         for (const auto& [serial, _] : device_pishock_ids) all_serials.insert(serial);
         for (const auto& [serial, _] : device_openshock_ids) all_serials.insert(serial);
+        for (const auto& [serial, _] : device_dglab_ids) all_serials.insert(serial);
         for (const auto& [serial, _] : device_vibration_ids) all_serials.insert(serial);
         
         // Create device objects

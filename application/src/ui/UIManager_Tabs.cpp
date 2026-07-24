@@ -169,6 +169,26 @@ namespace StayPutVR {
             RenderLinkRow("OpenShock", openshock_manager_->GetLinkStatus());
         }
 
+        // --- DG-Lab Coyote (embedded WS server + phone app bridge) ---
+        if (config_.dglab_enabled && dglab_manager_) {
+            LinkStatus s;
+            switch (dglab_manager_->GetLinkState()) {
+                case DGLabManager::LinkState::Bound:
+                    s.state = LinkState::Connected;
+                    break;
+                case DGLabManager::LinkState::Binding:
+                case DGLabManager::LinkState::WaitingForScan:
+                    s.state = LinkState::Connecting;
+                    break;
+                case DGLabManager::LinkState::ServerStopped:
+                    s.state = LinkState::Failed;
+                    break;
+            }
+            s.detail = dglab_manager_->GetConnectionStatus();
+            s.last_error = dglab_manager_->GetLastError();
+            RenderLinkRow("DG-Lab", s);
+        }
+
         // --- Twitch (IRC chat + EventSub) ---
         if (config_.twitch_enabled && twitch_manager_) {
             LinkStatus s;

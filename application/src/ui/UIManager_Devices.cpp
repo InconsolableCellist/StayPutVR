@@ -106,6 +106,8 @@ namespace StayPutVR {
                     pos.pishock_enabled = it2->second;
                 if (auto it2 = config_.device_openshock_ids.find(serial); it2 != config_.device_openshock_ids.end())
                     pos.openshock_enabled = it2->second;
+                if (auto it2 = config_.device_dglab_ids.find(serial); it2 != config_.device_dglab_ids.end())
+                    pos.dglab_enabled = it2->second;
                 if (auto it2 = config_.device_vibration_ids.find(serial); it2 != config_.device_vibration_ids.end())
                     pos.vibration_device_enabled = it2->second;
 
@@ -690,7 +692,14 @@ namespace StayPutVR {
                         }
                         openshock_manager_->TriggerDisobedienceActions(device.serial);
                     }
-                } 
+
+                    if (dglab_manager_ && dglab_manager_->IsEnabled()) {
+                        if (StayPutVR::Logger::IsInitialized()) {
+                            Logger::Info("Triggering initial DG-Lab disobedience actions for device " + device.serial);
+                        }
+                        dglab_manager_->TriggerDisobedienceActions(device.serial);
+                    }
+                }
                 // Continue triggering PiShock for devices that remain in out-of-bounds zone
                 else if (device.exceeds_threshold && CanTriggerPiShock()) {
                     if (StayPutVR::Logger::IsInitialized()) {
@@ -709,9 +718,17 @@ namespace StayPutVR {
                         openshock_manager_->TriggerDisobedienceActions(device.serial);
                     }
                 }
+
+                // Continue triggering DG-Lab while the device stays out of bounds.
+                // Kept independent of the PiShock/OpenShock else-if chain above so
+                // it fires regardless of which other integrations are enabled.
+                if (device.exceeds_threshold && dglab_manager_ && dglab_manager_->IsEnabled() &&
+                    dglab_manager_->CanTriggerAction()) {
+                    dglab_manager_->TriggerDisobedienceActions(device.serial);
+                }
             }
         }
-        
+
         // If any device exceeded the disable threshold, skip all alerts
         if (disable_threshold_exceeded) {
             if (Logger::IsInitialized()) {
@@ -898,6 +915,12 @@ namespace StayPutVR {
             if (openshock_manager_->CanTriggerAction())
                 openshock_manager_->TriggerDisobedienceActions(kJawOpenSerial);
         }
+        // DG-Lab, independent of the else-if chain above (entry edge and
+        // continuous are both covered by its own rate limit).
+        if (jaw_.exceeds_threshold && dglab_manager_ && dglab_manager_->IsEnabled() &&
+            dglab_manager_->CanTriggerAction()) {
+            dglab_manager_->TriggerDisobedienceActions(kJawOpenSerial);
+        }
 
         // Audio, sharing the position constraint's cooldown (last_sound_time_).
         // Warning/disobedience play off the *current* zone, not just the entry
@@ -1055,6 +1078,8 @@ namespace StayPutVR {
                 TriggerPiShockDisobedience(kMicSerial);
                 if (openshock_manager_ && openshock_manager_->IsEnabled())
                     openshock_manager_->TriggerDisobedienceActions(kMicSerial);
+                if (dglab_manager_ && dglab_manager_->IsEnabled())
+                    dglab_manager_->TriggerDisobedienceActions(kMicSerial);
                 mic_.diso_cooldown_until = now + mic_cooldown;
             }
         }
@@ -1065,6 +1090,10 @@ namespace StayPutVR {
             if (openshock_manager_ && openshock_manager_->IsEnabled() &&
                 openshock_manager_->CanTriggerAction()) {
                 openshock_manager_->TriggerDisobedienceActions(kMicSerial); fired = true;
+            }
+            if (dglab_manager_ && dglab_manager_->IsEnabled() &&
+                dglab_manager_->CanTriggerAction()) {
+                dglab_manager_->TriggerDisobedienceActions(kMicSerial); fired = true;
             }
             if (fired) mic_.diso_cooldown_until = now + mic_cooldown;
         }
@@ -1223,6 +1252,8 @@ namespace StayPutVR {
             TriggerPiShockDisobedience(kMuteSelfSerial);
             if (openshock_manager_ && openshock_manager_->IsEnabled())
                 openshock_manager_->TriggerDisobedienceActions(kMuteSelfSerial);
+            if (dglab_manager_ && dglab_manager_->IsEnabled())
+                dglab_manager_->TriggerDisobedienceActions(kMuteSelfSerial);
 
             float action_dur = 0.0f;
             if (config_.pishock_enabled)
@@ -1231,6 +1262,8 @@ namespace StayPutVR {
                 action_dur = (std::max)(action_dur, config_.openshock_disobedience_duration);
             if (config_.buttplug_enabled)
                 action_dur = (std::max)(action_dur, config_.buttplug_disobedience_duration);
+            if (config_.dglab_enabled)
+                action_dur = (std::max)(action_dur, config_.dglab_disobedience_duration);
             muteself_.next_fire_time = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
                 std::chrono::duration<float>(action_dur + config_.muteself_cooldown_seconds));
 
@@ -1651,17 +1684,23 @@ namespace StayPutVR {
         const ImVec4 red(0.80f, 0.25f, 0.25f, 1.0f);
         const ImVec4 purple(0.55f, 0.30f, 0.80f, 1.0f);
 
+        const ImVec4 green(0.20f, 0.65f, 0.35f, 1.0f);
+
         // One category row: a colored header, a chip per configured slot (0-based
         // label to match the PiShock/OpenShock panels), then an "All" chip.
+        // slot_names, when given, replaces the "<prefix><index>" label (DG-Lab's
+        // two slots are the device's named A/B channels, not numbered IDs).
         auto category = [&](const char* name, char cat, ImVec4 color, const char* prefix,
-                            auto configured) {
+                            auto configured, const char* const* slot_names = nullptr) {
             ImGui::TextColored(color, "%s:", name);
             bool any = false;
             for (int i = 0; i < 5; ++i) {
                 if (!configured(i)) continue;
                 any = true;
                 ImGui::SameLine();
-                char lbl[8]; std::snprintf(lbl, sizeof(lbl), "%s%d", prefix, i);
+                char lbl[8];
+                if (slot_names) std::snprintf(lbl, sizeof(lbl), "%s", slot_names[i]);
+                else            std::snprintf(lbl, sizeof(lbl), "%s%d", prefix, i);
                 char code[3] = { cat, (char)('0' + i), 0 };
                 ImGui::PushID((int)cat * 100 + i);
                 chip(lbl, code, color);
@@ -1683,8 +1722,18 @@ namespace StayPutVR {
                  [&](int i){ return config_.pishock_shocker_ids[i] != 0; });
         category("OpenShock", 'O', red, "S",
                  [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+        category("DG-Lab", 'D', green, "Ch",
+                 [&](int i){ return DGLabSlotConfigured(i); }, kDGLabSlotNames);
         category("BPIO", 'V', purple, "V",
                  [&](int i){ return config_.buttplug_device_indices[i] >= 0; });
+    }
+
+    // A DG-Lab "slot" is one of the Coyote's two output channels; slots 2-4 of
+    // the shared array<bool,5> are never configurable.
+    bool UIManager::DGLabSlotConfigured(int i) const {
+        if (i == 0) return config_.dglab_channel_a;
+        if (i == 1) return config_.dglab_channel_b;
+        return false;
     }
 
     // Bind (enable=true) or unbind (enable=false) a dragged ID chip (payload
@@ -1702,6 +1751,9 @@ namespace StayPutVR {
         } else if (cat == 'O') {
             set(d.openshock_enabled, [&](int i){ return !config_.openshock_device_ids[i].empty(); });
             config_.device_openshock_ids[d.serial] = d.openshock_enabled;
+        } else if (cat == 'D') {
+            set(d.dglab_enabled, [&](int i){ return DGLabSlotConfigured(i); });
+            config_.device_dglab_ids[d.serial] = d.dglab_enabled;
         } else if (cat == 'V') {
             set(d.vibration_device_enabled, [&](int i){ return config_.buttplug_device_indices[i] >= 0; });
             config_.device_vibration_ids[d.serial] = d.vibration_device_enabled;
@@ -1741,6 +1793,9 @@ namespace StayPutVR {
         } else if (cat == 'O') {
             set(jaw_.openshock_enabled, [&](int i){ return !config_.openshock_device_ids[i].empty(); });
             config_.device_openshock_ids[kJawOpenSerial] = jaw_.openshock_enabled;
+        } else if (cat == 'D') {
+            set(jaw_.dglab_enabled, [&](int i){ return DGLabSlotConfigured(i); });
+            config_.device_dglab_ids[kJawOpenSerial] = jaw_.dglab_enabled;
         } else if (cat == 'V') {
             set(jaw_.vibration_device_enabled, [&](int i){ return config_.buttplug_device_indices[i] >= 0; });
             config_.device_vibration_ids[kJawOpenSerial] = jaw_.vibration_device_enabled;
@@ -1755,6 +1810,8 @@ namespace StayPutVR {
             jaw_.pishock_enabled = it->second;
         if (auto it = config_.device_openshock_ids.find(kJawOpenSerial); it != config_.device_openshock_ids.end())
             jaw_.openshock_enabled = it->second;
+        if (auto it = config_.device_dglab_ids.find(kJawOpenSerial); it != config_.device_dglab_ids.end())
+            jaw_.dglab_enabled = it->second;
         if (auto it = config_.device_vibration_ids.find(kJawOpenSerial); it != config_.device_vibration_ids.end())
             jaw_.vibration_device_enabled = it->second;
     }
@@ -1764,6 +1821,8 @@ namespace StayPutVR {
             mic_.pishock_enabled = it->second;
         if (auto it = config_.device_openshock_ids.find(kMicSerial); it != config_.device_openshock_ids.end())
             mic_.openshock_enabled = it->second;
+        if (auto it = config_.device_dglab_ids.find(kMicSerial); it != config_.device_dglab_ids.end())
+            mic_.dglab_enabled = it->second;
         if (auto it = config_.device_vibration_ids.find(kMicSerial); it != config_.device_vibration_ids.end())
             mic_.vibration_device_enabled = it->second;
     }
@@ -1773,6 +1832,8 @@ namespace StayPutVR {
             muteself_.pishock_enabled = it->second;
         if (auto it = config_.device_openshock_ids.find(kMuteSelfSerial); it != config_.device_openshock_ids.end())
             muteself_.openshock_enabled = it->second;
+        if (auto it = config_.device_dglab_ids.find(kMuteSelfSerial); it != config_.device_dglab_ids.end())
+            muteself_.dglab_enabled = it->second;
         if (auto it = config_.device_vibration_ids.find(kMuteSelfSerial); it != config_.device_vibration_ids.end())
             muteself_.vibration_device_enabled = it->second;
     }
@@ -1947,6 +2008,7 @@ namespace StayPutVR {
                         const ImU32 cb = IM_COL32(120, 190, 255, 255); // PiShock (bright blue)
                         const ImU32 cr = IM_COL32(255, 120, 120, 255); // OpenShock (bright red)
                         const ImU32 cp = IM_COL32(220, 150, 255, 255); // BPIO (bright purple)
+                        const ImU32 cg = IM_COL32(120, 230, 160, 255); // DG-Lab (bright green)
                         auto forTokens = [&](auto emit) {
                             for (int i = 0; i < 5; ++i)
                                 if (dev->pishock_enabled[i] && config_.pishock_shocker_ids[i] != 0) {
@@ -1955,6 +2017,10 @@ namespace StayPutVR {
                             for (int i = 0; i < 5; ++i)
                                 if (dev->openshock_enabled[i] && !config_.openshock_device_ids[i].empty()) {
                                     char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cr);
+                                }
+                            for (int i = 0; i < 5; ++i)
+                                if (dev->dglab_enabled[i] && DGLabSlotConfigured(i)) {
+                                    char t[6]; std::snprintf(t, 6, "%s", kDGLabSlotNames[i]); emit(t, cg);
                                 }
                             for (int i = 0; i < 5; ++i)
                                 if (dev->vibration_device_enabled[i] && config_.buttplug_device_indices[i] >= 0) {
@@ -2272,6 +2338,24 @@ namespace StayPutVR {
         }
         if (!any_os) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
 
+        // DG-Lab — the Coyote's two output channels.
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.5f, 1.0f), "DG-Lab:");
+        bool any_dg = false;
+        for (int i = 0; i < 5; ++i) {
+            if (!DGLabSlotConfigured(i)) continue;
+            any_dg = true;
+            ImGui::SameLine();
+            ImGui::PushID(1700 + i);
+            bool on = dev->dglab_enabled[i];
+            if (ImGui::Checkbox(kDGLabSlotNames[i], &on)) {
+                dev->dglab_enabled[i] = on;
+                config_.device_dglab_ids[serial] = dev->dglab_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_dg) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
         // Vibration — the 5 configured Buttplug device indices.
         ImGui::Text("Vibration (Buttplug / BPIO):");
         bool any_vibe = false;
@@ -2372,6 +2456,21 @@ namespace StayPutVR {
             ImGui::PopID();
         }
         if (!any_os) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.5f, 1.0f), "DG-Lab:");
+        bool any_dg = false;
+        for (int i = 0; i < 5; ++i) {
+            if (!DGLabSlotConfigured(i)) continue;
+            any_dg = true; ImGui::SameLine(); ImGui::PushID(4500 + i);
+            bool on = jaw_.dglab_enabled[i];
+            if (ImGui::Checkbox(kDGLabSlotNames[i], &on)) {
+                jaw_.dglab_enabled[i] = on;
+                config_.device_dglab_ids[kJawOpenSerial] = jaw_.dglab_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_dg) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
 
         ImGui::Text("Vibration (Buttplug / BPIO):");
         bool any_vibe = false;
@@ -2774,13 +2873,16 @@ namespace StayPutVR {
                     if (ps_it != config_.device_pishock_ids.end()) device.pishock_enabled = ps_it->second;
                     auto os_it = config_.device_openshock_ids.find(device.serial);
                     if (os_it != config_.device_openshock_ids.end()) device.openshock_enabled = os_it->second;
+                    auto dg_it = config_.device_dglab_ids.find(device.serial);
+                    if (dg_it != config_.device_dglab_ids.end()) device.dglab_enabled = dg_it->second;
                 }
 
                 // One toggle row for a category (configured() gates which slots
                 // show; on_color tints enabled buttons). 0-based labels.
                 auto shock_row = [&](const char* name, std::array<bool, 5>& sel,
                                      std::unordered_map<std::string, std::array<bool, 5>>& store,
-                                     ImVec4 on_color, auto configured) {
+                                     ImVec4 on_color, auto configured,
+                                     const char* const* slot_names = nullptr) {
                     ImGui::TextUnformatted(name);
                     ImGui::SameLine();
                     bool any = false;
@@ -2796,7 +2898,11 @@ namespace StayPutVR {
                             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
                         }
-                        if (ImGui::Button(std::to_string(i).c_str(), ImVec2(25, 22))) {
+                        // Keep the fallback label in a named local: a temporary
+                        // std::to_string(i).c_str() would dangle past this line.
+                        const std::string num_label = std::to_string(i);
+                        const char* btn_label = slot_names ? slot_names[i] : num_label.c_str();
+                        if (ImGui::Button(btn_label, ImVec2(25, 22))) {
                             sel[i] = !sel[i];
                             store[device.serial] = sel;
                             SaveConfig();
@@ -2815,6 +2921,9 @@ namespace StayPutVR {
                 shock_row("OpenShock", device.openshock_enabled, config_.device_openshock_ids,
                           ImVec4(0.80f, 0.25f, 0.25f, 1.0f),
                           [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+                shock_row("DG-Lab   ", device.dglab_enabled, config_.device_dglab_ids,
+                          ImVec4(0.20f, 0.65f, 0.35f, 1.0f),
+                          [&](int i){ return DGLabSlotConfigured(i); }, kDGLabSlotNames);
 
                 ImGui::PopID();
                 

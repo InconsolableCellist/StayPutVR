@@ -8,6 +8,13 @@ As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
 
 ## New in 1.4.2
+- **DG-Lab Coyote 3.0 support (new integration):** your Coyote can now be a
+  punishment device alongside PiShock and OpenShock. Open Integrations → DG-Lab,
+  tick the agreement, and scan the QR code with the DG-Lab app — your phone relays
+  to the Coyote over Bluetooth, so there's nothing extra to buy or install. Both
+  output channels (A and B) show up in the Devices tab as green chips you can drag
+  onto any body slot, with their own intensity, duration, frequency, and waveform.
+  Your phone must stay on the same network with the app open.
 - **Enforced Unmute (new feature):** while your collar is locked, muting yourself
   in VRChat is now punished — after a short grace period, staying muted fires your
   shockers and repeats until you unmute (unmuting is instantly forgiven). Set it up

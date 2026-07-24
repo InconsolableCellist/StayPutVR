@@ -37,10 +37,12 @@
 #include "../managers/PiShockManager.hpp"
 #include "../managers/PiShockWebSocketManager.hpp"
 #include "../managers/OpenShockManager.hpp"
+#include "../managers/DGLabManager.hpp"
 #include "../managers/ButtplugManager.hpp"
 #include "../managers/MicrophoneManager.hpp"
 #include "panels/PiShockPanel.hpp"
 #include "panels/OpenShockPanel.hpp"
+#include "panels/DGLabPanel.hpp"
 #include "panels/ButtplugPanel.hpp"
 #include "SplashScreen.hpp"
 
@@ -102,6 +104,8 @@ namespace StayPutVR {
         // Tracked separately so a device can bind PiShock and OpenShock independently.
         std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
         std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        // DG-Lab output channels: slot 0 = channel A, slot 1 = channel B.
+        std::array<bool, 5> dglab_enabled = {false, false, false, false, false};
 
         // Buttplug device selection - which vibration IDs should be used for this device
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
@@ -131,6 +135,8 @@ namespace StayPutVR {
         bool  exceeds_threshold = false;
         std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
         std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        // DG-Lab output channels: slot 0 = channel A, slot 1 = channel B.
+        std::array<bool, 5> dglab_enabled = {false, false, false, false, false};
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
@@ -153,6 +159,8 @@ namespace StayPutVR {
         std::chrono::steady_clock::time_point diso_cooldown_until;
         std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
         std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        // DG-Lab output channels: slot 0 = channel A, slot 1 = channel B.
+        std::array<bool, 5> dglab_enabled = {false, false, false, false, false};
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
@@ -171,6 +179,8 @@ namespace StayPutVR {
         std::chrono::steady_clock::time_point next_fire_time;
         std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
         std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        // DG-Lab output channels: slot 0 = channel A, slot 1 = channel B.
+        std::array<bool, 5> dglab_enabled = {false, false, false, false, false};
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
@@ -308,6 +318,7 @@ namespace StayPutVR {
         void RenderSettingsTab();
         void RenderPiShockTab();
         void RenderOpenShockTab();
+        void RenderDGLabTab();
         void RenderButtplugTab();
         void RenderTwitchTab();
         // VRCFT sub-tab: JawOpen constraint enable + paths + margins + grace + bindings.
@@ -332,6 +343,9 @@ namespace StayPutVR {
         // Devices > Visual assignment view (effigy + drag-drop + per-slot config).
         void RenderVisualAssignment();
         void RenderShockerPalette();
+        // True if DG-Lab slot i maps to an enabled Coyote channel (0=A, 1=B).
+        bool DGLabSlotConfigured(int i) const;
+        static constexpr const char* kDGLabSlotNames[5] = {"A", "B", "", "", ""};
         void ApplyIdBindingToDevice(DevicePosition& d, const char* code, bool enable);
         void ApplyIdBindingToRole(DeviceRole role, const char* code);
         void ApplyIdBindingToAllCuffs(const char* code, bool enable);
@@ -464,12 +478,15 @@ namespace StayPutVR {
         std::unique_ptr<PiShockWebSocketManager> pishock_ws_manager_;
         
         std::unique_ptr<OpenShockManager> openshock_manager_;
-        
+
+        std::unique_ptr<DGLabManager> dglab_manager_;
+
         std::unique_ptr<ButtplugManager> buttplug_manager_;
 
         // UI Panels
         std::unique_ptr<PiShockPanel> pishock_panel_;
         std::unique_ptr<OpenShockPanel> openshock_panel_;
+        std::unique_ptr<DGLabPanel> dglab_panel_;
         std::unique_ptr<ButtplugPanel> buttplug_panel_;
         
         // Countdown timer variables
@@ -521,7 +538,10 @@ namespace StayPutVR {
         
         void InitializeOpenShockManager();
         void ShutdownOpenShockManager();
-        
+
+        void InitializeDGLabManager();
+        void ShutdownDGLabManager();
+
         void InitializeButtplugManager();
         void ShutdownButtplugManager();
         

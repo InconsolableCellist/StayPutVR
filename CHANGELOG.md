@@ -2,9 +2,22 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
-## 1.4.2 — Enforced Unmute + bug fixes (7/23/2026)
+## 1.4.2 — DG-Lab Coyote, Enforced Unmute + bug fixes (7/23/2026)
 
-### New feature
+### New features
+- **DG-Lab Coyote 3.0 support:** the Coyote joins PiShock and OpenShock as a
+  punishment device. StayPutVR runs a small WebSocket server on your PC and shows a
+  QR code on the Integrations → DG-Lab tab; scanning it with the DG-Lab app (Socket
+  Control) pairs the two, and your phone relays commands to the Coyote over
+  Bluetooth — no dongle, driver, or third-party service required. The Coyote's two
+  output channels (A and B) appear in the Devices tab as draggable green chips, so
+  each tracker, the jaw constraint, or the mic constraint can drive whichever
+  channel you like. Warning and disobedience pulses have their own intensity,
+  duration, frequency, and waveform (steady / pulse / ramp), and the bite and OSC
+  Shock triggers fire it alongside your other devices. Per-channel strength limits
+  are enforced on top of the limits you set in the DG-Lab app itself, and the
+  physical buttons on the Coyote still zero both channels instantly.
+
 - **Enforced Unmute (VRChat mute):** the inverse of the microphone constraint —
   while your collar is locked, muting yourself in VRChat (via the built-in
   `MuteSelf` parameter) is punished. After a grace window, staying muted fires your
