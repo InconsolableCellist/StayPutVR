@@ -303,9 +303,19 @@ namespace StayPutVR {
             if (Logger::IsInitialized()) {
                 Logger::Warning("Cannot lock device " + serial + " - emergency stop mode is active");
             }
+            // Issue #13: the avatar drives its own cuff visual off the lock param it
+            // just sent, so silently dropping the request leaves the cuff coloured for
+            // a lock we are not enforcing. Push the real state back so it corrects.
+            auto refused = device_map_.find(serial);
+            if (refused != device_map_.end()) {
+                const auto& device = device_positions_[refused->second];
+                if (device.role != DeviceRole::None) {
+                    UpdateDeviceStatus(DeviceRoleToOSCDeviceType(device.role), DeviceStatus::Unlocked);
+                }
+            }
             return;
         }
-        
+
         auto it = device_map_.find(serial);
         if (it != device_map_.end()) {
             size_t index = it->second;
@@ -400,9 +410,16 @@ namespace StayPutVR {
             if (Logger::IsInitialized()) {
                 Logger::Warning("Cannot activate global lock - emergency stop mode is active");
             }
+            // Issue #13: re-assert Unlocked on every cuff so the avatar doesn't keep
+            // showing a locked state for a global lock we refused to enforce.
+            for (const auto& device : device_positions_) {
+                if (device.role != DeviceRole::None) {
+                    UpdateDeviceStatus(DeviceRoleToOSCDeviceType(device.role), DeviceStatus::Unlocked);
+                }
+            }
             return;
         }
-        
+
         global_lock_active_ = activate;
         
         // If activating, store current positions as original for all included devices

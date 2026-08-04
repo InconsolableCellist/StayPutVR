@@ -9,6 +9,7 @@
     #pragma comment(lib, "iphlpapi.lib")
 #else
     #include <sys/socket.h>
+    #include <sys/select.h>
     #include <netinet/in.h>
     #include <arpa/inet.h>
     #include <unistd.h>
@@ -114,6 +115,44 @@ static std::vector<std::string> EnumerateLocalIPv4() {
 static std::string GetLocalIPv4() {
     auto ips = EnumerateLocalIPv4();
     return ips.empty() ? "127.0.0.1" : ips.front();
+}
+
+// Block until at least one of `socks` has data waiting, or `timeout_ms` elapses.
+// Returns true if something is readable.
+//
+// This is load-bearing for CPU usage (issue #15). mdns_socket_open_ipv4() puts
+// every socket it creates into non-blocking mode, so SO_RCVTIMEO is silently
+// ignored and mdns_socket_listen()/mdns_query_recv() return immediately with
+// EWOULDBLOCK. Calling them in a bare `while (running_)` loop therefore spins a
+// CPU core flat out per thread. select() gives us the blocking wait that
+// SO_RCVTIMEO could not, while still waking often enough to notice shutdown.
+static bool WaitReadable(const std::vector<int>& socks, int timeout_ms) {
+    if (socks.empty()) return false;
+
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    int max_fd = 0;
+    for (int s : socks) {
+        if (s < 0) continue;
+#ifdef _WIN32
+        // Winsock's fd_set is a SOCKET array; FD_SET itself drops anything past
+        // FD_SETSIZE rather than overrunning.
+        FD_SET(static_cast<SOCKET>(s), &readfds);
+#else
+        // select() cannot represent descriptors at or above FD_SETSIZE; skipping
+        // is safer than the out-of-bounds write FD_SET would perform.
+        if (s >= FD_SETSIZE) continue;
+        FD_SET(s, &readfds);
+#endif
+        if (s > max_fd) max_fd = s;
+    }
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int ret = select(max_fd + 1, &readfds, nullptr, nullptr, &tv);
+    return ret > 0;
 }
 
 static int FindAvailableTCPPort() {
@@ -457,18 +496,15 @@ void OSCQueryServer::MDNSBrowseThread() {
         };
 
         for (int sock : socks) {
-#ifdef _WIN32
-            DWORD tv = 200;
-            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-#else
-            struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 200000;
-            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
             mdns_multiquery_send(sock, queries, 2, buffer, sizeof(buffer), 0);
         }
 
+        // Collect responses for 2s. WaitReadable() does the blocking (the sockets
+        // are non-blocking, so recv alone would busy-spin -- see issue #15); the
+        // 200ms slice keeps shutdown latency low.
         auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while (std::chrono::steady_clock::now() < deadline && running_) {
+            if (!WaitReadable(socks, 200)) continue;
             for (int sock : socks)
                 mdns_query_recv(sock, buffer, sizeof(buffer), MDNSBrowseCallback, &ctx, 0);
         }
@@ -727,24 +763,20 @@ void OSCQueryServer::MDNSListenThread() {
                 std::to_string(http_port_) + ", osc udp:" + std::to_string(osc_port_) +
                 "). Watch for an HTTP GET line when VRChat connects.");
 
-        // Initial announcement on every interface, then set a short recv timeout
-        // so the listen loop stays responsive to shutdown.
+        // Initial announcement on every interface.
         for (size_t i = 0; i < socks.size(); ++i) {
             AnnounceOnSocket(socks[i], service_name_, hostname_, http_port_, osc_port_,
                              ctxs[i].local_addr, /*goodbye=*/false);
-#ifdef _WIN32
-            DWORD tv = 250;
-            setsockopt(socks[i], SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-#else
-            struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 250000;
-            setsockopt(socks[i], SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-#endif
         }
         LogInfo("OSCQuery: announced services (oscjson tcp:" + std::to_string(http_port_) +
                 " osc udp:" + std::to_string(osc_port_) + ")");
 
+        // Answer inbound queries. WaitReadable() supplies the blocking wait the
+        // non-blocking sockets deny us (issue #15: this loop used to peg a core);
+        // the 250ms slice bounds how long Stop() waits for this thread to notice.
         char buffer[2048];
         while (running_) {
+            if (!WaitReadable(socks, 250)) continue;
             for (size_t i = 0; i < socks.size(); ++i)
                 mdns_socket_listen(socks[i], buffer, sizeof(buffer), MDNSListenCallback, &ctxs[i]);
         }

@@ -888,7 +888,11 @@ namespace StayPutVR {
         config_.warning_threshold = warning_threshold_;
         config_.bounds_threshold = position_threshold_;
         config_.disable_threshold = disable_threshold_;
-        
+
+        // Issue #16: persist the lifetime bite tally (Shutdown() saves, so a clean
+        // exit keeps the count even if no setting was touched this run).
+        config_.bite_count_lifetime = bite_count_lifetime_.load(std::memory_order_relaxed);
+
         // Store device data from currently connected devices
         // DO NOT clear the maps - this would erase settings for disconnected devices
         
@@ -926,7 +930,10 @@ namespace StayPutVR {
         warning_threshold_ = config_.warning_threshold;
         position_threshold_ = config_.bounds_threshold;
         disable_threshold_ = config_.disable_threshold;
-        
+
+        // Issue #16: restore the lifetime bite tally saved by a previous run.
+        bite_count_lifetime_.store(config_.bite_count_lifetime, std::memory_order_relaxed);
+
         // Update OSC status
         osc_enabled_ = config_.osc_enabled;
         

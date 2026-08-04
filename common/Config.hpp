@@ -154,6 +154,11 @@ public:
     bool osc_bite_use_individual_intensities = false;
     bool osc_shock_use_individual_intensities = false;
 
+    // Issue #16: lifetime tally of bites that actually fired (i.e. past the
+    // enable check and the emergency-stop gate). Persisted across runs; the
+    // session count lives on UIManager and resets every launch.
+    int bite_count_lifetime = 0;
+
     // Global lock/unlock paths
     std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
     std::string osc_global_unlock_path = "/avatar/parameters/SPVR_Global_Unlock";
