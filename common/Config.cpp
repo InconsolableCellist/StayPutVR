@@ -463,6 +463,7 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         osc_bite_intensity = jval(j, "osc_bite_intensity", 0.25f);
         osc_bite_duration = jval(j, "osc_bite_duration", 1.0f);
         osc_bite_use_individual_intensities = jval(j, "osc_bite_use_individual_intensities", false);
+        bite_count_lifetime = jval(j, "bite_count_lifetime", 0);
         osc_shock_use_individual_intensities = jval(j, "osc_shock_use_individual_intensities", false);
 
         // PiShock settings
@@ -1008,6 +1009,7 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["osc_bite_intensity"] = osc_bite_intensity;
         j["osc_bite_duration"] = osc_bite_duration;
         j["osc_bite_use_individual_intensities"] = osc_bite_use_individual_intensities;
+        j["bite_count_lifetime"] = bite_count_lifetime;
         j["osc_shock_use_individual_intensities"] = osc_shock_use_individual_intensities;
 
         // PiShock settings

@@ -553,6 +553,16 @@ namespace StayPutVR {
         // Global out-of-bounds timer helper
         void ProcessGlobalOutOfBoundsTimer();
         void ProcessBiteTimer();
+
+        // Single source of truth for "is this device actually being enforced right
+        // now", and for the status the avatar should be showing as a result.
+        // Issue #13: the deferred re-push paths (bite timer, global-OOB timer,
+        // avatar re-sync) each used to recompute this inline as
+        // `(include_in_locking && global_lock_active_) || locked`, which ignores
+        // both the disable-distance release latch and emergency stop. That
+        // re-coloured the cuff on a device whose position is no longer enforced.
+        bool IsDeviceEnforced(const DevicePosition& device) const;
+        DeviceStatus ComputeDeviceStatus(const DevicePosition& device) const;
         
         // Twitch unlock timer variables
         bool twitch_unlock_timer_active_ = false;
@@ -568,6 +578,14 @@ namespace StayPutVR {
         bool bite_timer_active_ = false;
         std::chrono::steady_clock::time_point bite_timer_start_;
         static constexpr float BITE_DURATION = 3.0f; // Duration in seconds
+
+        // Issue #16: bite tallies. Both are written from the OSC receive thread in
+        // TriggerBiteActions, so they are atomic. The session count deliberately
+        // resets every launch; the lifetime count is mirrored to/from
+        // config_.bite_count_lifetime by UpdateConfigFromUI/UpdateUIFromConfig so
+        // it survives restarts.
+        std::atomic<int> bite_count_session_{0};
+        std::atomic<int> bite_count_lifetime_{0};
 
         // Avatar-change re-sync: VRChat resets all avatar params on avatar load and
         // isn't ready to receive the echo at the instant /avatar/change fires, so the

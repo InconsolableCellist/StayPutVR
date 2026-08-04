@@ -66,6 +66,21 @@ namespace StayPutVR {
         ImGui::EndDisabled();
         if (ImGuiHelpers::SliderFloatWithButtons("Bite duration (s)", &config_.osc_bite_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
+        // Issue #16: bite tally. Session resets each launch; lifetime persists.
+        ImGui::Spacing();
+        ImGui::Text("Bites:  %d this session   /   %d lifetime",
+                    bite_count_session_.load(std::memory_order_relaxed),
+                    bite_count_lifetime_.load(std::memory_order_relaxed));
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Counts bites that actually fired. Bites ignored because the trigger "
+                                  "is disabled, or because emergency stop was active, are not counted.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##bitecount")) {
+            bite_count_session_.store(0, std::memory_order_relaxed);
+            bite_count_lifetime_.store(0, std::memory_order_relaxed);
+            changed = true;
+        }
+
         ImGui::SeparatorText("Shock  (/avatar/parameters/Shock)");
         ImGui::TextDisabled("Supports Simple Shock System");
         if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
@@ -1146,7 +1161,36 @@ namespace StayPutVR {
         }
     }
 
+    // Issue #13: a device is only *enforced* if it is locked (globally or
+    // individually) AND has not been released by the disable-distance safety
+    // AND emergency stop is not latched. CheckDevicePositionDeviations already
+    // honours all three; the deferred re-push paths must agree with it, or the
+    // avatar shows a locked cuff for a device nothing is actually enforcing.
+    bool UIManager::IsDeviceEnforced(const DevicePosition& device) const {
+        if (emergency_stop_active_) return false;
+        if (device.disable_dist_unlocked) return false;
+        return (device.include_in_locking && global_lock_active_) || device.locked;
+    }
+
+    DeviceStatus UIManager::ComputeDeviceStatus(const DevicePosition& device) const {
+        if (!IsDeviceEnforced(device)) return DeviceStatus::Unlocked;
+        if (device.exceeds_threshold) return DeviceStatus::LockedDisobedience;
+        if (device.in_warning_zone) return DeviceStatus::LockedWarning;
+        return DeviceStatus::LockedSafe;
+    }
+
     void UIManager::TriggerGlobalOutOfBoundsActions() {
+        // Emergency stop disables every disobedience action, matching
+        // TriggerBiteActions / TriggerExternalShock. Without this an inbound
+        // global out-of-bounds param still fired PiShock/OpenShock/DG-Lab while
+        // the safeword was latched.
+        if (emergency_stop_active_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("Global out-of-bounds trigger ignored - emergency stop is active");
+            }
+            return;
+        }
+
         if (Logger::IsInitialized()) {
             Logger::Info("Triggering global out-of-bounds actions with " + std::to_string(GLOBAL_OUT_OF_BOUNDS_DURATION) + "s timer");
         }
@@ -1203,10 +1247,18 @@ namespace StayPutVR {
             return;
         }
 
+        // Issue #16: count only bites that actually fire -- this is past both the
+        // osc_bite_enabled check (in the OSC callback) and the emergency-stop gate
+        // above, so a bite suppressed by the safeword never inflates the tally.
+        // Atomic because this runs on the OSC receive thread; the UI thread mirrors
+        // the lifetime value into config_ in UpdateConfigFromUI().
+        bite_count_session_.fetch_add(1, std::memory_order_relaxed);
+        bite_count_lifetime_.fetch_add(1, std::memory_order_relaxed);
+
         if (Logger::IsInitialized()) {
             Logger::Info("Triggering bite disobedience actions with " + std::to_string(BITE_DURATION) + "s timer");
         }
-        
+
         // Start the timer for resetting back to normal state
         bite_timer_active_ = true;
         bite_timer_start_ = std::chrono::steady_clock::now();
@@ -1412,33 +1464,14 @@ namespace StayPutVR {
             for (auto& device : device_positions_) {
                 if (device.role != DeviceRole::None) {
                     OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
-                    
-                    // Determine if device should be locked (either globally or individually)
-                    bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
-                    
-                    DeviceStatus newStatus;
-                    
-                    if (should_be_locked) {
-                        // Device should be locked - determine appropriate locked status
-                        newStatus = DeviceStatus::LockedSafe;
-                        
-                        // If the device is actually still out of bounds physically, keep it as disobedience
-                        if (device.exceeds_threshold) {
-                            newStatus = DeviceStatus::LockedDisobedience;
-                        } else if (device.in_warning_zone) {
-                            newStatus = DeviceStatus::LockedWarning;
-                        }
-                    } else {
-                        // Device should be unlocked
-                        newStatus = DeviceStatus::Unlocked;
-                    }
-                    
+                    DeviceStatus newStatus = ComputeDeviceStatus(device);
+
                     UpdateDeviceStatus(oscDevice, newStatus);
-                    
+
                     if (Logger::IsInitialized()) {
-                        Logger::Debug("Reset device " + device.serial + " to status: " + 
-                                     std::to_string(static_cast<int>(newStatus)) + 
-                                     " (should_be_locked=" + std::to_string(should_be_locked) + ")");
+                        Logger::Debug("Reset device " + device.serial + " to status: " +
+                                     std::to_string(static_cast<int>(newStatus)) +
+                                     " (enforced=" + std::to_string(IsDeviceEnforced(device)) + ")");
                     }
                 }
             }
@@ -1466,33 +1499,14 @@ namespace StayPutVR {
             for (auto& device : device_positions_) {
                 if (device.role != DeviceRole::None) {
                     OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
-                    
-                    // Determine if device should be locked (either globally or individually)
-                    bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
-                    
-                    DeviceStatus newStatus;
-                    
-                    if (should_be_locked) {
-                        // Device should be locked - determine appropriate locked status
-                        newStatus = DeviceStatus::LockedSafe;
-                        
-                        // If the device is actually still out of bounds physically, keep it as disobedience
-                        if (device.exceeds_threshold) {
-                            newStatus = DeviceStatus::LockedDisobedience;
-                        } else if (device.in_warning_zone) {
-                            newStatus = DeviceStatus::LockedWarning;
-                        }
-                    } else {
-                        // Device should be unlocked
-                        newStatus = DeviceStatus::Unlocked;
-                    }
-                    
+                    DeviceStatus newStatus = ComputeDeviceStatus(device);
+
                     UpdateDeviceStatus(oscDevice, newStatus);
 
                     if (Logger::IsInitialized()) {
                         Logger::Debug("Reset device " + device.serial + " to status: " +
                                      std::to_string(static_cast<int>(newStatus)) +
-                                     " (should_be_locked=" + std::to_string(should_be_locked) + ")");
+                                     " (enforced=" + std::to_string(IsDeviceEnforced(device)) + ")");
                     }
                 }
             }
@@ -1526,17 +1540,7 @@ namespace StayPutVR {
         for (auto& device : device_positions_) {
             if (device.role != DeviceRole::None) {
                 OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
-                bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
-                DeviceStatus newStatus = DeviceStatus::Unlocked;
-                if (should_be_locked) {
-                    newStatus = DeviceStatus::LockedSafe;
-                    if (device.exceeds_threshold) {
-                        newStatus = DeviceStatus::LockedDisobedience;
-                    } else if (device.in_warning_zone) {
-                        newStatus = DeviceStatus::LockedWarning;
-                    }
-                }
-                UpdateDeviceStatus(oscDevice, newStatus);
+                UpdateDeviceStatus(oscDevice, ComputeDeviceStatus(device));
             }
         }
 
