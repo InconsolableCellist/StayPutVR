@@ -90,6 +90,12 @@ public:
     // OtherError) for the config directory.
     static ConfigResult RunStartupDiagnostics(const std::string& filename);
 
+    // Issue #10: display name for a shocker slot. Returns the user's label if set,
+    // otherwise the numbered default ("PiShock 0"). Single source of truth so the
+    // binding checkboxes, the Visual-tab chips and the panels all agree.
+    std::string PiShockSlotLabel(int index) const;
+    std::string OpenShockSlotLabel(int index) const;
+
     // Config versioning (for one-time migrations)
     int config_version = 0;
 
@@ -235,6 +241,10 @@ public:
     std::string pishock_share_code;
     std::string pishock_client_id;   // WebSocket v2: Client ID for ops channel
     std::array<int, 5> pishock_shocker_ids; // WebSocket v2: The actual shocker device IDs (numeric), support up to 5 devices
+    // Issue #10: optional friendly names for the 5 shocker slots ("Left ankle",
+    // "Collar", ...). Empty means fall back to the numbered default. Purely a
+    // display concern -- nothing keys off these.
+    std::array<std::string, 5> pishock_shocker_labels;
     
     // Warning Zone PiShock Settings
     bool pishock_warning_beep = false;
@@ -261,6 +271,7 @@ public:
     // OpenShock API Settings
     std::string openshock_api_token;
     std::array<std::string, 5> openshock_device_ids; // Support up to 5 device IDs
+    std::array<std::string, 5> openshock_device_labels; // Issue #10: friendly names, empty => numbered default
     std::string openshock_server_url = "https://api.openshock.app"; 
     
     // Warning Zone OpenShock Settings

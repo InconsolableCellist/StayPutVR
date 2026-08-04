@@ -216,7 +216,7 @@ namespace StayPutVR {
             if (config_.pishock_shocker_ids[i] != 0) {
                 ImGui::PushID(i);
                 bool b = jaw_.pishock_enabled[i];
-                if (ImGui::Checkbox(("PiShock " + std::to_string(i)).c_str(), &b)) {
+                if (ImGui::Checkbox(config_.PiShockSlotLabel(i).c_str(), &b)) {
                     jaw_.pishock_enabled[i] = b; changed = true;
                 }
                 ImGui::PopID();
@@ -226,7 +226,7 @@ namespace StayPutVR {
             if (!config_.openshock_device_ids[i].empty()) {
                 ImGui::PushID(100 + i);
                 bool b = jaw_.openshock_enabled[i];
-                if (ImGui::Checkbox(("OpenShock " + std::to_string(i)).c_str(), &b)) {
+                if (ImGui::Checkbox(config_.OpenShockSlotLabel(i).c_str(), &b)) {
                     jaw_.openshock_enabled[i] = b; changed = true;
                 }
                 ImGui::PopID();
@@ -394,7 +394,7 @@ namespace StayPutVR {
             if (config_.pishock_shocker_ids[i] != 0) {
                 ImGui::PushID(i);
                 bool b = mic_.pishock_enabled[i];
-                if (ImGui::Checkbox(("PiShock " + std::to_string(i)).c_str(), &b)) {
+                if (ImGui::Checkbox(config_.PiShockSlotLabel(i).c_str(), &b)) {
                     mic_.pishock_enabled[i] = b; changed = true;
                 }
                 ImGui::PopID();
@@ -404,7 +404,7 @@ namespace StayPutVR {
             if (!config_.openshock_device_ids[i].empty()) {
                 ImGui::PushID(100 + i);
                 bool b = mic_.openshock_enabled[i];
-                if (ImGui::Checkbox(("OpenShock " + std::to_string(i)).c_str(), &b)) {
+                if (ImGui::Checkbox(config_.OpenShockSlotLabel(i).c_str(), &b)) {
                     mic_.openshock_enabled[i] = b; changed = true;
                 }
                 ImGui::PopID();
@@ -500,7 +500,7 @@ namespace StayPutVR {
             if (config_.pishock_shocker_ids[i] != 0) {
                 ImGui::PushID(300 + i);
                 bool b = muteself_.pishock_enabled[i];
-                if (ImGui::Checkbox(("PiShock " + std::to_string(i)).c_str(), &b)) {
+                if (ImGui::Checkbox(config_.PiShockSlotLabel(i).c_str(), &b)) {
                     muteself_.pishock_enabled[i] = b; ms_changed = true;
                 }
                 ImGui::PopID();
@@ -510,7 +510,7 @@ namespace StayPutVR {
             if (!config_.openshock_device_ids[i].empty()) {
                 ImGui::PushID(400 + i);
                 bool b = muteself_.openshock_enabled[i];
-                if (ImGui::Checkbox(("OpenShock " + std::to_string(i)).c_str(), &b)) {
+                if (ImGui::Checkbox(config_.OpenShockSlotLabel(i).c_str(), &b)) {
                     muteself_.openshock_enabled[i] = b; ms_changed = true;
                 }
                 ImGui::PopID();

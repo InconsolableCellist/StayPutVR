@@ -612,7 +612,27 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::ResetOSCLockParamState() {
+        osc_lock_param_state_.fill(-1);
+    }
+
     void UIManager::OnDeviceLocked(OSCDeviceType device, bool locked) {
+        // Issue #11: act only on a *transition* of this device's latch parameter.
+        // OSCManager dispatches this callback for every matching message, and VRChat
+        // re-sends avatar params, so a still-held latch used to re-lock continuously:
+        // each repeat re-captured the anchor position (so the tracker's "locked"
+        // position drifted to wherever it currently was), replayed the lock cue, and
+        // with chaining mode on re-activated the global lock -- which also re-engaged
+        // the jaw/mic collar gate. Repeats of an unchanged value are now dropped.
+        const size_t slot = static_cast<size_t>(device);
+        if (slot < osc_lock_param_state_.size()) {
+            const int8_t incoming = locked ? 1 : 0;
+            if (osc_lock_param_state_[slot] == incoming) {
+                return; // unchanged repeat -- not a new lock/unlock request
+            }
+            osc_lock_param_state_[slot] = incoming;
+        }
+
         // Track the collar latch independently of device assignment. The collar maps
         // to the HMD role; when SPVR_HMD_Latch_IsPosed arrives the collar is latched on
         // the avatar, which is true whether or not a tracker is assigned to the HMD
@@ -1330,6 +1350,12 @@ namespace StayPutVR {
         if (Logger::IsInitialized()) {
             Logger::Info("Avatar changed (/avatar/change) - unlocking and resetting all devices");
         }
+
+        // Issue #11: forget the cached latch values. VRChat resets avatar params on
+        // load, so whatever arrives next is a genuine fresh value, not a repeat --
+        // and we have just unlocked everything, so a stale "already true" cache here
+        // would swallow the re-latch and leave the user unable to lock again.
+        ResetOSCLockParamState();
 
         // Release the global lock and any individually-locked devices. Suppress
         // the unlock sound: this is an automatic transition triggered by VRChat's

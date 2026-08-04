@@ -104,6 +104,14 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
+**1.5.0** - Lock-enforcement and safety fixes, shocker names, bite counter (8/4/2026)
+- Added optional **names for your shockers**: give each PiShock/OpenShock slot a label like "Left ankle" and it replaces the bare 0–4 slot number everywhere you bind it (#10)
+- Added a **bite counter** (session + lifetime, with a Reset button) on the Integrations → OSC Triggers tab; only bites that actually fire are counted (#16)
+- Fixed **chaining mode re-locking continuously**: repeated avatar parameter sends were each treated as a fresh lock, which re-captured device anchor positions, undid unlocks made in the UI, and re-enabled the jaw/mic collar gate. Lock params now act on changes only (#11)
+- Fixed **phantom locks during safe mode**: emergency stop, and devices auto-released past the disable distance, could still be reported as locked — turning the cuff red while nothing was being enforced (#13)
+- Fixed: the **global out-of-bounds trigger** ignored emergency stop and could still fire your shockers while the safeword was latched
+- Fixed **OSCQuery high CPU usage**: mDNS discovery/advertisement burned two cores continuously; they now sit near idle (#15)
+
 **1.4.2** - DG-Lab Coyote, Enforced Unmute + bug fixes (7/23/2026)
 - Added **DG-Lab Coyote 3.0 support**: scan a QR code on the Integrations → DG-Lab tab with the DG-Lab app and your Coyote's two channels become bindable targets in the Devices tab, driven by the same warning/disobedience/bite/Shock triggers as your other devices. Your phone relays over Bluetooth, so no extra hardware or drivers are needed
 - Added **Enforced Unmute**: while locked, muting yourself in VRChat (via the built-in `MuteSelf` param) is punished — after a grace window, staying muted fires your configured disobedience actions and repeats until you unmute (instantly forgiven on unmute). Can be gated on the collar lock + Mic mode or always armed, with its own shocker/vibrator bindings and cooldown. Configured on Integrations → Mic

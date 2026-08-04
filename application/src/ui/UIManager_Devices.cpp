@@ -5,6 +5,7 @@
 #include <format>
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
@@ -1685,15 +1686,19 @@ namespace StayPutVR {
     // "All" chip. Drag a chip onto a body slot to bind that ID to the slot's
     // device. Payload code: category 'P'/'O'/'V' + index '0'..'4' or 'A' for all.
     void UIManager::RenderShockerPalette() {
-        auto chip = [&](const char* label, const char* code, ImVec4 color) {
+        // `tip`, when given, is the slot's friendly name (issue #10): the chips stay
+        // compact ("P0"), so the name surfaces on hover and in the drag preview.
+        auto chip = [&](const char* label, const char* code, ImVec4 color,
+                        const char* tip = nullptr) {
             ImGui::PushStyleColor(ImGuiCol_Button, color);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
                                   ImVec4(color.x + 0.12f, color.y + 0.12f, color.z + 0.12f, 1.0f));
             ImGui::SmallButton(label);
             ImGui::PopStyleColor(2);
+            if (tip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
                 ImGui::SetDragDropPayload("SPVR_SHOCKID", code, 3);
-                ImGui::Text("Bind %s", label);
+                ImGui::Text("Bind %s", tip ? tip : label);
                 ImGui::EndDragDropSource();
             }
         };
@@ -1707,8 +1712,11 @@ namespace StayPutVR {
         // label to match the PiShock/OpenShock panels), then an "All" chip.
         // slot_names, when given, replaces the "<prefix><index>" label (DG-Lab's
         // two slots are the device's named A/B channels, not numbered IDs).
+        // `slot_tip`, when given, yields the slot's friendly name for the hover
+        // tooltip and drag preview (issue #10).
         auto category = [&](const char* name, char cat, ImVec4 color, const char* prefix,
-                            auto configured, const char* const* slot_names = nullptr) {
+                            auto configured, const char* const* slot_names = nullptr,
+                            std::function<std::string(int)> slot_tip = nullptr) {
             ImGui::TextColored(color, "%s:", name);
             bool any = false;
             for (int i = 0; i < 5; ++i) {
@@ -1720,7 +1728,8 @@ namespace StayPutVR {
                 else            std::snprintf(lbl, sizeof(lbl), "%s%d", prefix, i);
                 char code[3] = { cat, (char)('0' + i), 0 };
                 ImGui::PushID((int)cat * 100 + i);
-                chip(lbl, code, color);
+                std::string tip = slot_tip ? slot_tip(i) : std::string();
+                chip(lbl, code, color, tip.empty() ? nullptr : tip.c_str());
                 ImGui::PopID();
             }
             if (any) {
@@ -1736,9 +1745,11 @@ namespace StayPutVR {
         };
 
         category("PiShock", 'P', blue, "S",
-                 [&](int i){ return config_.pishock_shocker_ids[i] != 0; });
+                 [&](int i){ return config_.pishock_shocker_ids[i] != 0; }, nullptr,
+                 [&](int i){ return config_.PiShockSlotLabel(i); });
         category("OpenShock", 'O', red, "S",
-                 [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+                 [&](int i){ return !config_.openshock_device_ids[i].empty(); }, nullptr,
+                 [&](int i){ return config_.OpenShockSlotLabel(i); });
         category("DG-Lab", 'D', green, "Ch",
                  [&](int i){ return DGLabSlotConfigured(i); }, kDGLabSlotNames);
         category("BPIO", 'V', purple, "V",
@@ -2332,6 +2343,9 @@ namespace StayPutVR {
                 config_.device_pishock_ids[serial] = dev->pishock_enabled;
                 SaveConfig();
             }
+            // Issue #10: this row is a tight strip of numbered boxes, so the
+            // friendly name goes in a tooltip rather than inline.
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", config_.PiShockSlotLabel(i).c_str());
             ImGui::PopID();
         }
         if (!any_ps) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
@@ -2351,6 +2365,7 @@ namespace StayPutVR {
                 config_.device_openshock_ids[serial] = dev->openshock_enabled;
                 SaveConfig();
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", config_.OpenShockSlotLabel(i).c_str());
             ImGui::PopID();
         }
         if (!any_os) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
@@ -2455,6 +2470,7 @@ namespace StayPutVR {
                 config_.device_pishock_ids[kJawOpenSerial] = jaw_.pishock_enabled;
                 SaveConfig();
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", config_.PiShockSlotLabel(i).c_str());
             ImGui::PopID();
         }
         if (!any_ps) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
@@ -2470,6 +2486,7 @@ namespace StayPutVR {
                 config_.device_openshock_ids[kJawOpenSerial] = jaw_.openshock_enabled;
                 SaveConfig();
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", config_.OpenShockSlotLabel(i).c_str());
             ImGui::PopID();
         }
         if (!any_os) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
