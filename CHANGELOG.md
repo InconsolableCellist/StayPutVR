@@ -27,6 +27,43 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
 
+## 1.5.0 — Lock-enforcement and safety fixes, shocker names, bite counter (8/4/2026)
+
+### New features
+- **Name your shockers:** each PiShock and OpenShock slot now takes an optional
+  friendly name ("Left ankle", "Collar") next to its ID on the Integrations →
+  PiShock / OpenShock tabs. The name replaces the bare 0–4 slot number wherever you
+  bind that shocker, and shows on hover for the compact chips in the Devices tab.
+  Leave it blank and everything reads exactly as it did before. (#10)
+- **Bite counter:** the Integrations → OSC Triggers tab now tracks how many bites
+  you've taken this session and over all time, with a Reset button. Only bites that
+  actually fire are counted — ones ignored because the trigger is off or emergency
+  stop is active don't inflate the total. (#16)
+
+### Bug fixes
+- **Chaining mode no longer re-locks continuously:** VRChat re-sends avatar
+  parameters (on avatar load, world join, and periodically from many OSC senders),
+  and every repeat of a still-held lock latch was treated as a brand-new lock
+  request. That re-captured each device's anchor position — so a "locked" tracker's
+  reference point silently drifted to wherever it currently was — replayed the lock
+  cue, and with chaining mode on re-fired the global lock, undoing an unlock you had
+  just done in the UI and re-engaging the jaw/mic collar gate with it. Lock
+  parameters are now acted on only when they actually change. (#11)
+- **Safe mode no longer shows phantom locks:** during emergency stop, and for a
+  device auto-released past the disable distance, the deferred status updates (bite
+  timer, global out-of-bounds timer, avatar re-sync) could re-report the device as
+  locked — the cuff turned red on your avatar while nothing was actually being
+  enforced. A lock request that gets refused during emergency stop now also pushes
+  the true unlocked state back, instead of being dropped silently. (#13)
+- **Emergency stop covers the global out-of-bounds trigger:** receiving the global
+  out-of-bounds parameter while emergency stop was latched still fired your
+  PiShock / OpenShock / DG-Lab disobedience actions. It is now blocked like every
+  other trigger.
+- **OSCQuery CPU usage:** the mDNS discovery and advertisement loops spun two CPU
+  cores continuously whenever OSC Query was enabled, because the socket timeouts
+  they relied on were being silently ignored. They now block properly and sit near
+  idle. (#15)
+
 ## 1.4.2 — DG-Lab Coyote, Enforced Unmute + bug fixes (7/23/2026)
 
 ### New features

@@ -459,6 +459,19 @@ namespace StayPutVR {
         // when StayPutVR isn't locking a physical tracker's position. Set on the OSC
         // thread (OnDeviceLocked), read every frame by the constraint code.
         std::atomic<bool> collar_latched_via_osc_{false};
+
+        // Issue #11: last value seen for each device's lock/latch OSC param, so
+        // OnDeviceLocked can act on *transitions* only. VRChat re-sends avatar
+        // parameters (avatar load, world join, and many OSC senders repeat
+        // periodically), and OSCManager dispatches the lock callback on every
+        // received message. Without this, each repeat of a still-true latch was
+        // treated as a fresh lock: it re-captured the anchor position, replayed the
+        // lock cue, and -- with chaining mode on -- re-fired the global lock, so an
+        // unlock done in the UI was immediately undone. -1 = not yet seen; reset on
+        // avatar change (params reset there, so the next value is genuinely fresh).
+        std::array<int8_t, 8> osc_lock_param_state_ = {-1, -1, -1, -1, -1, -1, -1, -1};
+        void ResetOSCLockParamState();
+
         bool collar_toggle_prev_ = false;         // rising-edge debounce (OSC thread only)
         // Time-based debounce: ignore toggle presses that arrive within this window of
         // the last accepted one (contact bounce / rapid repeats). OSC thread only.

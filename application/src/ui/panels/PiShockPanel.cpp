@@ -176,13 +176,22 @@ void PiShockPanel::Render() {
 
                 ImGui::Text("Shocker IDs:");
                 ImGui::SameLine();
-                ImGuiHelpers::HelpTooltip("PiShock shocker device IDs. Device 0 is considered the master device.\nLeave unused slots at 0.");
+                ImGuiHelpers::HelpTooltip("PiShock shocker device IDs. Device 0 is considered the master device.\n"
+                                          "Leave unused slots at 0.\n\n"
+                                          "The Name field is optional (issue #10): give a shocker a label like "
+                                          "\"Left ankle\" and it is shown instead of the slot number everywhere "
+                                          "you bind it.");
 
                 static int shocker_id_buffers[5] = {0, 0, 0, 0, 0};
+                static char shocker_label_buffers[5][64] = {};
 
                 for (int i = 0; i < 5; ++i) {
                     if (config_.pishock_shocker_ids[i] != shocker_id_buffers[i]) {
                         shocker_id_buffers[i] = config_.pishock_shocker_ids[i];
+                    }
+                    if (config_.pishock_shocker_labels[i] != shocker_label_buffers[i]) {
+                        strcpy_s(shocker_label_buffers[i], sizeof(shocker_label_buffers[i]),
+                                 config_.pishock_shocker_labels[i].c_str());
                     }
 
                     std::string label = std::to_string(i) + ": ";
@@ -193,10 +202,19 @@ void PiShockPanel::Render() {
                     ImGui::PushID(i);
                     // step=0, step_fast=0 hides the InputInt's +/- stepper buttons
                     // (shocker IDs are typed in directly, not nudged).
+                    ImGui::SetNextItemWidth(140.0f);
                     if (ImGui::InputInt(label.c_str(), &shocker_id_buffers[i], 0, 0)) {
                         config_.pishock_shocker_ids[i] = shocker_id_buffers[i];
                         save_config_();
                     }
+                    // Issue #10: optional friendly name for this slot.
+                    ImGui::SameLine();
+                    ImGui::SetNextItemWidth(180.0f);
+                    if (ImGui::InputTextWithHint("##label", "Name (optional)",
+                                                 shocker_label_buffers[i], sizeof(shocker_label_buffers[i]))) {
+                        config_.pishock_shocker_labels[i] = shocker_label_buffers[i];
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) save_config_();
                     ImGui::PopID();
                 }
 
