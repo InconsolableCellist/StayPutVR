@@ -64,9 +64,7 @@ namespace StayPutVR {
         void TriggerDisobedienceActions(const std::string& device_serial = "");
         void TriggerWarningActions(const std::string& device_serial = "");
         // Fire a direct shock at an explicit intensity (0..1) and duration
-        // (seconds). Used by external triggers. An empty device_serial fires
-        // every configured shocker; a serial fires only the shockers bound to
-        // it in the Devices tab (used by bite-zone routing).
+        // (seconds); empty device_serial fires every configured shocker.
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
         // Like TriggerShock but fires each shocker at its per-device disobedience

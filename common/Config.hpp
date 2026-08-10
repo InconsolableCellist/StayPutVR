@@ -53,14 +53,13 @@ struct ConfigResult {
 //   these do not need locks because they run single-threaded. Only batch
 //   operations (Load/Save) and fields read by worker threads require locking.
 
-// Bite zones (1.5.1). The avatar prefab reports WHERE it was bitten by sending a
-// suffixed parameter (SPVR_Bite_Tail, SPVR_Bite_Ear_Left, ...) on top of the
-// plain SPVR_Bite. Each zone can route its bite to a specific subset of the
-// user's shockers/toys and carries its own intensity/duration, so somebody with
-// several integrations can wire "tail" to one device and "ear" to another.
+// Bite zones (1.5.1). The prefab reports where it was bitten with a suffixed
+// parameter (SPVR_Bite_Tail, SPVR_Bite_Ear_Left, ...) on top of the plain
+// SPVR_Bite, and each zone can route its bite to a subset of the user's
+// shockers/toys.
 //
-// Generic (-1) is the unsuffixed SPVR_Bite: it has no body part, so it always
-// fires everything at the global bite intensity/duration.
+// Generic (-1) is the unsuffixed SPVR_Bite: no body part, so it always fires
+// everything at the global bite intensity/duration.
 constexpr int kBiteZoneCount = 6;
 enum class BiteZone : int {
     Generic    = -1,
@@ -191,10 +190,9 @@ public:
     bool osc_shock_use_individual_intensities = false;
 
     // Bite zone routing (1.5.1). Off => every SPVR_Bite_* fires all configured
-    // shockers at the global intensity/duration above, exactly as before. On =>
-    // a bite fires only the devices bound to that body part (BPIO included),
-    // at that zone's own intensity/duration. A zone with nothing bound still
-    // falls back to firing everything, so no bite ever goes silently missing.
+    // shockers at the global intensity/duration above. On => a bite fires only
+    // the devices bound to that body part (BPIO included), at that zone's own
+    // intensity/duration. A zone with nothing bound still fires everything.
     bool osc_bite_zone_routing = false;
     std::array<float, kBiteZoneCount> osc_bite_zone_intensity = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
     std::array<float, kBiteZoneCount> osc_bite_zone_duration  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
