@@ -1421,6 +1421,19 @@ namespace StayPutVR {
         const std::string zone_serial = routed ? kBiteZoneSerials[zone_index] : std::string();
         const std::string reason = zone_valid ? std::string("Bite: ") + kBiteZoneNames[zone_index] : "Bite";
 
+        // Spell out the whole routing decision on one line: which body part the
+        // parameter resolved to, the binding key it looked up, and whether it
+        // narrowed to that zone's devices. Left/right wiring mistakes live
+        // somewhere on this line -- either the zone is wrong (avatar side) or the
+        // devices it resolves to are (binding side).
+        if (Logger::IsInitialized()) {
+            Logger::Info("Bite zone: " + std::string(zone_valid ? kBiteZoneNames[zone_index] : "unspecified") +
+                         " -> " + (routed ? zone_serial + " (routed to its bound devices)"
+                                          : std::string("all configured devices")) +
+                         ", intensity " + std::to_string(bite_intensity) +
+                         ", duration " + std::to_string(bite_duration) + "s");
+        }
+
         if (bite_use_individual) {
             TriggerExternalShockIndividual(bite_duration, reason, zone_serial);
         } else {
