@@ -1845,8 +1845,7 @@ namespace StayPutVR {
     }
 
     // Bind (enable=true) or unbind a dragged ID chip on one bite zone. Mirrors
-    // ApplyIdBindingToJaw, writing the reserved kBiteZoneSerials[zone] key so a
-    // routed bite reuses the standard Trigger*(serial) pipeline.
+    // ApplyIdBindingToJaw, writing the reserved kBiteZoneSerials[zone] key.
     void UIManager::ApplyIdBindingToBiteZone(int zone, const char* code, bool enable) {
         if (!code || zone < 0 || zone >= kBiteZoneCount) return;
         const char cat = code[0], sel = code[1];
@@ -1895,7 +1894,7 @@ namespace StayPutVR {
 
     // A zone counts as bound only if it points at something that is actually
     // configured -- a leftover binding to a shocker slot the user has since
-    // cleared must not silence the zone. Read from the OSC thread (TriggerBiteActions).
+    // cleared must not silence the zone.
     bool UIManager::BiteZoneHasBinding(int zone) const {
         if (zone < 0 || zone >= kBiteZoneCount) return false;
         const BiteZoneBinding& b = bite_zones_[zone];
@@ -1993,11 +1992,11 @@ namespace StayPutVR {
         };
 
         // Bite zones (1.5.1): the body parts the avatar can report being bitten
-        // on. Normalized to the same back-facing effigy art as kSlots above.
+        // on, normalized to the same back-facing effigy art as kSlots above.
+        // Tail sits at the base where it leaves the rump, not out on the sweep;
+        // the thighs are spread onto their own leg so the tail curve between
+        // them doesn't read as belonging to either.
         struct BiteSlot { int zone; float ux, uy; };
-        // Tail sits at the base, where the tail leaves the rump -- not out on the
-        // sweep of it. Thighs sit on the upper leg, spread onto their own leg so
-        // the tail curve doesn't read as belonging to either.
         static const BiteSlot kBiteSlots[kBiteZoneCount] = {
             { static_cast<int>(BiteZone::Tail),       0.490f, 0.560f },
             { static_cast<int>(BiteZone::EarLeft),    0.335f, 0.105f },
@@ -2332,12 +2331,9 @@ namespace StayPutVR {
             }
 
             // Bulk drop targets: bind/unbind a dragged ID across every assigned
-            // cuff (or every bite zone) at once, in addition to dropping it on a
-            // single slot. In the bite view they live at the BOTTOM of the pane:
-            // the ear zones and their labels sit in the top-left corner.
+            // cuff (or every bite zone) at once. In the bite view they sit at the
+            // BOTTOM of the pane -- the ear zones own the top-left corner.
             const bool bz = visual_bite_zone_view_;
-            // 2 buttons + 2 text lines, with a little slack so the last line
-            // never clips against the bottom of the pane.
             ImGui::SetCursorScreenPos(bz ? ImVec2(paneOrigin.x + 2.0f, paneOrigin.y + box.y - 100.0f)
                                          : ImVec2(paneOrigin.x + 2.0f, paneOrigin.y + 2.0f));
             ImGui::BeginGroup();
@@ -2798,8 +2794,7 @@ namespace StayPutVR {
             ImGui::TextDisabled("Nothing bound - a bite here falls back to firing every device.");
         }
 
-        // Per-zone intensity/duration. Used whenever routing is on, so a tail nip
-        // and an ear bite can land differently.
+        // Per-zone intensity/duration, used whenever routing is on.
         // SliderFloatWithButtons ends on its label/buttons, not the slider, so
         // IsItemDeactivatedAfterEdit would never fire here -- save on the
         // helper's own return value, like the OSC Triggers tab does.
