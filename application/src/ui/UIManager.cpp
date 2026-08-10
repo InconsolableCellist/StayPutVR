@@ -277,6 +277,7 @@ namespace StayPutVR {
         }
         LoadMicBindingsFromConfig();
         LoadMuteSelfBindingsFromConfig();
+        LoadBiteZoneBindingsFromConfig();
         RecomputeCollarValidMask();
 
         return true;
@@ -329,6 +330,7 @@ namespace StayPutVR {
         ProcessTwitchUnlockTimer();
         
         ProcessGlobalOutOfBoundsTimer();
+        ProcessPendingBite();
         ProcessBiteTimer();
         ProcessAvatarResyncTimer();
         
@@ -762,9 +764,10 @@ namespace StayPutVR {
             if (result) {
                 UpdateUIFromConfig();
 
-                // Populate the JawOpen constraint binding arrays from the
-                // reserved-serial entries in the device binding maps.
+                // Populate the JawOpen constraint and bite zone binding arrays
+                // from the reserved-serial entries in the device binding maps.
                 LoadJawBindingsFromConfig();
+                LoadBiteZoneBindingsFromConfig();
 
                 // Set default OSC ports if they're not set
                 if (config_.osc_send_port <= 0) {

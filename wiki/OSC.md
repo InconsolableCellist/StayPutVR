@@ -71,6 +71,32 @@ Control all devices simultaneously:
 
 **Value Type**: Boolean (true/1 = activate)
 
+### Bite Triggers (Incoming)
+
+A bite fires a direct shock on your configured devices (VRC BiteTech and similar
+prefabs send these).
+
+**Default Paths:**
+- `/avatar/parameters/SPVR_Bite` - bite, body part unspecified
+- `/avatar/parameters/SPVR_Bite_Tail`
+- `/avatar/parameters/SPVR_Bite_Ear_Left`
+- `/avatar/parameters/SPVR_Bite_Ear_Right`
+- `/avatar/parameters/SPVR_Bite_Thigh_Left`
+- `/avatar/parameters/SPVR_Bite_Thigh_Right`
+- `/avatar/parameters/SPVR_Bite_Jaw`
+
+**Value Type**: Boolean (true/1 = bitten)
+
+The body-part parameters are always the configured bite path plus a fixed
+suffix, so renaming the bite path in Settings → OSC renames the whole family.
+
+**Routing (1.5.1)**: with *Route bites by body part* off (the default), any of
+these fires every configured shocker at the Bite intensity/duration in
+Integrations → OSC Triggers. With it on, a bite fires only the shockers and BPIO
+toys bound to that body part — bound on the Devices tab, Visual view, "Bite
+zones" — at that zone's own intensity/duration. A zone with nothing bound falls
+back to firing everything.
+
 ### Supported Device Types
 
 StayPutVR recognizes and can control the following device types:

@@ -1,11 +1,23 @@
-# What's New in StayPutVR 1.5.0
+# What's New in StayPutVR 1.5.1
 
-Thanks for your support! This release is focused on making locking behave itself:
-several fixes to lock enforcement and safe mode, plus named shockers and a bite
-counter.
+Thanks for your support! This release teaches bites where they landed: your avatar
+now reports which body part was bitten, and you can send each one to a different
+shocker or toy.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.5.1
+- **Bite zones:** your prefab now reports *where* it was bitten — tail, either ear,
+  either thigh, or the jaw — and each of those can drive a different device. Open
+  Devices → Visual, switch the view to **Bite zones**, and drag your shocker, DG-Lab
+  channel, or BPIO chips onto the body part you want them to answer for. Each zone
+  gets its own intensity and duration, so a tail nip and an ear bite don't have to
+  feel the same.
+- Bite zones are opt-in: tick **Route bites by body part** in Integrations → OSC
+  Triggers. Until you do — and for any zone you never bound anything to — a bite
+  fires everything at the usual Bite intensity, exactly as before.
+- BPIO toys can now react to bites too, when you bind them to a zone.
 
 ## New in 1.5.0
 - **Name your shockers:** each PiShock and OpenShock slot now has an optional name

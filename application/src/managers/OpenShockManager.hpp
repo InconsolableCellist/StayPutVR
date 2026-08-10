@@ -32,11 +32,15 @@ namespace StayPutVR {
         void TriggerDisobedienceActions(const std::string& device_serial = "") override;
         void TriggerWarningActions(const std::string& device_serial = "") override;
         // Fire a direct shock at an explicit intensity (0..1) and duration
-        // (seconds) on all configured devices. Used by external triggers.
-        void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "");
+        // (seconds). Used by external triggers. An empty device_serial fires
+        // every configured device; a serial fires only the devices bound to it
+        // in the Devices tab (used by bite-zone routing).
+        void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
+                          const std::string& device_serial = "");
         // Like TriggerShock but uses the per-device disobedience intensities
         // instead of a single supplied intensity (for OSC bite/shock).
-        void TriggerShockIndividual(float duration_seconds, const std::string& reason = "");
+        void TriggerShockIndividual(float duration_seconds, const std::string& reason = "",
+                                    const std::string& device_serial = "");
         void TestActions() override;
         std::string GetConnectionStatus() const override;
 

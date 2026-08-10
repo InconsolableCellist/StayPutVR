@@ -2,6 +2,36 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
+## 1.5.1 — Bite zones (8/9/2026)
+
+### New features
+- **Bite zones:** the prefab now reports which body part was bitten by sending a
+  suffixed parameter alongside the plain `SPVR_Bite` — `SPVR_Bite_Tail`,
+  `SPVR_Bite_Ear_Left`, `SPVR_Bite_Ear_Right`, `SPVR_Bite_Thigh_Left`,
+  `SPVR_Bite_Thigh_Right`, `SPVR_Bite_Jaw`. Each zone can be bound to its own
+  shockers, DG-Lab channels and BPIO toys, so somebody running several
+  integrations can have a tail bite hit one device and an ear bite another. Bind
+  them in Devices → Visual by switching the view to **Bite zones** and dragging
+  the same ID chips you use for tracker cuffs onto a body part; every zone also
+  carries its own intensity and duration.
+- The routing is opt-in via **Route bites by body part** on Integrations → OSC
+  Triggers. With it off — and for any zone nothing is bound to — a bite fires
+  every configured device at the global Bite intensity/duration, exactly as in
+  1.5.0. Existing configs are unaffected until the box is ticked.
+- **BPIO toys now take part in bites** when bound to a zone, as a one-shot pulse
+  for the zone's duration. The unrouted path is unchanged (shockers only), so
+  toys never start buzzing on bites nobody asked them to.
+- The body-part parameters are the configured bite path plus a fixed suffix, so
+  renaming the bite path renames the whole family. They are listed read-only
+  under Settings → OSC → Bite Trigger and advertised over OSCQuery.
+- Bites are coalesced over a short window before firing. A prefab that reports
+  the body part may also send the plain `SPVR_Bite` for the same bite, and
+  VRChat delivers the two as separate messages in no guaranteed order — acting
+  on each as it landed would shock twice, and could act on the unspecific one
+  first. One bite now fires once, using the most specific parameter received.
+- Each bite zone has a **Test** button in its config panel that fires exactly
+  what an inbound bite there would, without counting toward the bite tally.
+
 ## 1.5.0 — Lock-enforcement and safety fixes, shocker names, bite counter (8/4/2026)
 
 ### New features

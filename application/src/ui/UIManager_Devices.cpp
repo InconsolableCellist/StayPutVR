@@ -1844,6 +1844,70 @@ namespace StayPutVR {
             jaw_.vibration_device_enabled = it->second;
     }
 
+    // Bind (enable=true) or unbind a dragged ID chip on one bite zone. Mirrors
+    // ApplyIdBindingToJaw, writing the reserved kBiteZoneSerials[zone] key so a
+    // routed bite reuses the standard Trigger*(serial) pipeline.
+    void UIManager::ApplyIdBindingToBiteZone(int zone, const char* code, bool enable) {
+        if (!code || zone < 0 || zone >= kBiteZoneCount) return;
+        const char cat = code[0], sel = code[1];
+        const std::string serial = kBiteZoneSerials[zone];
+        auto set = [&](std::array<bool, 5>& arr, auto configured) {
+            if (sel == 'A') { for (int i = 0; i < 5; ++i) if (configured(i)) arr[i] = enable; }
+            else { int i = sel - '0'; if (i >= 0 && i < 5 && configured(i)) arr[i] = enable; }
+        };
+        BiteZoneBinding& b = bite_zones_[zone];
+        if (cat == 'P') {
+            set(b.pishock_enabled, [&](int i){ return config_.pishock_shocker_ids[i] != 0; });
+            config_.device_pishock_ids[serial] = b.pishock_enabled;
+        } else if (cat == 'O') {
+            set(b.openshock_enabled, [&](int i){ return !config_.openshock_device_ids[i].empty(); });
+            config_.device_openshock_ids[serial] = b.openshock_enabled;
+        } else if (cat == 'D') {
+            set(b.dglab_enabled, [&](int i){ return DGLabSlotConfigured(i); });
+            config_.device_dglab_ids[serial] = b.dglab_enabled;
+        } else if (cat == 'V') {
+            set(b.vibration_device_enabled, [&](int i){ return config_.buttplug_device_indices[i] >= 0; });
+            config_.device_vibration_ids[serial] = b.vibration_device_enabled;
+        }
+        SaveConfig();
+    }
+
+    // Apply/remove a dragged ID chip across every bite zone at once, mirroring
+    // ApplyIdBindingToAllCuffs in the tracker view.
+    void UIManager::ApplyIdBindingToAllBiteZones(const char* code, bool enable) {
+        for (int z = 0; z < kBiteZoneCount; ++z) ApplyIdBindingToBiteZone(z, code, enable);
+    }
+
+    void UIManager::LoadBiteZoneBindingsFromConfig() {
+        for (int z = 0; z < kBiteZoneCount; ++z) {
+            const std::string serial = kBiteZoneSerials[z];
+            BiteZoneBinding& b = bite_zones_[z];
+            if (auto it = config_.device_pishock_ids.find(serial); it != config_.device_pishock_ids.end())
+                b.pishock_enabled = it->second;
+            if (auto it = config_.device_openshock_ids.find(serial); it != config_.device_openshock_ids.end())
+                b.openshock_enabled = it->second;
+            if (auto it = config_.device_dglab_ids.find(serial); it != config_.device_dglab_ids.end())
+                b.dglab_enabled = it->second;
+            if (auto it = config_.device_vibration_ids.find(serial); it != config_.device_vibration_ids.end())
+                b.vibration_device_enabled = it->second;
+        }
+    }
+
+    // A zone counts as bound only if it points at something that is actually
+    // configured -- a leftover binding to a shocker slot the user has since
+    // cleared must not silence the zone. Read from the OSC thread (TriggerBiteActions).
+    bool UIManager::BiteZoneHasBinding(int zone) const {
+        if (zone < 0 || zone >= kBiteZoneCount) return false;
+        const BiteZoneBinding& b = bite_zones_[zone];
+        for (int i = 0; i < 5; ++i) {
+            if (b.pishock_enabled[i] && config_.pishock_shocker_ids[i] != 0) return true;
+            if (b.openshock_enabled[i] && !config_.openshock_device_ids[i].empty()) return true;
+            if (b.dglab_enabled[i] && DGLabSlotConfigured(i)) return true;
+            if (b.vibration_device_enabled[i] && config_.buttplug_device_indices[i] >= 0) return true;
+        }
+        return false;
+    }
+
     void UIManager::LoadMicBindingsFromConfig() {
         if (auto it = config_.device_pishock_ids.find(kMicSerial); it != config_.device_pishock_ids.end())
             mic_.pishock_enabled = it->second;
@@ -1928,10 +1992,50 @@ namespace StayPutVR {
             { DeviceRole::RightFoot,       "R Foot",     0.549f, 0.792f },
         };
 
+        // Bite zones (1.5.1): the body parts the avatar can report being bitten
+        // on. Normalized to the same back-facing effigy art as kSlots above.
+        struct BiteSlot { int zone; float ux, uy; };
+        // Tail sits at the base, where the tail leaves the rump -- not out on the
+        // sweep of it. Thighs sit on the upper leg, spread onto their own leg so
+        // the tail curve doesn't read as belonging to either.
+        static const BiteSlot kBiteSlots[kBiteZoneCount] = {
+            { static_cast<int>(BiteZone::Tail),       0.490f, 0.560f },
+            { static_cast<int>(BiteZone::EarLeft),    0.335f, 0.105f },
+            { static_cast<int>(BiteZone::EarRight),   0.545f, 0.105f },
+            { static_cast<int>(BiteZone::ThighLeft),  0.295f, 0.620f },
+            { static_cast<int>(BiteZone::ThighRight), 0.585f, 0.620f },
+            { static_cast<int>(BiteZone::Jaw),        0.440f, 0.135f },
+        };
+
+        // View switch. Twelve labelled markers do not fit legibly on the effigy,
+        // so the tracker slots and the bite zones take turns.
+        int view = visual_bite_zone_view_ ? 1 : 0;
+        ImGui::TextUnformatted("View:"); ImGui::SameLine();
+        if (ImGui::RadioButton("Trackers", &view, 0) && visual_bite_zone_view_) {
+            visual_bite_zone_view_ = false;
+            selected_bite_zone_ = -1;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Bite zones", &view, 1) && !visual_bite_zone_view_) {
+            visual_bite_zone_view_ = true;
+            selected_slot_role_ = DeviceRole::None;
+            jaw_selected_ = false;
+        }
+        // NB: only emit SameLine when something actually follows it -- a trailing
+        // SameLine would carry over and pull the effigy panes up onto this row.
+        if (visual_bite_zone_view_ && !config_.osc_bite_zone_routing) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.35f, 1.0f),
+                               "| routing off: every bite fires everything");
+            ImGuiHelpers::HelpTooltip("Turn on \"Route bites by body part\" in Integrations > OSC Triggers "
+                                      "to make these bindings take effect.");
+        }
+
         // Take all remaining vertical space; reserve room for the slot-config
         // panel below when a slot is selected.
         float avail_h = ImGui::GetContentRegionAvail().y;
-        float config_h = (selected_slot_role_ != DeviceRole::None || jaw_selected_) ? 175.0f : 0.0f;
+        float config_h = (selected_bite_zone_ >= 0) ? 205.0f
+                       : (selected_slot_role_ != DeviceRole::None || jaw_selected_) ? 175.0f : 0.0f;
         float effigyH = avail_h - config_h - 8.0f;
         if (effigyH < 240.0f) effigyH = 240.0f;
         float effigyW = ImGui::GetContentRegionAvail().x * 0.50f;
@@ -1976,7 +2080,9 @@ namespace StayPutVR {
             }
 
             const float hot = 30.0f;
+            // Tracker slots + the JawOpen hotspot below are the "Trackers" view.
             for (const auto& s : kSlots) {
+                if (visual_bite_zone_view_) break;
                 ImVec2 c(origin.x + s.ux*imgW, origin.y + s.uy*imgH);
                 if (s.role == DeviceRole::HMD) c.y += 10.0f; // nudge collar/HMD slot down
                 ImGui::SetCursorScreenPos(ImVec2(c.x - hot/2, c.y - hot/2));
@@ -2080,7 +2186,7 @@ namespace StayPutVR {
             // JawOpen is a scalar parameter, not a tracked device. Drop the JawOpen
             // sidebar item here to enable it; drop a shocker ID chip here to bind it.
             // Position sits over the head/muzzle (tune to the dashed-line effigy art).
-            {
+            if (!visual_bite_zone_view_) {
                 const float jux = 0.460f, juy = 0.115f;
                 ImVec2 c(origin.x + jux*imgW, origin.y + juy*imgH + 20.0f);
                 ImGui::SetCursorScreenPos(ImVec2(c.x - hot/2, c.y - hot/2));
@@ -2147,34 +2253,130 @@ namespace StayPutVR {
                 }
             }
 
-            // Top-left drop targets: bind/unbind a dragged ID across every
-            // assigned cuff at once (in addition to dropping on a single slot).
-            ImGui::SetCursorScreenPos(ImVec2(paneOrigin.x + 2.0f, paneOrigin.y + 2.0f));
+            // ---- Bite zones view: one hotspot per body part the prefab can
+            // report (SPVR_Bite_Tail, SPVR_Bite_Ear_Left, ...). Drop an ID chip
+            // to choose what that bite fires; click to open the zone's config.
+            if (visual_bite_zone_view_) {
+                const ImU32 cb = IM_COL32(120, 190, 255, 255); // PiShock
+                const ImU32 cr = IM_COL32(255, 120, 120, 255); // OpenShock
+                const ImU32 cg = IM_COL32(120, 230, 160, 255); // DG-Lab
+                const ImU32 cp = IM_COL32(220, 150, 255, 255); // BPIO
+
+                for (const auto& bs : kBiteSlots) {
+                    const BiteZoneBinding& b = bite_zones_[bs.zone];
+                    ImVec2 c(origin.x + bs.ux*imgW, origin.y + bs.uy*imgH);
+                    ImGui::PushID(4000 + bs.zone);
+                    ImGui::SetCursorScreenPos(ImVec2(c.x - hot/2, c.y - hot/2));
+                    ImGui::InvisibleButton("bitezone", ImVec2(hot, hot));
+                    bool hovered = ImGui::IsItemHovered();
+
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID"))
+                            ApplyIdBindingToBiteZone(bs.zone, static_cast<const char*>(p->Data), true);
+                        ImGui::EndDragDropTarget();
+                    }
+                    if (ImGui::IsItemClicked()) selected_bite_zone_ = bs.zone;
+                    if (hovered) {
+                        ImGui::SetTooltip("%s\n%s", kBiteZoneNames[bs.zone],
+                                          OSCManager::BiteZonePath(config_.osc_bite_path, bs.zone).c_str());
+                    }
+
+                    // Bound zones read warm (a bite goes exactly here); unbound
+                    // ones stay dim, matching their "fires everything" fallback.
+                    bool bound = BiteZoneHasBinding(bs.zone);
+                    ImU32 status_col = bound ? IM_COL32(255, 150, 60, 255) : IM_COL32(190, 205, 225, 230);
+                    ImU32 ring = hovered ? IM_COL32(255, 255, 255, 255) : status_col;
+                    dl->AddCircleFilled(c, hot/2 - 2, bound ? IM_COL32(70, 45, 20, 210) : IM_COL32(15, 20, 30, 195));
+                    dl->AddCircle(c, hot/2, ring, 24, bound ? 3.0f : 2.5f);
+                    if (bs.zone == selected_bite_zone_)
+                        dl->AddCircle(c, hot/2 + 3, IM_COL32(80, 160, 255, 255), 24, 2.0f);
+
+                    ImVec2 tsz = ImGui::CalcTextSize(kBiteZoneNames[bs.zone]);
+                    bool label_left = (bs.ux < 0.45f);
+                    ImVec2 tpos = label_left ? ImVec2(c.x - hot/2 - 3 - tsz.x, c.y - 7)
+                                             : ImVec2(c.x + hot/2 + 3, c.y - 7);
+                    drawOutlined(tpos, bound ? status_col : IM_COL32(240, 245, 255, 255),
+                                 kBiteZoneNames[bs.zone]);
+
+                    auto forZoneTokens = [&](auto emit) {
+                        for (int i = 0; i < 5; ++i)
+                            if (b.pishock_enabled[i] && config_.pishock_shocker_ids[i] != 0) {
+                                char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cb);
+                            }
+                        for (int i = 0; i < 5; ++i)
+                            if (b.openshock_enabled[i] && !config_.openshock_device_ids[i].empty()) {
+                                char t[6]; std::snprintf(t, 6, "S%d", i); emit(t, cr);
+                            }
+                        for (int i = 0; i < 5; ++i)
+                            if (b.dglab_enabled[i] && DGLabSlotConfigured(i)) {
+                                char t[6]; std::snprintf(t, 6, "%s", kDGLabSlotNames[i]); emit(t, cg);
+                            }
+                        for (int i = 0; i < 5; ++i)
+                            if (b.vibration_device_enabled[i] && config_.buttplug_device_indices[i] >= 0) {
+                                char t[6]; std::snprintf(t, 6, "V%d", i); emit(t, cp);
+                            }
+                    };
+                    float tw = 0.0f;
+                    forZoneTokens([&](const char* t, ImU32){ tw += ImGui::CalcTextSize(t).x + 4.0f; });
+                    if (tw > 0.0f) {
+                        float sx = c.x - tw * 0.5f;
+                        float sy = c.y - hot/2 - 16.0f;
+                        if (sy < origin.y + 1.0f) sy = c.y + hot/2 + 2.0f; // ears: draw below
+                        forZoneTokens([&](const char* t, ImU32 col){
+                            drawOutlined(ImVec2(sx, sy), col, t);
+                            sx += ImGui::CalcTextSize(t).x + 4.0f;
+                        });
+                    }
+                    ImGui::PopID();
+                }
+            }
+
+            // Bulk drop targets: bind/unbind a dragged ID across every assigned
+            // cuff (or every bite zone) at once, in addition to dropping it on a
+            // single slot. In the bite view they live at the BOTTOM of the pane:
+            // the ear zones and their labels sit in the top-left corner.
+            const bool bz = visual_bite_zone_view_;
+            // 2 buttons + 2 text lines, with a little slack so the last line
+            // never clips against the bottom of the pane.
+            ImGui::SetCursorScreenPos(bz ? ImVec2(paneOrigin.x + 2.0f, paneOrigin.y + box.y - 100.0f)
+                                         : ImVec2(paneOrigin.x + 2.0f, paneOrigin.y + 2.0f));
             ImGui::BeginGroup();
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 0.95f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.26f, 0.72f, 0.34f, 1.0f));
-            ImGui::Button("All Cuffs");
+            ImGui::Button(bz ? "All Bite Zones" : "All Cuffs");
             ImGui::PopStyleColor(2);
             if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID"))
-                    ApplyIdBindingToAllCuffs(static_cast<const char*>(p->Data), true);
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID")) {
+                    const char* code = static_cast<const char*>(p->Data);
+                    if (bz) ApplyIdBindingToAllBiteZones(code, true);
+                    else    ApplyIdBindingToAllCuffs(code, true);
+                }
                 ImGui::EndDragDropTarget();
             }
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.20f, 0.20f, 0.95f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.72f, 0.28f, 0.28f, 1.0f));
-            ImGui::Button("Remove From All Cuffs");
+            ImGui::Button(bz ? "Remove From All Zones" : "Remove From All Cuffs");
             ImGui::PopStyleColor(2);
             if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID"))
-                    ApplyIdBindingToAllCuffs(static_cast<const char*>(p->Data), false);
+                if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("SPVR_SHOCKID")) {
+                    const char* code = static_cast<const char*>(p->Data);
+                    if (bz) ApplyIdBindingToAllBiteZones(code, false);
+                    else    ApplyIdBindingToAllCuffs(code, false);
+                }
                 ImGui::EndDragDropTarget();
             }
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.88f, 0.95f, 1.0f));
-            ImGui::TextUnformatted("(drag IDs");
-            ImGui::TextUnformatted("into here");
-            ImGui::TextUnformatted("or onto");
-            ImGui::TextUnformatted("individual");
-            ImGui::TextUnformatted("devices)");
+            if (bz) {
+                // Kept to two lines so the stack clears the foot art it sits over.
+                ImGui::TextUnformatted("(drag IDs here or");
+                ImGui::TextUnformatted("onto a single zone)");
+            } else {
+                ImGui::TextUnformatted("(drag IDs");
+                ImGui::TextUnformatted("into here");
+                ImGui::TextUnformatted("or onto");
+                ImGui::TextUnformatted("individual");
+                ImGui::TextUnformatted("devices)");
+            }
             ImGui::PopStyleColor();
             ImGui::EndGroup();
 
@@ -2187,6 +2389,7 @@ namespace StayPutVR {
                 ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 selected_slot_role_ = DeviceRole::None;
                 jaw_selected_ = false;
+                selected_bite_zone_ = -1;
             }
         }
         ImGui::EndChild();
@@ -2195,13 +2398,55 @@ namespace StayPutVR {
 
         // ---- RIGHT (neutral space): ID palette on top, device list below ----
         ImGui::BeginChild("RightPane", ImVec2(0, effigyH), false);
-        ImGui::TextWrapped("Drag a device onto a body slot to assign it. Drag an ID chip onto a "
-                           "body slot (or the head) to bind a shocker/vibrator. The head slot is "
-                           "the VRCFT JawOpen constraint, driven by SPVR_JawOpen and engaged in-game "
-                           "via the collar mode (SPVR_Collar_Mode). Click a device, slot, or the head "
-                           "to configure it.");
-        ImGui::SeparatorText("Available IDs (drag onto a body slot)");
+        if (visual_bite_zone_view_) {
+            ImGui::TextWrapped("Bite zones: the body parts your avatar reports being bitten on "
+                               "(SPVR_Bite_Tail, SPVR_Bite_Ear_Left, ...). Drag an ID chip onto a zone "
+                               "to choose which shocker or toy that bite fires; click a zone to set its "
+                               "intensity and duration. A zone with nothing bound falls back to firing "
+                               "everything, and none of it applies until \"Route bites by body part\" is "
+                               "on in Integrations > OSC Triggers.");
+        } else {
+            ImGui::TextWrapped("Drag a device onto a body slot to assign it. Drag an ID chip onto a "
+                               "body slot (or the head) to bind a shocker/vibrator. The head slot is "
+                               "the VRCFT JawOpen constraint, driven by SPVR_JawOpen and engaged in-game "
+                               "via the collar mode (SPVR_Collar_Mode). Click a device, slot, or the head "
+                               "to configure it.");
+        }
+        ImGui::SeparatorText(visual_bite_zone_view_ ? "Available IDs (drag onto a bite zone)"
+                                                    : "Available IDs (drag onto a body slot)");
         RenderShockerPalette();
+
+        // The device list is a drag source for tracker slots only -- a tracker
+        // means nothing to a bite zone, so it doesn't belong in that view.
+        if (visual_bite_zone_view_) {
+            ImGui::SeparatorText("Bite zones");
+            ImGui::BeginChild("BiteZoneList", ImVec2(0, 0), true);
+            for (int z = 0; z < kBiteZoneCount; ++z) {
+                ImGui::PushID(6000 + z);
+                bool bound = BiteZoneHasBinding(z);
+                if (ImGui::Selectable(kBiteZoneNames[z], selected_bite_zone_ == z, 0,
+                                      ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, 0))) {
+                    selected_bite_zone_ = z;
+                }
+                ImGui::SameLine();
+                if (bound)
+                    ImGui::TextColored(ImVec4(1.0f, 0.62f, 0.25f, 1.0f), "bound");
+                else
+                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(fires everything)");
+                ImGui::SameLine();
+                ImGui::TextDisabled("| %.2f / %.1fs", config_.osc_bite_zone_intensity[z],
+                                    config_.osc_bite_zone_duration[z]);
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+            ImGui::EndChild();
+
+            if (selected_bite_zone_ >= 0) {
+                ImGui::Separator();
+                RenderBiteZoneConfig(selected_bite_zone_);
+            }
+            return;
+        }
 
         ImGui::SeparatorText("Devices");
         ImGui::BeginChild("DeviceList", ImVec2(0, 0), true);
@@ -2268,7 +2513,7 @@ namespace StayPutVR {
         ImGui::EndChild();
         ImGui::EndChild();
 
-        // ---- Per-slot configure panel ----
+        // ---- Per-slot configure panel ---- (the bite view returns above)
         if (jaw_selected_) {
             ImGui::Separator();
             RenderJawConfig();
@@ -2515,6 +2760,123 @@ namespace StayPutVR {
             if (ImGui::Checkbox(std::to_string(i).c_str(), &on)) {
                 jaw_.vibration_device_enabled[i] = on;
                 config_.device_vibration_ids[kJawOpenSerial] = jaw_.vibration_device_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_vibe) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+    }
+
+    // Config panel for one bite zone: what a bite there fires, and how hard.
+    // Bindings write the reserved kBiteZoneSerials key, exactly like RenderJawConfig.
+    void UIManager::RenderBiteZoneConfig(int zone) {
+        if (zone < 0 || zone >= kBiteZoneCount) { selected_bite_zone_ = -1; return; }
+        const std::string serial = kBiteZoneSerials[zone];
+        BiteZoneBinding& b = bite_zones_[zone];
+
+        ImGui::Text("Configure bite zone: %s", kBiteZoneNames[zone]);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Close")) { selected_bite_zone_ = -1; return; }
+        ImGui::SameLine();
+        // Fires exactly what an inbound bite on this zone would, minus the tally,
+        // so routing can be checked without an avatar.
+        if (ImGui::SmallButton("Test##bitezone")) {
+            TriggerBiteActions(static_cast<BiteZone>(zone), /*count_bite=*/false);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%s)", OSCManager::BiteZonePath(config_.osc_bite_path, zone).c_str());
+
+        if (!config_.osc_bite_zone_routing) {
+            ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.35f, 1.0f),
+                               "Zone routing is off - every bite still fires all your devices.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Turn on")) {
+                config_.osc_bite_zone_routing = true;
+                SaveConfig();
+            }
+        } else if (!BiteZoneHasBinding(zone)) {
+            ImGui::TextDisabled("Nothing bound - a bite here falls back to firing every device.");
+        }
+
+        // Per-zone intensity/duration. Used whenever routing is on, so a tail nip
+        // and an ear bite can land differently.
+        // SliderFloatWithButtons ends on its label/buttons, not the slider, so
+        // IsItemDeactivatedAfterEdit would never fire here -- save on the
+        // helper's own return value, like the OSC Triggers tab does.
+        bool changed = false;
+        ImGui::BeginDisabled(config_.osc_bite_use_individual_intensities);
+        if (ImGuiHelpers::SliderFloatWithButtons("Intensity##bitezone",
+                                                 &config_.osc_bite_zone_intensity[zone],
+                                                 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
+        ImGui::EndDisabled();
+        if (config_.osc_bite_use_individual_intensities) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(per-device intensities in use)");
+        }
+
+        if (ImGuiHelpers::SliderFloatWithButtons("Duration (s)##bitezone",
+                                                 &config_.osc_bite_zone_duration[zone],
+                                                 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
+        if (changed) SaveConfig();
+
+        // Bindings. Same layout as the slot/jaw panels: one checkbox per
+        // configured slot per integration.
+        ImGui::TextColored(ImVec4(0.45f, 0.65f, 1.0f, 1.0f), "PiShock:");
+        bool any_ps = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.pishock_shocker_ids[i] == 0) continue;
+            any_ps = true; ImGui::SameLine(); ImGui::PushID(5000 + zone * 20 + i);
+            bool on = b.pishock_enabled[i];
+            if (ImGui::Checkbox(std::to_string(i).c_str(), &on)) {
+                b.pishock_enabled[i] = on;
+                config_.device_pishock_ids[serial] = b.pishock_enabled;
+                SaveConfig();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", config_.PiShockSlotLabel(i).c_str());
+            ImGui::PopID();
+        }
+        if (!any_ps) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "OpenShock:");
+        bool any_os = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.openshock_device_ids[i].empty()) continue;
+            any_os = true; ImGui::SameLine(); ImGui::PushID(5200 + zone * 20 + i);
+            bool on = b.openshock_enabled[i];
+            if (ImGui::Checkbox(std::to_string(i).c_str(), &on)) {
+                b.openshock_enabled[i] = on;
+                config_.device_openshock_ids[serial] = b.openshock_enabled;
+                SaveConfig();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", config_.OpenShockSlotLabel(i).c_str());
+            ImGui::PopID();
+        }
+        if (!any_os) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.5f, 1.0f), "DG-Lab:");
+        bool any_dg = false;
+        for (int i = 0; i < 5; ++i) {
+            if (!DGLabSlotConfigured(i)) continue;
+            any_dg = true; ImGui::SameLine(); ImGui::PushID(5400 + zone * 20 + i);
+            bool on = b.dglab_enabled[i];
+            if (ImGui::Checkbox(kDGLabSlotNames[i], &on)) {
+                b.dglab_enabled[i] = on;
+                config_.device_dglab_ids[serial] = b.dglab_enabled;
+                SaveConfig();
+            }
+            ImGui::PopID();
+        }
+        if (!any_dg) { ImGui::SameLine(); ImGui::TextDisabled("(none configured)"); }
+
+        ImGui::Text("Vibration (Buttplug / BPIO):");
+        bool any_vibe = false;
+        for (int i = 0; i < 5; ++i) {
+            if (config_.buttplug_device_indices[i] < 0) continue;
+            any_vibe = true; ImGui::SameLine(); ImGui::PushID(5600 + zone * 20 + i);
+            bool on = b.vibration_device_enabled[i];
+            if (ImGui::Checkbox(std::to_string(i).c_str(), &on)) {
+                b.vibration_device_enabled[i] = on;
+                config_.device_vibration_ids[serial] = b.vibration_device_enabled;
                 SaveConfig();
             }
             ImGui::PopID();

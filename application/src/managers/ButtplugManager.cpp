@@ -60,9 +60,12 @@ namespace StayPutVR {
 
     void ButtplugManager::Update() {
         if (!ws_client_) return;
-        
+
         // Process WebSocket messages
         ws_client_->Update();
+
+        // Expire an in-flight one-shot pulse (bite triggers).
+        UpdatePulse();
         
         // Send periodic ping if connected (TODO: use MaxPingTime (uint, ms) from ServerInfo response)
         if (connected_ && server_ready_) {
@@ -261,6 +264,61 @@ namespace StayPutVR {
             Logger::Info("Entering disobedience zone with vibration disabled - stopping vibration for device: " + 
                        (device_serial.empty() ? "ALL" : device_serial));
             ClearZoneState(device_serial);
+        }
+    }
+
+    void ButtplugManager::TriggerPulse(float intensity, float duration_seconds, const std::string& reason,
+                                       const std::string& device_serial) {
+        if (!IsEnabled() || !IsConnected()) {
+            return;
+        }
+
+        auto device_indices = GetEnabledDeviceIndices(device_serial);
+        if (device_indices.empty()) {
+            return;
+        }
+
+        Logger::Info("Buttplug pulse (" + reason + ") for device: " +
+                     (device_serial.empty() ? "ALL" : device_serial));
+
+        for (int device_index : device_indices) {
+            SendVibrateContinuous(device_index, intensity, reason);
+        }
+
+        // Arm the stop. A pulse that lands while another is in flight simply
+        // extends it and adopts the union of both device sets.
+        {
+            std::lock_guard<std::mutex> lock(pulse_mutex_);
+            for (int idx : device_indices) {
+                if (std::find(pulse_indices_.begin(), pulse_indices_.end(), idx) == pulse_indices_.end())
+                    pulse_indices_.push_back(idx);
+            }
+            auto stop_at = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(ConvertDurationToMilliseconds(duration_seconds));
+            if (!pulse_active_ || stop_at > pulse_stop_time_) pulse_stop_time_ = stop_at;
+            pulse_active_ = true;
+        }
+        UpdateRateLimit();
+    }
+
+    void ButtplugManager::UpdatePulse() {
+        std::vector<int> to_stop;
+        {
+            std::lock_guard<std::mutex> lock(pulse_mutex_);
+            if (!pulse_active_ || std::chrono::steady_clock::now() < pulse_stop_time_) return;
+            to_stop.swap(pulse_indices_);
+            pulse_active_ = false;
+        }
+
+        StopVibrationMulti(to_stop);
+
+        // The pulse drove these devices directly, bypassing the zone cache, so a
+        // device that was mid zone-vibration is now silent while the cache still
+        // says it is in that zone. Dropping the cache makes the next zone update
+        // re-send, restoring the vibration.
+        {
+            std::lock_guard<std::mutex> lock(zone_state_mutex_);
+            current_zone_state_.clear();
         }
     }
 

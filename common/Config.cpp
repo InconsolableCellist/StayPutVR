@@ -464,6 +464,19 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         osc_bite_duration = jval(j, "osc_bite_duration", 1.0f);
         osc_bite_use_individual_intensities = jval(j, "osc_bite_use_individual_intensities", false);
         bite_count_lifetime = jval(j, "bite_count_lifetime", 0);
+
+        // Bite zone routing (1.5.1). Absent in pre-1.5.1 configs, so the
+        // defaults keep the old "any bite fires everything" behaviour.
+        osc_bite_zone_routing = jval(j, "osc_bite_zone_routing", false);
+        auto load_zone_floats = [&](const char* key, std::array<float, kBiteZoneCount>& dst) {
+            if (!j.contains(key) || !j[key].is_array()) return;
+            const auto& arr = j[key];
+            for (size_t i = 0; i < arr.size() && i < static_cast<size_t>(kBiteZoneCount); ++i) {
+                if (arr[i].is_number()) dst[i] = arr[i];
+            }
+        };
+        load_zone_floats("osc_bite_zone_intensity", osc_bite_zone_intensity);
+        load_zone_floats("osc_bite_zone_duration", osc_bite_zone_duration);
         osc_shock_use_individual_intensities = jval(j, "osc_shock_use_individual_intensities", false);
 
         // PiShock settings
@@ -1044,6 +1057,11 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["osc_bite_duration"] = osc_bite_duration;
         j["osc_bite_use_individual_intensities"] = osc_bite_use_individual_intensities;
         j["bite_count_lifetime"] = bite_count_lifetime;
+
+        // Bite zone routing (1.5.1)
+        j["osc_bite_zone_routing"] = osc_bite_zone_routing;
+        j["osc_bite_zone_intensity"] = nlohmann::json(osc_bite_zone_intensity);
+        j["osc_bite_zone_duration"] = nlohmann::json(osc_bite_zone_duration);
         j["osc_shock_use_individual_intensities"] = osc_shock_use_individual_intensities;
 
         // PiShock settings

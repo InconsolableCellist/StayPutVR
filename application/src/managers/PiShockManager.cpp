@@ -136,7 +136,8 @@ namespace StayPutVR {
         }
     }
 
-    void PiShockManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason) {
+    void PiShockManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason,
+                                      const std::string& /*device_serial*/) {
         if (!IsEnabled()) {
             Logger::Info("PiShock not enabled, skipping external shock");
             return;
@@ -148,7 +149,8 @@ namespace StayPutVR {
         SendShock(ConvertIntensityToAPI(intensity), ConvertDurationToAPI(duration_seconds), reason);
     }
 
-    void PiShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason) {
+    void PiShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
+                                                 const std::string& /*device_serial*/) {
         if (!IsEnabled()) {
             Logger::Info("PiShock not enabled, skipping external shock");
             return;

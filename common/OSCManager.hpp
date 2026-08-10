@@ -113,8 +113,17 @@ public:
     // Set callback for global out-of-bounds
     void SetGlobalOutOfBoundsCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); global_out_of_bounds_callback_ = std::move(callback); }
 
-    // Set callback for bite actions
-    void SetBiteCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); bite_callback_ = std::move(callback); }
+    // Set callback for bite actions. The argument is the body part that was
+    // bitten: BiteZone::Generic for the plain SPVR_Bite parameter, or the zone
+    // whose suffixed parameter arrived (SPVR_Bite_Tail -> BiteZone::Tail, ...).
+    void SetBiteCallback(std::function<void(BiteZone)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); bite_callback_ = std::move(callback); }
+
+    // Full parameter address for a bite zone, i.e. the configured bite path
+    // plus the zone's suffix. Used for OSC matching and OSCQuery advertisement.
+    static std::string BiteZonePath(const std::string& base_path, int zone_index) {
+        if (zone_index < 0 || zone_index >= kBiteZoneCount) return base_path;
+        return base_path + kBiteZoneSuffixes[zone_index];
+    }
 
     // Set callback for avatar change (VRChat /avatar/change). Fired when the
     // user switches avatars so lock/shock state can be reset.
@@ -248,8 +257,13 @@ private:
     // Callback for global out-of-bounds events
     std::function<void(bool)> global_out_of_bounds_callback_;
     
-    // Callback for bite events
-    std::function<void(bool)> bite_callback_;
+    // Callback for bite events (carries the bitten body part)
+    std::function<void(BiteZone)> bite_callback_;
+
+    // Classify an inbound address against the bite parameter family:
+    // kBiteNoMatch, or a BiteZone value (Generic for the unsuffixed path).
+    static constexpr int kBiteNoMatch = -2;
+    int MatchBiteZone(const std::string& address) const;
 
     // Callback for external shock param (/avatar/parameters/Shock)
     std::function<void(bool)> shock_callback_;

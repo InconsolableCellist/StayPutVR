@@ -348,10 +348,11 @@ void DGLabManager::FirePulse(const std::array<bool, 2>& channels, float intensit
         action_callback_("pulse", true, reason);
 }
 
-void DGLabManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason) {
+void DGLabManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason,
+                                const std::string& device_serial) {
     if (!CanTriggerAction()) return;
     last_pulse_ = std::chrono::steady_clock::now();
-    FirePulse(ResolveChannels(""), intensity, duration_seconds, reason);
+    FirePulse(ResolveChannels(device_serial), intensity, duration_seconds, reason);
 }
 
 void DGLabManager::TriggerDisobedienceActions(const std::string& device_serial) {

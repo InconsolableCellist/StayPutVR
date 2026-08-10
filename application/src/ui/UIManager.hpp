@@ -184,6 +184,18 @@ namespace StayPutVR {
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
+    // Bite zone bindings (1.5.1). One per body part the avatar can report being
+    // bitten on; mirrors the binding arrays on the jaw/mic constraints and is
+    // persisted through the same config_.device_*_ids maps under the reserved
+    // kBiteZoneSerials keys, so the standard per-serial trigger pipeline works.
+    struct BiteZoneBinding {
+        std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        // DG-Lab output channels: slot 0 = channel A, slot 1 = channel B.
+        std::array<bool, 5> dglab_enabled = {false, false, false, false, false};
+        std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
+    };
+
     // Unified collar mode (replaces the old SPVR_JawEnabled radial). The avatar's
     // momentary SPVR_Collar_ToggleButton cycles through the modes whose integration
     // is enabled+agreed; the app echoes the result on SPVR_Collar_Mode.
@@ -401,6 +413,15 @@ namespace StayPutVR {
         void StartMicCalibration();             // begin a background-noise sample
         void UpdateMicCalibration();            // per-frame: accumulate + finalize calibration
 
+        // Bite zones (1.5.1). Bindings live in the same config_.device_*_ids maps
+        // under kBiteZoneSerials[zone], so a routed bite reuses the per-serial
+        // trigger pipeline. zone is a BiteZone value in [0, kBiteZoneCount).
+        void LoadBiteZoneBindingsFromConfig();
+        void ApplyIdBindingToBiteZone(int zone, const char* code, bool enable);
+        void ApplyIdBindingToAllBiteZones(const char* code, bool enable);
+        void RenderBiteZoneConfig(int zone);     // zone config panel in the Visual view
+        bool BiteZoneHasBinding(int zone) const; // false => that zone falls back to firing everything
+
         // Enforced-unmute constraint (VRChat MuteSelf). Reserved serial keys its
         // shocker / vibrator bindings like the jaw and mic constraints.
         static constexpr const char* kMuteSelfSerial = "SPVR_MUTESELF";
@@ -428,6 +449,14 @@ namespace StayPutVR {
         // True when the JawOpen head hotspot is selected in the Visual view, so
         // its config panel shows instead of a device slot's (selected_slot_role_).
         bool jaw_selected_ = false;
+
+        // Bite zone bindings, indexed by BiteZone. Loaded from config at startup
+        // and written back on every edit (Visual view / palette drops).
+        std::array<BiteZoneBinding, kBiteZoneCount> bite_zones_;
+        // Which bite zone's config panel is open in the Visual view (-1 = none).
+        int selected_bite_zone_ = -1;
+        // Visual view overlay: false = tracker slots + jaw, true = bite zones.
+        bool visual_bite_zone_view_ = false;
 
         // Microphone enforced-mute constraint runtime state (see CheckMicrophoneConstraint).
         MicrophoneConstraint mic_;
@@ -511,14 +540,32 @@ namespace StayPutVR {
         void OnDeviceLocked(OSCDeviceType device, bool locked);
         void OnDeviceIncluded(OSCDeviceType device, bool include);
         void TriggerGlobalOutOfBoundsActions();
-        void TriggerBiteActions();
+        // zone is the bitten body part (BiteZone::Generic for the unsuffixed
+        // SPVR_Bite). With zone routing off, or for a zone nothing is bound to,
+        // this fires every configured device exactly as it always has.
+        // count_bite=false is for the UI test buttons, so a rehearsal doesn't
+        // inflate the issue-#16 tally of bites actually taken.
+        void TriggerBiteActions(BiteZone zone = BiteZone::Generic, bool count_bite = true);
+        // Bite coalescing. A prefab that reports the body part may also send the
+        // plain SPVR_Bite for the same bite, and VRChat can deliver the two in
+        // either order, so acting on each parameter as it lands would shock
+        // twice and could act on the unspecific one first. Inbound bites are
+        // instead collected for a brief window and fired once, preferring the
+        // specific zone. QueueBite runs on the OSC receive thread;
+        // ProcessPendingBite runs every frame on the UI thread.
+        void QueueBite(BiteZone zone);
+        void ProcessPendingBite();
         void HandleAvatarChange();
-        // Fire a direct shock on all enabled shock managers at the given
+        // Fire a direct shock on the enabled shock managers at the given
         // intensity (0..1) and duration (seconds). Blocked during emergency stop.
-        void TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason);
+        // An empty device_serial fires every configured device; a serial fires
+        // only what is bound to it (bite-zone routing).
+        void TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason,
+                                  const std::string& device_serial = "");
         // Like TriggerExternalShock but each shocker uses its per-device
         // disobedience intensity (OSC bite/shock "use individual" option).
-        void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason);
+        void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
+                                            const std::string& device_serial = "");
         void ResetEmergencyStop();
         
         // Helper functions
@@ -587,6 +634,13 @@ namespace StayPutVR {
         std::chrono::steady_clock::time_point global_out_of_bounds_timer_start_;
         static constexpr float GLOBAL_OUT_OF_BOUNDS_DURATION = 1.0f; // Duration in seconds
         
+        // Pending (coalescing) bite -- see QueueBite / ProcessPendingBite.
+        std::mutex pending_bite_mutex_;
+        bool pending_bite_ = false;
+        int pending_bite_zone_ = -1;    // BiteZone value; Generic until a zone arrives
+        std::chrono::steady_clock::time_point pending_bite_at_;
+        static constexpr float BITE_COALESCE_SECONDS = 0.08f;
+
         // Bite timer variables
         bool bite_timer_active_ = false;
         std::chrono::steady_clock::time_point bite_timer_start_;

@@ -104,6 +104,12 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
+**1.5.1** - Bite zones (8/9/2026)
+- Added **bite zones**: the prefab now reports where it was bitten (`SPVR_Bite_Tail`, `SPVR_Bite_Ear_Left`, `SPVR_Bite_Ear_Right`, `SPVR_Bite_Thigh_Left`, `SPVR_Bite_Thigh_Right`, `SPVR_Bite_Jaw`), and each body part can be bound to its own shockers, DG-Lab channels and BPIO toys — bind them in Devices → Visual with the view switched to **Bite zones**
+- Each zone carries its own bite intensity and duration
+- Opt-in via **Route bites by body part** on Integrations → OSC Triggers; with it off, and for any zone nothing is bound to, a bite fires every configured device at the global Bite intensity/duration exactly as before
+- **BPIO toys can now react to bites** when bound to a zone (one-shot pulse for the zone's duration)
+
 **1.5.0** - Lock-enforcement and safety fixes, shocker names, bite counter (8/4/2026)
 - Added optional **names for your shockers**: give each PiShock/OpenShock slot a label like "Left ankle" and it replaces the bare 0–4 slot number everywhere you bind it (#10)
 - Added a **bite counter** (session + lifetime, with a Reset button) on the Integrations → OSC Triggers tab; only bites that actually fire are counted (#16)
