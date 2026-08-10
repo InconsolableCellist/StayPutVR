@@ -59,13 +59,22 @@ void OpenShockPanel::Render() {
     // Device IDs section
     ImGui::Text("Device IDs:");
     ImGui::SameLine();
-    ImGuiHelpers::HelpTooltip("OpenShock device IDs. Device 0 is considered the master device.\nLeave unused slots empty.");
+    ImGuiHelpers::HelpTooltip("OpenShock device IDs. Device 0 is considered the master device.\n"
+                              "Leave unused slots empty.\n\n"
+                              "The Name field is optional (issue #10): give a shocker a label like "
+                              "\"Left ankle\" and it is shown instead of the slot number everywhere "
+                              "you bind it.");
 
     static char device_id_buffers[5][128] = {"", "", "", "", ""};
+    static char device_label_buffers[5][64] = {};
 
     for (int i = 0; i < 5; ++i) {
         if (config_.openshock_device_ids[i] != device_id_buffers[i]) {
             strcpy_s(device_id_buffers[i], sizeof(device_id_buffers[i]), config_.openshock_device_ids[i].c_str());
+        }
+        if (config_.openshock_device_labels[i] != device_label_buffers[i]) {
+            strcpy_s(device_label_buffers[i], sizeof(device_label_buffers[i]),
+                     config_.openshock_device_labels[i].c_str());
         }
 
         std::string label = std::to_string(i) + ": ";
@@ -74,10 +83,19 @@ void OpenShockPanel::Render() {
         }
 
         ImGui::PushID(i);
+        ImGui::SetNextItemWidth(240.0f);
         if (ImGui::InputText(label.c_str(), device_id_buffers[i], sizeof(device_id_buffers[i]))) {
             config_.openshock_device_ids[i] = device_id_buffers[i];
             save_config_();
         }
+        // Issue #10: optional friendly name for this slot.
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::InputTextWithHint("##label", "Name (optional)",
+                                     device_label_buffers[i], sizeof(device_label_buffers[i]))) {
+            config_.openshock_device_labels[i] = device_label_buffers[i];
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) save_config_();
         ImGui::PopID();
     }
 

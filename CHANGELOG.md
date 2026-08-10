@@ -27,6 +27,73 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
 
+## 1.5.1 — Bite zones (8/9/2026)
+
+### New features
+- **Bite zones:** the prefab now reports which body part was bitten by sending a
+  suffixed parameter alongside the plain `SPVR_Bite` — `SPVR_Bite_Tail`,
+  `SPVR_Bite_Ear_Left`, `SPVR_Bite_Ear_Right`, `SPVR_Bite_Thigh_Left`,
+  `SPVR_Bite_Thigh_Right`, `SPVR_Bite_Jaw`. Each zone can be bound to its own
+  shockers, DG-Lab channels and BPIO toys, so somebody running several
+  integrations can have a tail bite hit one device and an ear bite another. Bind
+  them in Devices → Visual by switching the view to **Bite zones** and dragging
+  the same ID chips you use for tracker cuffs onto a body part; every zone also
+  carries its own intensity and duration.
+- The routing is opt-in via **Route bites by body part** on Integrations → OSC
+  Triggers. With it off — and for any zone nothing is bound to — a bite fires
+  every configured device at the global Bite intensity/duration, exactly as in
+  1.5.0. Existing configs are unaffected until the box is ticked.
+- **BPIO toys now take part in bites** when bound to a zone, as a one-shot pulse
+  for the zone's duration. The unrouted path is unchanged (shockers only), so
+  toys never start buzzing on bites nobody asked them to.
+- The body-part parameters are the configured bite path plus a fixed suffix, so
+  renaming the bite path renames the whole family. They are listed read-only
+  under Settings → OSC → Bite Trigger and advertised over OSCQuery.
+- Bites are coalesced over a short window before firing. A prefab that reports
+  the body part may also send the plain `SPVR_Bite` for the same bite, and
+  VRChat delivers the two as separate messages in no guaranteed order — acting
+  on each as it landed would shock twice, and could act on the unspecific one
+  first. One bite now fires once, using the most specific parameter received.
+- Each bite zone has a **Test** button in its config panel that fires exactly
+  what an inbound bite there would, without counting toward the bite tally.
+
+## 1.5.0 — Lock-enforcement and safety fixes, shocker names, bite counter (8/4/2026)
+
+### New features
+- **Name your shockers:** each PiShock and OpenShock slot now takes an optional
+  friendly name ("Left ankle", "Collar") next to its ID on the Integrations →
+  PiShock / OpenShock tabs. The name replaces the bare 0–4 slot number wherever you
+  bind that shocker, and shows on hover for the compact chips in the Devices tab.
+  Leave it blank and everything reads exactly as it did before. (#10)
+- **Bite counter:** the Integrations → OSC Triggers tab now tracks how many bites
+  you've taken this session and over all time, with a Reset button. Only bites that
+  actually fire are counted — ones ignored because the trigger is off or emergency
+  stop is active don't inflate the total. (#16)
+
+### Bug fixes
+- **Chaining mode no longer re-locks continuously:** VRChat re-sends avatar
+  parameters (on avatar load, world join, and periodically from many OSC senders),
+  and every repeat of a still-held lock latch was treated as a brand-new lock
+  request. That re-captured each device's anchor position — so a "locked" tracker's
+  reference point silently drifted to wherever it currently was — replayed the lock
+  cue, and with chaining mode on re-fired the global lock, undoing an unlock you had
+  just done in the UI and re-engaging the jaw/mic collar gate with it. Lock
+  parameters are now acted on only when they actually change. (#11)
+- **Safe mode no longer shows phantom locks:** during emergency stop, and for a
+  device auto-released past the disable distance, the deferred status updates (bite
+  timer, global out-of-bounds timer, avatar re-sync) could re-report the device as
+  locked — the cuff turned red on your avatar while nothing was actually being
+  enforced. A lock request that gets refused during emergency stop now also pushes
+  the true unlocked state back, instead of being dropped silently. (#13)
+- **Emergency stop covers the global out-of-bounds trigger:** receiving the global
+  out-of-bounds parameter while emergency stop was latched still fired your
+  PiShock / OpenShock / DG-Lab disobedience actions. It is now blocked like every
+  other trigger.
+- **OSCQuery CPU usage:** the mDNS discovery and advertisement loops spun two CPU
+  cores continuously whenever OSC Query was enabled, because the socket timeouts
+  they relied on were being silently ignored. They now block properly and sit near
+  idle. (#15)
+
 ## 1.4.2 — DG-Lab Coyote, Enforced Unmute + bug fixes (7/23/2026)
 
 ### New features

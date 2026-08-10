@@ -244,6 +244,20 @@ void OSCManager::SetConfig(const Config& config) {
     }
 }
 
+int OSCManager::MatchBiteZone(const std::string& address) const {
+    if (osc_bite_path_.empty()) return kBiteNoMatch;
+    if (address == osc_bite_path_) return static_cast<int>(BiteZone::Generic);
+    // Every zone parameter is the base path plus a suffix, so a cheap prefix
+    // test rejects the overwhelming majority of inbound addresses first.
+    if (address.size() <= osc_bite_path_.size()) return kBiteNoMatch;
+    if (address.compare(0, osc_bite_path_.size(), osc_bite_path_) != 0) return kBiteNoMatch;
+    const std::string suffix = address.substr(osc_bite_path_.size());
+    for (int i = 0; i < kBiteZoneCount; ++i) {
+        if (suffix == kBiteZoneSuffixes[i]) return i;
+    }
+    return kBiteNoMatch;
+}
+
 void OSCManager::ReceiveThreadFunction() {
     if (Logger::IsInitialized()) {
         Logger::Debug("OSCManager: Receive thread started");
@@ -420,6 +434,10 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     return;
                 }
                 
+                // Which bite parameter (if any) this address is: the plain
+                // SPVR_Bite or one of the per-body-part variants.
+                const int bite_zone = MatchBiteZone(address);
+
                 // Dispatch callbacks under lock to prevent torn reads
                 // if a setter is called concurrently from the UI thread.
                 std::lock_guard<std::mutex> cb_lock(callback_mutex_);
@@ -457,9 +475,10 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     global_out_of_bounds_callback_(true);
                 }
                 
-                // Bite path
-                else if (address == osc_bite_path_ && bite_callback_ && value_bool) {
-                    bite_callback_(true);
+                // Bite paths: the plain SPVR_Bite plus the per-body-part
+                // variants the prefab sends (SPVR_Bite_Tail, SPVR_Bite_Jaw, ...).
+                else if (bite_zone != kBiteNoMatch && bite_callback_ && value_bool) {
+                    bite_callback_(static_cast<BiteZone>(bite_zone));
                 }
 
                 // External shock path (/avatar/parameters/Shock)

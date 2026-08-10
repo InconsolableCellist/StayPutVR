@@ -463,6 +463,20 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         osc_bite_intensity = jval(j, "osc_bite_intensity", 0.25f);
         osc_bite_duration = jval(j, "osc_bite_duration", 1.0f);
         osc_bite_use_individual_intensities = jval(j, "osc_bite_use_individual_intensities", false);
+        bite_count_lifetime = jval(j, "bite_count_lifetime", 0);
+
+        // Bite zone routing (1.5.1). Absent in pre-1.5.1 configs, so the
+        // defaults keep the old "any bite fires everything" behaviour.
+        osc_bite_zone_routing = jval(j, "osc_bite_zone_routing", false);
+        auto load_zone_floats = [&](const char* key, std::array<float, kBiteZoneCount>& dst) {
+            if (!j.contains(key) || !j[key].is_array()) return;
+            const auto& arr = j[key];
+            for (size_t i = 0; i < arr.size() && i < static_cast<size_t>(kBiteZoneCount); ++i) {
+                if (arr[i].is_number()) dst[i] = arr[i];
+            }
+        };
+        load_zone_floats("osc_bite_zone_intensity", osc_bite_zone_intensity);
+        load_zone_floats("osc_bite_zone_duration", osc_bite_zone_duration);
         osc_shock_use_individual_intensities = jval(j, "osc_shock_use_individual_intensities", false);
 
         // PiShock settings
@@ -498,7 +512,17 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
             // Legacy single shocker ID - put it in slot 0
             pishock_shocker_ids[0] = j["pishock_shocker_id"];
         }
-        
+
+        // Issue #10: friendly slot names (optional; absent in pre-1.5.0 configs).
+        if (j.contains("pishock_shocker_labels") && j["pishock_shocker_labels"].is_array()) {
+            auto labels_json = j["pishock_shocker_labels"];
+            for (size_t i = 0; i < min(labels_json.size(), static_cast<size_t>(5)); ++i) {
+                if (labels_json[i].is_string()) {
+                    pishock_shocker_labels[i] = labels_json[i];
+                }
+            }
+        }
+
         // Warning Zone PiShock Settings
         pishock_warning_beep = jval(j, "pishock_warning_beep", false);
         pishock_warning_shock = jval(j, "pishock_warning_shock", false);
@@ -555,7 +579,17 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
             // Legacy single device ID - put it in slot 0
             openshock_device_ids[0] = j["openshock_device_id"];
         }
-        
+
+        // Issue #10: friendly slot names (optional; absent in pre-1.5.0 configs).
+        if (j.contains("openshock_device_labels") && j["openshock_device_labels"].is_array()) {
+            auto labels_json = j["openshock_device_labels"];
+            for (size_t i = 0; i < min(labels_json.size(), static_cast<size_t>(5)); ++i) {
+                if (labels_json[i].is_string()) {
+                    openshock_device_labels[i] = labels_json[i];
+                }
+            }
+        }
+
         openshock_server_url = jval(j, "openshock_server_url", "https://api.openshock.app");
         
         // Warning Zone OpenShock Settings
@@ -944,6 +978,20 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
     }
 }
 
+// Issue #10: friendly slot names. Falls back to the numbered label so a slot the
+// user never named reads exactly as it did before.
+std::string Config::PiShockSlotLabel(int index) const {
+    if (index < 0 || index >= 5) return "PiShock ?";
+    const std::string& label = pishock_shocker_labels[index];
+    return label.empty() ? ("PiShock " + std::to_string(index)) : label;
+}
+
+std::string Config::OpenShockSlotLabel(int index) const {
+    if (index < 0 || index >= 5) return "OpenShock ?";
+    const std::string& label = openshock_device_labels[index];
+    return label.empty() ? ("OpenShock " + std::to_string(index)) : label;
+}
+
 ConfigResult Config::SaveToFileEx(const std::string& filename) const {
     ConfigResult result;
     try {
@@ -1013,6 +1061,12 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["osc_bite_intensity"] = osc_bite_intensity;
         j["osc_bite_duration"] = osc_bite_duration;
         j["osc_bite_use_individual_intensities"] = osc_bite_use_individual_intensities;
+        j["bite_count_lifetime"] = bite_count_lifetime;
+
+        // Bite zone routing (1.5.1)
+        j["osc_bite_zone_routing"] = osc_bite_zone_routing;
+        j["osc_bite_zone_intensity"] = nlohmann::json(osc_bite_zone_intensity);
+        j["osc_bite_zone_duration"] = nlohmann::json(osc_bite_zone_duration);
         j["osc_shock_use_individual_intensities"] = osc_shock_use_individual_intensities;
 
         // PiShock settings
@@ -1034,6 +1088,12 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
             shocker_ids_json.push_back(id);
         }
         j["pishock_shocker_ids"] = shocker_ids_json;
+
+        nlohmann::json pishock_labels_json = nlohmann::json::array();
+        for (const auto& label : pishock_shocker_labels) {
+            pishock_labels_json.push_back(label);
+        }
+        j["pishock_shocker_labels"] = pishock_labels_json;
 
         // Warning Zone PiShock Settings
         j["pishock_warning_beep"] = pishock_warning_beep;
@@ -1071,6 +1131,12 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
             device_ids_json.push_back(id);
         }
         j["openshock_device_ids"] = device_ids_json;
+
+        nlohmann::json openshock_labels_json = nlohmann::json::array();
+        for (const auto& label : openshock_device_labels) {
+            openshock_labels_json.push_back(label);
+        }
+        j["openshock_device_labels"] = openshock_labels_json;
         
         j["openshock_server_url"] = openshock_server_url;
         

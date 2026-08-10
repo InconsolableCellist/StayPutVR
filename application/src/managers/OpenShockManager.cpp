@@ -111,7 +111,8 @@ namespace StayPutVR {
         }
     }
 
-    void OpenShockManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason) {
+    void OpenShockManager::TriggerShock(float intensity, float duration_seconds, const std::string& reason,
+                                        const std::string& device_serial) {
         if (!IsEnabled()) {
             Logger::Info("OpenShock not enabled, skipping external shock");
             return;
@@ -119,17 +120,18 @@ namespace StayPutVR {
         // SendShock -> ExecuteAction already applies the rate limit and shock
         // cooldown, so don't double-gate here. Duration is API ms (300..65535).
         int duration_ms = (std::max)(300, (std::min)(65535, static_cast<int>(duration_seconds * 1000.0f)));
-        SendShock(ConvertIntensityToAPI(intensity), duration_ms, reason, "");
+        SendShock(ConvertIntensityToAPI(intensity), duration_ms, reason, device_serial);
     }
 
-    void OpenShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason) {
+    void OpenShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
+                                                  const std::string& device_serial) {
         if (!IsEnabled()) {
             Logger::Info("OpenShock not enabled, skipping external shock");
             return;
         }
         // is_disobedience=true selects the per-device disobedience intensities
         // (or the master disobedience intensity when individual is disabled).
-        SendShockWithIndividualIntensities(ConvertDurationToAPI(duration_seconds), reason, "", true);
+        SendShockWithIndividualIntensities(ConvertDurationToAPI(duration_seconds), reason, device_serial, true);
     }
 
     void OpenShockManager::TestActions() {

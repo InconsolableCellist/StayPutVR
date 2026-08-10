@@ -53,6 +53,41 @@ struct ConfigResult {
 //   these do not need locks because they run single-threaded. Only batch
 //   operations (Load/Save) and fields read by worker threads require locking.
 
+// Bite zones (1.5.1). The avatar prefab reports WHERE it was bitten by sending a
+// suffixed parameter (SPVR_Bite_Tail, SPVR_Bite_Ear_Left, ...) on top of the
+// plain SPVR_Bite. Each zone can route its bite to a specific subset of the
+// user's shockers/toys and carries its own intensity/duration, so somebody with
+// several integrations can wire "tail" to one device and "ear" to another.
+//
+// Generic (-1) is the unsuffixed SPVR_Bite: it has no body part, so it always
+// fires everything at the global bite intensity/duration.
+constexpr int kBiteZoneCount = 6;
+enum class BiteZone : int {
+    Generic    = -1,
+    Tail       = 0,
+    EarLeft    = 1,
+    EarRight   = 2,
+    ThighLeft  = 3,
+    ThighRight = 4,
+    Jaw        = 5
+};
+
+// Appended to osc_bite_path to form each zone's parameter address, so renaming
+// the base path renames the whole family.
+constexpr const char* kBiteZoneSuffixes[kBiteZoneCount] = {
+    "_Tail", "_Ear_Left", "_Ear_Right", "_Thigh_Left", "_Thigh_Right", "_Jaw"
+};
+
+// Display names (UI) and the reserved serials that key each zone's bindings in
+// the shared device_*_ids maps, mirroring kJawOpenSerial / kMicSerial.
+constexpr const char* kBiteZoneNames[kBiteZoneCount] = {
+    "Tail", "Left Ear", "Right Ear", "Left Thigh", "Right Thigh", "Jaw"
+};
+constexpr const char* kBiteZoneSerials[kBiteZoneCount] = {
+    "SPVR_BITE_TAIL", "SPVR_BITE_EAR_L", "SPVR_BITE_EAR_R",
+    "SPVR_BITE_THIGH_L", "SPVR_BITE_THIGH_R", "SPVR_BITE_JAW"
+};
+
 class Config {
 public:
     // v1: PiShock durations migrated 0..1 -> seconds.
@@ -89,6 +124,12 @@ public:
     // changes a setting. Returns the writability verdict (Ok / AccessDenied /
     // OtherError) for the config directory.
     static ConfigResult RunStartupDiagnostics(const std::string& filename);
+
+    // Issue #10: display name for a shocker slot. Returns the user's label if set,
+    // otherwise the numbered default ("PiShock 0"). Single source of truth so the
+    // binding checkboxes, the Visual-tab chips and the panels all agree.
+    std::string PiShockSlotLabel(int index) const;
+    std::string OpenShockSlotLabel(int index) const;
 
     // Config versioning (for one-time migrations)
     int config_version = 0;
@@ -153,6 +194,20 @@ public:
     // disobedience intensity instead of the single intensity above.
     bool osc_bite_use_individual_intensities = false;
     bool osc_shock_use_individual_intensities = false;
+
+    // Bite zone routing (1.5.1). Off => every SPVR_Bite_* fires all configured
+    // shockers at the global intensity/duration above, exactly as before. On =>
+    // a bite fires only the devices bound to that body part (BPIO included),
+    // at that zone's own intensity/duration. A zone with nothing bound still
+    // falls back to firing everything, so no bite ever goes silently missing.
+    bool osc_bite_zone_routing = false;
+    std::array<float, kBiteZoneCount> osc_bite_zone_intensity = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+    std::array<float, kBiteZoneCount> osc_bite_zone_duration  = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+
+    // Issue #16: lifetime tally of bites that actually fired (i.e. past the
+    // enable check and the emergency-stop gate). Persisted across runs; the
+    // session count lives on UIManager and resets every launch.
+    int bite_count_lifetime = 0;
 
     // Global lock/unlock paths
     std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
@@ -235,6 +290,10 @@ public:
     std::string pishock_share_code;
     std::string pishock_client_id;   // WebSocket v2: Client ID for ops channel
     std::array<int, 5> pishock_shocker_ids; // WebSocket v2: The actual shocker device IDs (numeric), support up to 5 devices
+    // Issue #10: optional friendly names for the 5 shocker slots ("Left ankle",
+    // "Collar", ...). Empty means fall back to the numbered default. Purely a
+    // display concern -- nothing keys off these.
+    std::array<std::string, 5> pishock_shocker_labels;
     
     // Warning Zone PiShock Settings
     bool pishock_warning_beep = false;
@@ -261,6 +320,7 @@ public:
     // OpenShock API Settings
     std::string openshock_api_token;
     std::array<std::string, 5> openshock_device_ids; // Support up to 5 device IDs
+    std::array<std::string, 5> openshock_device_labels; // Issue #10: friendly names, empty => numbered default
     std::string openshock_server_url = "https://api.openshock.app"; 
     
     // Warning Zone OpenShock Settings

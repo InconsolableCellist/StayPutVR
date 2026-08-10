@@ -66,6 +66,47 @@ namespace StayPutVR {
         ImGui::EndDisabled();
         if (ImGuiHelpers::SliderFloatWithButtons("Bite duration (s)", &config_.osc_bite_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
+        // Bite zones (1.5.1): route each body part to its own devices.
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Route bites by body part", &config_.osc_bite_zone_routing)) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip(
+            "The avatar reports where it was bitten (SPVR_Bite_Tail, SPVR_Bite_Ear_Left, "
+            "SPVR_Bite_Ear_Right, SPVR_Bite_Thigh_Left, SPVR_Bite_Thigh_Right, SPVR_Bite_Jaw).\n\n"
+            "Off: every bite fires all your configured shockers at the intensity/duration above -- "
+            "the way it has always worked.\n\n"
+            "On: a bite fires only the shockers and toys bound to that body part, at that zone's own "
+            "intensity/duration. Bind them on the Devices tab: Visual view -> Bite zones.\n\n"
+            "A zone you never bound anything to still fires everything, so no bite goes missing.");
+        {
+            // Quick readout so the routing state is legible without switching tabs.
+            int bound = 0;
+            for (int z = 0; z < kBiteZoneCount; ++z) if (BiteZoneHasBinding(z)) ++bound;
+            ImGui::SameLine();
+            if (!config_.osc_bite_zone_routing)
+                ImGui::TextDisabled("(%d/%d zones bound)", bound, kBiteZoneCount);
+            else if (bound == 0)
+                ImGui::TextColored(ImVec4(0.95f, 0.72f, 0.35f, 1.0f),
+                                   "(no zones bound yet - bites still fire everything)");
+            else
+                ImGui::TextColored(ImVec4(0.45f, 0.9f, 0.55f, 1.0f), "(%d/%d zones bound)", bound, kBiteZoneCount);
+        }
+
+        // Issue #16: bite tally. Session resets each launch; lifetime persists.
+        ImGui::Spacing();
+        ImGui::Text("Bites:  %d this session   /   %d lifetime",
+                    bite_count_session_.load(std::memory_order_relaxed),
+                    bite_count_lifetime_.load(std::memory_order_relaxed));
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Counts bites that actually fired. Bites ignored because the trigger "
+                                  "is disabled, or because emergency stop was active, are not counted.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##bitecount")) {
+            bite_count_session_.store(0, std::memory_order_relaxed);
+            bite_count_lifetime_.store(0, std::memory_order_relaxed);
+            changed = true;
+        }
+
         ImGui::SeparatorText("Shock  (/avatar/parameters/Shock)");
         ImGui::TextDisabled("Supports Simple Shock System");
         if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
@@ -219,6 +260,16 @@ namespace StayPutVR {
                 config_.osc_bite_path = "/avatar/parameters/SPVR_Bite";
                 strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
                 changed = true;
+            }
+            // The per-body-part parameters are this path plus a fixed suffix, so
+            // they follow it automatically. Listed read-only so users can match
+            // them against what their prefab actually sends.
+            ImGui::Spacing();
+            ImGui::TextDisabled("Body-part parameters (listened for automatically):");
+            for (int z = 0; z < kBiteZoneCount; ++z) {
+                ImGui::BulletText("%s  -  %s",
+                                  OSCManager::BiteZonePath(config_.osc_bite_path, z).c_str(),
+                                  kBiteZoneNames[z]);
             }
         }
 
@@ -535,6 +586,12 @@ namespace StayPutVR {
         osc_query_server_->AddParameter(config_.osc_global_unlock_path, "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_global_out_of_bounds_path, "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_bite_path, "T", A::WriteOnly, false);
+        // Per-body-part bite parameters (SPVR_Bite_Tail, ...). Always advertised:
+        // the prefab sends them regardless of whether zone routing is on, and an
+        // unadvertised parameter would simply never reach us.
+        for (int z = 0; z < kBiteZoneCount; ++z)
+            osc_query_server_->AddParameter(OSCManager::BiteZonePath(config_.osc_bite_path, z),
+                                            "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_shock_path, "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_estop_stretch_path, "f", A::WriteOnly, 0.0f);
         if (config_.jawopen_enabled) {
@@ -597,7 +654,27 @@ namespace StayPutVR {
         }
     }
 
+    void UIManager::ResetOSCLockParamState() {
+        osc_lock_param_state_.fill(-1);
+    }
+
     void UIManager::OnDeviceLocked(OSCDeviceType device, bool locked) {
+        // Issue #11: act only on a *transition* of this device's latch parameter.
+        // OSCManager dispatches this callback for every matching message, and VRChat
+        // re-sends avatar params, so a still-held latch used to re-lock continuously:
+        // each repeat re-captured the anchor position (so the tracker's "locked"
+        // position drifted to wherever it currently was), replayed the lock cue, and
+        // with chaining mode on re-activated the global lock -- which also re-engaged
+        // the jaw/mic collar gate. Repeats of an unchanged value are now dropped.
+        const size_t slot = static_cast<size_t>(device);
+        if (slot < osc_lock_param_state_.size()) {
+            const int8_t incoming = locked ? 1 : 0;
+            if (osc_lock_param_state_[slot] == incoming) {
+                return; // unchanged repeat -- not a new lock/unlock request
+            }
+            osc_lock_param_state_[slot] = incoming;
+        }
+
         // Track the collar latch independently of device assignment. The collar maps
         // to the HMD role; when SPVR_HMD_Latch_IsPosed arrives the collar is latched on
         // the avatar, which is true whether or not a tracker is assigned to the HMD
@@ -904,14 +981,11 @@ namespace StayPutVR {
         );
         
         OSCManager::GetInstance().SetBiteCallback(
-            [this](bool triggered) {
+            [this](BiteZone zone) {
                 if (!config_.osc_bite_enabled) {
                     return;
                 }
-                if (Logger::IsInitialized()) {
-                    Logger::Info("Bite triggered via OSC");
-                }
-                TriggerBiteActions();
+                QueueBite(zone);
             }
         );
 
@@ -1146,7 +1220,36 @@ namespace StayPutVR {
         }
     }
 
+    // Issue #13: a device is only *enforced* if it is locked (globally or
+    // individually) AND has not been released by the disable-distance safety
+    // AND emergency stop is not latched. CheckDevicePositionDeviations already
+    // honours all three; the deferred re-push paths must agree with it, or the
+    // avatar shows a locked cuff for a device nothing is actually enforcing.
+    bool UIManager::IsDeviceEnforced(const DevicePosition& device) const {
+        if (emergency_stop_active_) return false;
+        if (device.disable_dist_unlocked) return false;
+        return (device.include_in_locking && global_lock_active_) || device.locked;
+    }
+
+    DeviceStatus UIManager::ComputeDeviceStatus(const DevicePosition& device) const {
+        if (!IsDeviceEnforced(device)) return DeviceStatus::Unlocked;
+        if (device.exceeds_threshold) return DeviceStatus::LockedDisobedience;
+        if (device.in_warning_zone) return DeviceStatus::LockedWarning;
+        return DeviceStatus::LockedSafe;
+    }
+
     void UIManager::TriggerGlobalOutOfBoundsActions() {
+        // Emergency stop disables every disobedience action, matching
+        // TriggerBiteActions / TriggerExternalShock. Without this an inbound
+        // global out-of-bounds param still fired PiShock/OpenShock/DG-Lab while
+        // the safeword was latched.
+        if (emergency_stop_active_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning("Global out-of-bounds trigger ignored - emergency stop is active");
+            }
+            return;
+        }
+
         if (Logger::IsInitialized()) {
             Logger::Info("Triggering global out-of-bounds actions with " + std::to_string(GLOBAL_OUT_OF_BOUNDS_DURATION) + "s timer");
         }
@@ -1194,7 +1297,44 @@ namespace StayPutVR {
         }
     }
 
-    void UIManager::TriggerBiteActions() {
+    // OSC receive thread: remember this bite instead of acting on it. The plain
+    // SPVR_Bite and the body-part parameter for one bite arrive as two separate
+    // messages in no guaranteed order, so acting immediately would shock twice
+    // and might use the unspecific one. Repeats inside the window collapse into
+    // the same pending bite, and the most specific zone seen wins.
+    void UIManager::QueueBite(BiteZone zone) {
+        const int zi = static_cast<int>(zone);
+        std::lock_guard<std::mutex> lk(pending_bite_mutex_);
+        if (!pending_bite_) {
+            pending_bite_ = true;
+            pending_bite_zone_ = zi;
+            pending_bite_at_ = std::chrono::steady_clock::now();
+        } else if (pending_bite_zone_ < 0 && zi >= 0) {
+            // Keep the original timestamp: this is the same bite, better named.
+            pending_bite_zone_ = zi;
+        }
+    }
+
+    // UI thread, every frame: fire a pending bite once its coalescing window closes.
+    void UIManager::ProcessPendingBite() {
+        int zone;
+        {
+            std::lock_guard<std::mutex> lk(pending_bite_mutex_);
+            if (!pending_bite_) return;
+            float waited = std::chrono::duration_cast<std::chrono::duration<float>>(
+                std::chrono::steady_clock::now() - pending_bite_at_).count();
+            if (waited < BITE_COALESCE_SECONDS) return;
+            zone = pending_bite_zone_;
+            pending_bite_ = false;
+        }
+        if (Logger::IsInitialized()) {
+            Logger::Info(std::string("Bite triggered via OSC (") +
+                         (zone >= 0 && zone < kBiteZoneCount ? kBiteZoneNames[zone] : "unspecified") + ")");
+        }
+        TriggerBiteActions(static_cast<BiteZone>(zone));
+    }
+
+    void UIManager::TriggerBiteActions(BiteZone zone, bool count_bite) {
         // Issue #7: no shocking while emergency stop is active.
         if (emergency_stop_active_) {
             if (Logger::IsInitialized()) {
@@ -1203,10 +1343,20 @@ namespace StayPutVR {
             return;
         }
 
+        // Issue #16: count only bites that actually fire -- this is past both the
+        // osc_bite_enabled check (in the OSC callback) and the emergency-stop gate
+        // above, so a bite suppressed by the safeword never inflates the tally.
+        // Atomic because this runs on the OSC receive thread; the UI thread mirrors
+        // the lifetime value into config_ in UpdateConfigFromUI().
+        if (count_bite) {
+            bite_count_session_.fetch_add(1, std::memory_order_relaxed);
+            bite_count_lifetime_.fetch_add(1, std::memory_order_relaxed);
+        }
+
         if (Logger::IsInitialized()) {
             Logger::Info("Triggering bite disobedience actions with " + std::to_string(BITE_DURATION) + "s timer");
         }
-        
+
         // Start the timer for resetting back to normal state
         bite_timer_active_ = true;
         bite_timer_start_ = std::chrono::steady_clock::now();
@@ -1226,21 +1376,48 @@ namespace StayPutVR {
             }
         }
         
-        // Fire a direct shock on all configured shockers at the bite intensity/
-        // duration (issue #7). Replaces the old beep+vibrate+shock disobedience.
-        float bite_intensity, bite_duration; bool bite_use_individual;
+        // Fire a direct shock at the bite intensity/duration (issue #7). Replaces
+        // the old beep+vibrate+shock disobedience.
+        //
+        // Zone routing (1.5.1): with routing on and something bound to this body
+        // part, the shock goes only to that zone's devices at the zone's own
+        // intensity/duration. Otherwise -- routing off, the unsuffixed SPVR_Bite,
+        // or a zone nothing is bound to -- it fires everything at the global bite
+        // settings, which is what every pre-1.5.1 install did.
+        const int zone_index = static_cast<int>(zone);
+        const bool zone_valid = zone_index >= 0 && zone_index < kBiteZoneCount;
+        float bite_intensity, bite_duration; bool bite_use_individual, zone_routing;
         {
             auto cfg_lock = config_.ReadLock();
-            bite_intensity = config_.osc_bite_intensity;
-            bite_duration = config_.osc_bite_duration;
+            zone_routing = config_.osc_bite_zone_routing;
             bite_use_individual = config_.osc_bite_use_individual_intensities;
+            if (zone_routing && zone_valid) {
+                bite_intensity = config_.osc_bite_zone_intensity[zone_index];
+                bite_duration = config_.osc_bite_zone_duration[zone_index];
+            } else {
+                bite_intensity = config_.osc_bite_intensity;
+                bite_duration = config_.osc_bite_duration;
+            }
         }
+
+        const bool routed = zone_routing && zone_valid && BiteZoneHasBinding(zone_index);
+        const std::string zone_serial = routed ? kBiteZoneSerials[zone_index] : std::string();
+        const std::string reason = zone_valid ? std::string("Bite: ") + kBiteZoneNames[zone_index] : "Bite";
+
         if (bite_use_individual) {
-            TriggerExternalShockIndividual(bite_duration, "Bite");
+            TriggerExternalShockIndividual(bite_duration, reason, zone_serial);
         } else {
-            TriggerExternalShock(bite_intensity, bite_duration, "Bite");
+            TriggerExternalShock(bite_intensity, bite_duration, reason, zone_serial);
         }
-        
+
+        // BPIO toys only take part in bites when routed: firing every enabled toy
+        // on the unrouted path would start buzzing on existing installs that never
+        // asked for it.
+        if (routed && buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+            buttplug_manager_->TriggerPulse(bite_intensity, bite_duration, reason, zone_serial);
+        }
+
+
         // Update all device statuses to show out-of-bounds
         for (auto& device : device_positions_) {
             if (device.role != DeviceRole::None) {
@@ -1279,6 +1456,12 @@ namespace StayPutVR {
             Logger::Info("Avatar changed (/avatar/change) - unlocking and resetting all devices");
         }
 
+        // Issue #11: forget the cached latch values. VRChat resets avatar params on
+        // load, so whatever arrives next is a genuine fresh value, not a repeat --
+        // and we have just unlocked everything, so a stale "already true" cache here
+        // would swallow the re-latch and leave the user unable to lock again.
+        ResetOSCLockParamState();
+
         // Release the global lock and any individually-locked devices. Suppress
         // the unlock sound: this is an automatic transition triggered by VRChat's
         // /avatar/change, not a user-initiated unlock, so the audio cue is spurious.
@@ -1313,7 +1496,8 @@ namespace StayPutVR {
         avatar_resync_start_ = std::chrono::steady_clock::now();
     }
 
-    void UIManager::TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason) {
+    void UIManager::TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason,
+                                         const std::string& device_serial) {
         // Issue #7: bite and the Shock param fire a direct shock on all shockers,
         // never while emergency stop is active.
         if (emergency_stop_active_) {
@@ -1331,29 +1515,32 @@ namespace StayPutVR {
             mode = config_.pishock_mode;
         }
 
-        // PiShock (legacy or WebSocket v2, per the configured mode).
+        // PiShock (legacy or WebSocket v2, per the configured mode). The legacy
+        // API has a single shocker behind the share code, so it ignores the
+        // serial and always fires -- same as its zone-driven path.
         if (mode == Config::PiShockMode::LEGACY_API) {
             if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-                pishock_manager_->TriggerShock(intensity, duration_seconds, reason);
+                pishock_manager_->TriggerShock(intensity, duration_seconds, reason, device_serial);
             }
         } else {
             if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
-                pishock_ws_manager_->TriggerShock(intensity, duration_seconds, reason);
+                pishock_ws_manager_->TriggerShock(intensity, duration_seconds, reason, device_serial);
             }
         }
 
         // OpenShock.
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
-            openshock_manager_->TriggerShock(intensity, duration_seconds, reason);
+            openshock_manager_->TriggerShock(intensity, duration_seconds, reason, device_serial);
         }
 
-        // DG-Lab Coyote (all enabled channels).
+        // DG-Lab Coyote (all enabled channels, or just the bound ones).
         if (dglab_manager_ && dglab_manager_->IsEnabled()) {
-            dglab_manager_->TriggerShock(intensity, duration_seconds, reason);
+            dglab_manager_->TriggerShock(intensity, duration_seconds, reason, device_serial);
         }
     }
 
-    void UIManager::TriggerExternalShockIndividual(float duration_seconds, const std::string& reason) {
+    void UIManager::TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
+                                                   const std::string& device_serial) {
         // Same gating as TriggerExternalShock, but each shocker fires at its own
         // per-device disobedience intensity instead of a single supplied value.
         if (emergency_stop_active_) {
@@ -1371,23 +1558,23 @@ namespace StayPutVR {
 
         if (mode == Config::PiShockMode::LEGACY_API) {
             if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-                pishock_manager_->TriggerShockIndividual(duration_seconds, reason);
+                pishock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
             }
         } else {
             if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
-                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason);
+                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
             }
         }
 
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
-            openshock_manager_->TriggerShockIndividual(duration_seconds, reason);
+            openshock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
         }
 
         // DG-Lab has no per-channel intensity split (channel strength is pinned
         // at the configured limit), so the individual variant fires the
-        // configured disobedience intensity on every enabled channel.
+        // configured disobedience intensity on the enabled (or bound) channels.
         if (dglab_manager_ && dglab_manager_->IsEnabled()) {
-            dglab_manager_->TriggerDisobedienceActions("");
+            dglab_manager_->TriggerDisobedienceActions(device_serial);
         }
     }
 
@@ -1412,33 +1599,14 @@ namespace StayPutVR {
             for (auto& device : device_positions_) {
                 if (device.role != DeviceRole::None) {
                     OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
-                    
-                    // Determine if device should be locked (either globally or individually)
-                    bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
-                    
-                    DeviceStatus newStatus;
-                    
-                    if (should_be_locked) {
-                        // Device should be locked - determine appropriate locked status
-                        newStatus = DeviceStatus::LockedSafe;
-                        
-                        // If the device is actually still out of bounds physically, keep it as disobedience
-                        if (device.exceeds_threshold) {
-                            newStatus = DeviceStatus::LockedDisobedience;
-                        } else if (device.in_warning_zone) {
-                            newStatus = DeviceStatus::LockedWarning;
-                        }
-                    } else {
-                        // Device should be unlocked
-                        newStatus = DeviceStatus::Unlocked;
-                    }
-                    
+                    DeviceStatus newStatus = ComputeDeviceStatus(device);
+
                     UpdateDeviceStatus(oscDevice, newStatus);
-                    
+
                     if (Logger::IsInitialized()) {
-                        Logger::Debug("Reset device " + device.serial + " to status: " + 
-                                     std::to_string(static_cast<int>(newStatus)) + 
-                                     " (should_be_locked=" + std::to_string(should_be_locked) + ")");
+                        Logger::Debug("Reset device " + device.serial + " to status: " +
+                                     std::to_string(static_cast<int>(newStatus)) +
+                                     " (enforced=" + std::to_string(IsDeviceEnforced(device)) + ")");
                     }
                 }
             }
@@ -1466,33 +1634,14 @@ namespace StayPutVR {
             for (auto& device : device_positions_) {
                 if (device.role != DeviceRole::None) {
                     OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
-                    
-                    // Determine if device should be locked (either globally or individually)
-                    bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
-                    
-                    DeviceStatus newStatus;
-                    
-                    if (should_be_locked) {
-                        // Device should be locked - determine appropriate locked status
-                        newStatus = DeviceStatus::LockedSafe;
-                        
-                        // If the device is actually still out of bounds physically, keep it as disobedience
-                        if (device.exceeds_threshold) {
-                            newStatus = DeviceStatus::LockedDisobedience;
-                        } else if (device.in_warning_zone) {
-                            newStatus = DeviceStatus::LockedWarning;
-                        }
-                    } else {
-                        // Device should be unlocked
-                        newStatus = DeviceStatus::Unlocked;
-                    }
-                    
+                    DeviceStatus newStatus = ComputeDeviceStatus(device);
+
                     UpdateDeviceStatus(oscDevice, newStatus);
 
                     if (Logger::IsInitialized()) {
                         Logger::Debug("Reset device " + device.serial + " to status: " +
                                      std::to_string(static_cast<int>(newStatus)) +
-                                     " (should_be_locked=" + std::to_string(should_be_locked) + ")");
+                                     " (enforced=" + std::to_string(IsDeviceEnforced(device)) + ")");
                     }
                 }
             }
@@ -1526,17 +1675,7 @@ namespace StayPutVR {
         for (auto& device : device_positions_) {
             if (device.role != DeviceRole::None) {
                 OSCDeviceType oscDevice = DeviceRoleToOSCDeviceType(device.role);
-                bool should_be_locked = (device.include_in_locking && global_lock_active_) || device.locked;
-                DeviceStatus newStatus = DeviceStatus::Unlocked;
-                if (should_be_locked) {
-                    newStatus = DeviceStatus::LockedSafe;
-                    if (device.exceeds_threshold) {
-                        newStatus = DeviceStatus::LockedDisobedience;
-                    } else if (device.in_warning_zone) {
-                        newStatus = DeviceStatus::LockedWarning;
-                    }
-                }
-                UpdateDeviceStatus(oscDevice, newStatus);
+                UpdateDeviceStatus(oscDevice, ComputeDeviceStatus(device));
             }
         }
 

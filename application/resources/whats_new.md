@@ -1,11 +1,43 @@
-# What's New in StayPutVR 1.4.2
+# What's New in StayPutVR 1.5.1
 
-Thanks for your support! This updated version greatly reduces the number of
-required synced parameters, has lots of bugfixes, a new UI, a better device-
-assignment section, and more.
+Thanks for your support! This release teaches bites where they landed: your avatar
+now reports which body part was bitten, and you can send each one to a different
+shocker or toy.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.5.1
+- **Bite zones:** your prefab now reports *where* it was bitten — tail, either ear,
+  either thigh, or the jaw — and each of those can drive a different device. Open
+  Devices → Visual, switch the view to **Bite zones**, and drag your shocker, DG-Lab
+  channel, or BPIO chips onto the body part you want them to answer for. Each zone
+  gets its own intensity and duration, so a tail nip and an ear bite don't have to
+  feel the same.
+- Bite zones are opt-in: tick **Route bites by body part** in Integrations → OSC
+  Triggers. Until you do — and for any zone you never bound anything to — a bite
+  fires everything at the usual Bite intensity, exactly as before.
+- BPIO toys can now react to bites too, when you bind them to a zone.
+
+## New in 1.5.0
+- **Name your shockers:** each PiShock and OpenShock slot now has an optional name
+  field next to its ID. Call one "Left ankle" and that's what you'll see everywhere
+  you bind it, instead of a bare 0–4. Leave it blank to keep the old numbering.
+- **Bite counter:** the OSC Triggers tab now shows how many bites you've taken this
+  session and in total, with a Reset button.
+
+Bug fixes:
+- **Chaining mode kept re-locking.** VRChat re-sends avatar parameters, and every
+  repeat of a still-held lock latch was treated as a new lock — which quietly moved
+  each locked device's reference position to wherever it was at that moment, undid
+  unlocks you made in the app, and switched jaw/mic mode back on. Lock parameters
+  now only act when they actually change.
+- **Safe mode showed locks that weren't real.** During emergency stop, and for a
+  device that auto-unlocked past the disable distance, your cuff could turn red
+  again even though nothing was being enforced.
+- **Emergency stop now blocks the global out-of-bounds trigger too** — it could
+  previously still fire your shockers while the safeword was active.
+- **OSCQuery was burning two CPU cores** the whole time it was enabled. Fixed.
 
 ## New in 1.4.2
 - **DG-Lab Coyote 3.0 support (new integration):** your Coyote can now be a

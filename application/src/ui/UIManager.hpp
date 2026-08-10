@@ -186,6 +186,18 @@ namespace StayPutVR {
         std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
     };
 
+    // Bite zone bindings (1.5.1). One per body part the avatar can report being
+    // bitten on; mirrors the binding arrays on the jaw/mic constraints and is
+    // persisted through the same config_.device_*_ids maps under the reserved
+    // kBiteZoneSerials keys, so the standard per-serial trigger pipeline works.
+    struct BiteZoneBinding {
+        std::array<bool, 5> pishock_enabled = {false, false, false, false, false};
+        std::array<bool, 5> openshock_enabled = {false, false, false, false, false};
+        // DG-Lab output channels: slot 0 = channel A, slot 1 = channel B.
+        std::array<bool, 5> dglab_enabled = {false, false, false, false, false};
+        std::array<bool, 5> vibration_device_enabled = {false, false, false, false, false};
+    };
+
     // Unified collar mode (replaces the old SPVR_JawEnabled radial). The avatar's
     // momentary SPVR_Collar_ToggleButton cycles through the modes whose integration
     // is enabled+agreed; the app echoes the result on SPVR_Collar_Mode.
@@ -411,6 +423,15 @@ namespace StayPutVR {
         void StartMicCalibration();             // begin a background-noise sample
         void UpdateMicCalibration();            // per-frame: accumulate + finalize calibration
 
+        // Bite zones (1.5.1). Bindings live in the same config_.device_*_ids maps
+        // under kBiteZoneSerials[zone], so a routed bite reuses the per-serial
+        // trigger pipeline. zone is a BiteZone value in [0, kBiteZoneCount).
+        void LoadBiteZoneBindingsFromConfig();
+        void ApplyIdBindingToBiteZone(int zone, const char* code, bool enable);
+        void ApplyIdBindingToAllBiteZones(const char* code, bool enable);
+        void RenderBiteZoneConfig(int zone);     // zone config panel in the Visual view
+        bool BiteZoneHasBinding(int zone) const; // false => that zone falls back to firing everything
+
         // Enforced-unmute constraint (VRChat MuteSelf). Reserved serial keys its
         // shocker / vibrator bindings like the jaw and mic constraints.
         static constexpr const char* kMuteSelfSerial = "SPVR_MUTESELF";
@@ -439,6 +460,14 @@ namespace StayPutVR {
         // its config panel shows instead of a device slot's (selected_slot_role_).
         bool jaw_selected_ = false;
 
+        // Bite zone bindings, indexed by BiteZone. Loaded from config at startup
+        // and written back on every edit (Visual view / palette drops).
+        std::array<BiteZoneBinding, kBiteZoneCount> bite_zones_;
+        // Which bite zone's config panel is open in the Visual view (-1 = none).
+        int selected_bite_zone_ = -1;
+        // Visual view overlay: false = tracker slots + jaw, true = bite zones.
+        bool visual_bite_zone_view_ = false;
+
         // Microphone enforced-mute constraint runtime state (see CheckMicrophoneConstraint).
         MicrophoneConstraint mic_;
         // Enforced-unmute constraint runtime state (see CheckMuteSelfConstraint).
@@ -459,6 +488,19 @@ namespace StayPutVR {
         // when StayPutVR isn't locking a physical tracker's position. Set on the OSC
         // thread (OnDeviceLocked), read every frame by the constraint code.
         std::atomic<bool> collar_latched_via_osc_{false};
+
+        // Issue #11: last value seen for each device's lock/latch OSC param, so
+        // OnDeviceLocked can act on *transitions* only. VRChat re-sends avatar
+        // parameters (avatar load, world join, and many OSC senders repeat
+        // periodically), and OSCManager dispatches the lock callback on every
+        // received message. Without this, each repeat of a still-true latch was
+        // treated as a fresh lock: it re-captured the anchor position, replayed the
+        // lock cue, and -- with chaining mode on -- re-fired the global lock, so an
+        // unlock done in the UI was immediately undone. -1 = not yet seen; reset on
+        // avatar change (params reset there, so the next value is genuinely fresh).
+        std::array<int8_t, 8> osc_lock_param_state_ = {-1, -1, -1, -1, -1, -1, -1, -1};
+        void ResetOSCLockParamState();
+
         bool collar_toggle_prev_ = false;         // rising-edge debounce (OSC thread only)
         // Time-based debounce: ignore toggle presses that arrive within this window of
         // the last accepted one (contact bounce / rapid repeats). OSC thread only.
@@ -521,14 +563,32 @@ namespace StayPutVR {
         void OnDeviceLocked(OSCDeviceType device, bool locked);
         void OnDeviceIncluded(OSCDeviceType device, bool include);
         void TriggerGlobalOutOfBoundsActions();
-        void TriggerBiteActions();
+        // zone is the bitten body part (BiteZone::Generic for the unsuffixed
+        // SPVR_Bite). With zone routing off, or for a zone nothing is bound to,
+        // this fires every configured device exactly as it always has.
+        // count_bite=false is for the UI test buttons, so a rehearsal doesn't
+        // inflate the issue-#16 tally of bites actually taken.
+        void TriggerBiteActions(BiteZone zone = BiteZone::Generic, bool count_bite = true);
+        // Bite coalescing. A prefab that reports the body part may also send the
+        // plain SPVR_Bite for the same bite, and VRChat can deliver the two in
+        // either order, so acting on each parameter as it lands would shock
+        // twice and could act on the unspecific one first. Inbound bites are
+        // instead collected for a brief window and fired once, preferring the
+        // specific zone. QueueBite runs on the OSC receive thread;
+        // ProcessPendingBite runs every frame on the UI thread.
+        void QueueBite(BiteZone zone);
+        void ProcessPendingBite();
         void HandleAvatarChange();
-        // Fire a direct shock on all enabled shock managers at the given
+        // Fire a direct shock on the enabled shock managers at the given
         // intensity (0..1) and duration (seconds). Blocked during emergency stop.
-        void TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason);
+        // An empty device_serial fires every configured device; a serial fires
+        // only what is bound to it (bite-zone routing).
+        void TriggerExternalShock(float intensity, float duration_seconds, const std::string& reason,
+                                  const std::string& device_serial = "");
         // Like TriggerExternalShock but each shocker uses its per-device
         // disobedience intensity (OSC bite/shock "use individual" option).
-        void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason);
+        void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
+                                            const std::string& device_serial = "");
         void ResetEmergencyStop();
         
         // Helper functions
@@ -576,6 +636,16 @@ namespace StayPutVR {
         // Global out-of-bounds timer helper
         void ProcessGlobalOutOfBoundsTimer();
         void ProcessBiteTimer();
+
+        // Single source of truth for "is this device actually being enforced right
+        // now", and for the status the avatar should be showing as a result.
+        // Issue #13: the deferred re-push paths (bite timer, global-OOB timer,
+        // avatar re-sync) each used to recompute this inline as
+        // `(include_in_locking && global_lock_active_) || locked`, which ignores
+        // both the disable-distance release latch and emergency stop. That
+        // re-coloured the cuff on a device whose position is no longer enforced.
+        bool IsDeviceEnforced(const DevicePosition& device) const;
+        DeviceStatus ComputeDeviceStatus(const DevicePosition& device) const;
         
         // Twitch unlock timer variables
         bool twitch_unlock_timer_active_ = false;
@@ -587,10 +657,25 @@ namespace StayPutVR {
         std::chrono::steady_clock::time_point global_out_of_bounds_timer_start_;
         static constexpr float GLOBAL_OUT_OF_BOUNDS_DURATION = 1.0f; // Duration in seconds
         
+        // Pending (coalescing) bite -- see QueueBite / ProcessPendingBite.
+        std::mutex pending_bite_mutex_;
+        bool pending_bite_ = false;
+        int pending_bite_zone_ = -1;    // BiteZone value; Generic until a zone arrives
+        std::chrono::steady_clock::time_point pending_bite_at_;
+        static constexpr float BITE_COALESCE_SECONDS = 0.08f;
+
         // Bite timer variables
         bool bite_timer_active_ = false;
         std::chrono::steady_clock::time_point bite_timer_start_;
         static constexpr float BITE_DURATION = 3.0f; // Duration in seconds
+
+        // Issue #16: bite tallies. Both are written from the OSC receive thread in
+        // TriggerBiteActions, so they are atomic. The session count deliberately
+        // resets every launch; the lifetime count is mirrored to/from
+        // config_.bite_count_lifetime by UpdateConfigFromUI/UpdateUIFromConfig so
+        // it survives restarts.
+        std::atomic<int> bite_count_session_{0};
+        std::atomic<int> bite_count_lifetime_{0};
 
         // Avatar-change re-sync: VRChat resets all avatar params on avatar load and
         // isn't ready to receive the echo at the instant /avatar/change fires, so the

@@ -7,6 +7,7 @@
 #include <functional>
 #include <mutex>
 #include <map>
+#include <vector>
 
 #include "../../../common/Config.hpp"
 #include "../../../common/Logger.hpp"
@@ -56,6 +57,15 @@ namespace StayPutVR {
         void TriggerWarningActions(const std::string& device_serial = "");
         void TriggerDisobedienceActions(const std::string& device_serial = "");
         void ClearZoneState(const std::string& device_serial = ""); // Stop vibration when returning to safe/neutral
+        // One-shot timed pulse used by the bite triggers: vibrate the devices
+        // bound to device_serial (empty => every configured device) at the given
+        // intensity, then stop them once duration_seconds has elapsed. Unlike the
+        // zone actions this is momentary, not a state the toy sits in, so it does
+        // not participate in the zone-state cache -- it invalidates it on stop so
+        // an interrupted zone vibration is re-applied on the next update.
+        void TriggerPulse(float intensity, float duration_seconds, const std::string& reason = "",
+                          const std::string& device_serial = "");
+        void UpdatePulse(); // per-frame: stop an expired TriggerPulse (called from Update)
         void TestActions();
         void StopAllDevices();
         
@@ -105,6 +115,13 @@ namespace StayPutVR {
         // Zone state tracking for continuous vibration
         mutable std::mutex zone_state_mutex_;
         std::map<std::string, ButtplugZoneType> current_zone_state_; // device_serial -> current zone
+
+        // In-flight one-shot pulse (TriggerPulse). Written from the OSC receive
+        // thread, expired on the UI thread in Update().
+        mutable std::mutex pulse_mutex_;
+        std::vector<int> pulse_indices_;
+        std::chrono::steady_clock::time_point pulse_stop_time_;
+        bool pulse_active_ = false;
         
         // Rate limiting
         mutable std::chrono::steady_clock::time_point last_action_time_;
