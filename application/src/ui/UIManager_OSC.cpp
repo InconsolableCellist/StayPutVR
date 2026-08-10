@@ -59,8 +59,10 @@ namespace StayPutVR {
         if (ImGui::Checkbox("Enable Bite trigger", &config_.osc_bite_enabled)) changed = true;
         if (ImGui::Checkbox("Use per-device disobedience intensities##bite", &config_.osc_bite_use_individual_intensities)) changed = true;
         ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("When on, each shocker fires at its individual disobedience intensity "
-                                  "(configured in the PiShock/OpenShock tabs) instead of the single Bite intensity below.");
+        ImGuiHelpers::HelpTooltip("When on, each shocker fires at its individual\n"
+                                  "disobedience intensity (configured in the\n"
+                                  "PiShock/OpenShock tabs) instead of the single\n"
+                                  "Bite intensity below.");
         ImGui::BeginDisabled(config_.osc_bite_use_individual_intensities);
         if (ImGuiHelpers::SliderFloatWithButtons("Bite intensity", &config_.osc_bite_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
         ImGui::EndDisabled();
@@ -70,14 +72,27 @@ namespace StayPutVR {
         ImGui::Spacing();
         if (ImGui::Checkbox("Route bites by body part", &config_.osc_bite_zone_routing)) changed = true;
         ImGui::SameLine();
+        // The tooltip is drawn with TextUnformatted (no wrapping), so these line
+        // breaks are what keeps it from becoming one very wide strip.
         ImGuiHelpers::HelpTooltip(
-            "The avatar reports where it was bitten (SPVR_Bite_Tail, SPVR_Bite_Ear_Left, "
-            "SPVR_Bite_Ear_Right, SPVR_Bite_Thigh_Left, SPVR_Bite_Thigh_Right, SPVR_Bite_Jaw).\n\n"
-            "Off: every bite fires all your configured shockers at the intensity/duration above -- "
-            "the way it has always worked.\n\n"
-            "On: a bite fires only the shockers and toys bound to that body part, at that zone's own "
-            "intensity/duration. Bind them on the Devices tab: Visual view -> Bite zones.\n\n"
-            "A zone you never bound anything to still fires everything, so no bite goes missing.");
+            "The avatar reports where it was bitten:\n"
+            "    SPVR_Bite_Tail\n"
+            "    SPVR_Bite_Ear_Left\n"
+            "    SPVR_Bite_Ear_Right\n"
+            "    SPVR_Bite_Thigh_Left\n"
+            "    SPVR_Bite_Thigh_Right\n"
+            "    SPVR_Bite_Jaw\n"
+            "\n"
+            "Off: every bite fires all your configured shockers\n"
+            "at the intensity/duration above.\n"
+            "\n"
+            "On: a bite fires only the shockers and toys bound\n"
+            "to that body part, at that zone's own intensity and\n"
+            "duration. Bind them on the Devices tab:\n"
+            "Visual view -> Bite zones.\n"
+            "\n"
+            "A zone you never bound anything to still fires\n"
+            "everything.");
         {
             // Quick readout so the routing state is legible without switching tabs.
             int bound = 0;
@@ -112,8 +127,10 @@ namespace StayPutVR {
         if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
         if (ImGui::Checkbox("Use per-device disobedience intensities##shock", &config_.osc_shock_use_individual_intensities)) changed = true;
         ImGui::SameLine();
-        ImGuiHelpers::HelpTooltip("When on, each shocker fires at its individual disobedience intensity "
-                                  "(configured in the PiShock/OpenShock tabs) instead of the single Shock intensity below.");
+        ImGuiHelpers::HelpTooltip("When on, each shocker fires at its individual\n"
+                                  "disobedience intensity (configured in the\n"
+                                  "PiShock/OpenShock tabs) instead of the single\n"
+                                  "Shock intensity below.");
         ImGui::BeginDisabled(config_.osc_shock_use_individual_intensities);
         if (ImGuiHelpers::SliderFloatWithButtons("Shock intensity", &config_.osc_shock_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
         ImGui::EndDisabled();
