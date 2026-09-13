@@ -87,6 +87,7 @@ Config::Config()
     , pishock_disobedience_duration(1.0f)
     , pishock_use_individual_disobedience_intensities(false)
     , pishock_individual_disobedience_intensities({0.25f, 0.25f, 0.25f, 0.25f, 0.25f})
+    , pishock_individual_shock_max_intensities({0.25f, 0.25f, 0.25f, 0.25f, 0.25f})
     , warning_threshold(0.1f)
     , bounds_threshold(0.2f)
     , disable_threshold(0.5f)
@@ -459,6 +460,7 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         osc_shock_path = jval(j, "osc_shock_path", "/avatar/parameters/Shock");
         osc_shock_enabled = jval(j, "osc_shock_enabled", true);
         osc_shock_intensity = jval(j, "osc_shock_intensity", 0.25f);
+        osc_shock_max_intensity = jval(j, "osc_shock_max_intensity", 0.25f);
         osc_shock_duration = jval(j, "osc_shock_duration", 1.0f);
         osc_bite_intensity = jval(j, "osc_bite_intensity", 0.25f);
         osc_bite_duration = jval(j, "osc_bite_duration", 1.0f);
@@ -559,6 +561,14 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
                 }
             }
         }
+        if (j.contains("pishock_individual_shock_max_intensities") && j["pishock_individual_shock_max_intensities"].is_array()) {
+            auto max_json = j["pishock_individual_shock_max_intensities"];
+            for (size_t i = 0; i < min(max_json.size(), static_cast<size_t>(5)); ++i) {
+                if (max_json[i].is_number()) {
+                    pishock_individual_shock_max_intensities[i] = max_json[i];
+                }
+            }
+        }
 
         // OpenShock Settings
         openshock_enabled = jval(j, "openshock_enabled", false);
@@ -638,6 +648,14 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
             for (size_t i = 0; i < min(disobedience_intensities.size(), static_cast<size_t>(5)); ++i) {
                 if (disobedience_intensities[i].is_number()) {
                     openshock_individual_disobedience_intensities[i] = disobedience_intensities[i];
+                }
+            }
+        }
+        if (j.contains("openshock_individual_shock_max_intensities") && j["openshock_individual_shock_max_intensities"].is_array()) {
+            auto max_json = j["openshock_individual_shock_max_intensities"];
+            for (size_t i = 0; i < min(max_json.size(), static_cast<size_t>(5)); ++i) {
+                if (max_json[i].is_number()) {
+                    openshock_individual_shock_max_intensities[i] = max_json[i];
                 }
             }
         }
@@ -1052,6 +1070,7 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["osc_shock_path"] = osc_shock_path;
         j["osc_shock_enabled"] = osc_shock_enabled;
         j["osc_shock_intensity"] = osc_shock_intensity;
+        j["osc_shock_max_intensity"] = osc_shock_max_intensity;
         j["osc_shock_duration"] = osc_shock_duration;
         j["osc_bite_intensity"] = osc_bite_intensity;
         j["osc_bite_duration"] = osc_bite_duration;
@@ -1113,6 +1132,12 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         }
         j["pishock_individual_disobedience_intensities"] = pishock_intensities_json;
 
+        nlohmann::json pishock_shock_max_json = nlohmann::json::array();
+        for (const auto& intensity : pishock_individual_shock_max_intensities) {
+            pishock_shock_max_json.push_back(intensity);
+        }
+        j["pishock_individual_shock_max_intensities"] = pishock_shock_max_json;
+
         // OpenShock Settings
         j["openshock_enabled"] = openshock_enabled;
         j["openshock_user_agreement"] = openshock_user_agreement;
@@ -1163,6 +1188,12 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
             disobedience_intensities_json.push_back(intensity);
         }
         j["openshock_individual_disobedience_intensities"] = disobedience_intensities_json;
+
+        nlohmann::json openshock_shock_max_json = nlohmann::json::array();
+        for (const auto& intensity : openshock_individual_shock_max_intensities) {
+            openshock_shock_max_json.push_back(intensity);
+        }
+        j["openshock_individual_shock_max_intensities"] = openshock_shock_max_json;
 
         // Buttplug/Intiface Settings
         // DG-Lab Coyote Settings

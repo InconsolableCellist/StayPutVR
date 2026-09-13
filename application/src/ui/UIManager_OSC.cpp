@@ -134,6 +134,15 @@ namespace StayPutVR {
         ImGui::BeginDisabled(config_.osc_shock_use_individual_intensities);
         if (ImGuiHelpers::SliderFloatWithButtons("Shock intensity", &config_.osc_shock_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
         ImGui::EndDisabled();
+        if (ImGuiHelpers::SliderFloatWithButtons("Shock max intensity", &config_.osc_shock_max_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("For a Shock param sent as a float (0..1):\n"
+                                  "the shock scales from Shock intensity (0)\n"
+                                  "up to this (1). A bool is the plain Shock\n"
+                                  "intensity. With per-device intensities on,\n"
+                                  "each PiShock/OpenShock device has its own\n"
+                                  "Shock max in its tab; this one then covers\n"
+                                  "DG-Lab and the PiShock legacy API.");
         if (ImGuiHelpers::SliderFloatWithButtons("Shock duration (s)", &config_.osc_shock_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
         ImGui::Spacing();
@@ -1013,12 +1022,13 @@ namespace StayPutVR {
         );
 
         OSCManager::GetInstance().SetShockCallback(
-            [this](bool triggered) {
-                bool enabled, use_individual; float intensity, duration;
+            [this](float magnitude) {
+                bool enabled, use_individual; float intensity, max_intensity, duration;
                 {
                     auto cfg_lock = config_.ReadLock();
                     enabled = config_.osc_shock_enabled;
                     intensity = config_.osc_shock_intensity;
+                    max_intensity = config_.osc_shock_max_intensity;
                     duration = config_.osc_shock_duration;
                     use_individual = config_.osc_shock_use_individual_intensities;
                 }
@@ -1026,12 +1036,14 @@ namespace StayPutVR {
                     return;
                 }
                 if (Logger::IsInitialized()) {
-                    Logger::Info("Shock param triggered via OSC");
+                    Logger::Info(magnitude < 0.0f
+                        ? std::string("Shock param triggered via OSC")
+                        : "Shock param triggered via OSC with magnitude " + std::to_string(magnitude));
                 }
                 if (use_individual) {
-                    TriggerExternalShockIndividual(duration, "Shock param");
+                    TriggerExternalShockIndividual(duration, "Shock param", "", magnitude);
                 } else {
-                    TriggerExternalShock(intensity, duration, "Shock param");
+                    TriggerExternalShock(Config::ScaleShock(intensity, max_intensity, magnitude), duration, "Shock param");
                 }
             }
         );
@@ -1570,7 +1582,7 @@ namespace StayPutVR {
     }
 
     void UIManager::TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
-                                                   const std::string& device_serial) {
+                                                   const std::string& device_serial, float magnitude) {
         // Same gating as TriggerExternalShock, but each shocker fires at its own
         // per-device disobedience intensity instead of a single supplied value.
         if (emergency_stop_active_) {
@@ -1588,23 +1600,24 @@ namespace StayPutVR {
 
         if (mode == Config::PiShockMode::LEGACY_API) {
             if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-                pishock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
+                pishock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial, magnitude);
             }
         } else {
             if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
-                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
+                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial, magnitude);
             }
         }
 
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
-            openshock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
+            openshock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial, magnitude);
         }
 
         // DG-Lab has no per-channel intensity split (channel strength is pinned
         // at the configured limit), so the individual variant fires the
-        // configured disobedience intensity on the enabled (or bound) channels.
+        // configured disobedience intensity on the enabled (or bound) channels,
+        // scaled up to the global Shock max when a magnitude came in.
         if (dglab_manager_ && dglab_manager_->IsEnabled()) {
-            dglab_manager_->TriggerDisobedienceActions(device_serial);
+            dglab_manager_->TriggerDisobedienceActions(device_serial, magnitude);
         }
     }
 

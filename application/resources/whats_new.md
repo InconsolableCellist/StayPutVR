@@ -8,6 +8,11 @@ As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
 
 ## New in 1.5.2
+- **How hard, not just whether:** the OSC `Shock` param now also takes a float from
+  0 to 1, scaling the shock between your Shock intensity and a new **Shock max
+  intensity** slider (per device too, when per-device intensities are on). A bool
+  still fires the plain shock. The Dungeons of Eternity mod uses this to shock
+  harder the closer to death a hit leaves you.
 - **Plays nicer with other OSC Query clients:** StayPutVR now answers discovery
   queries from any UDP port, not just the mDNS port, so tools like the Dungeons of
   Eternity mod can find its receive port with OSC Query left on. Nothing changes

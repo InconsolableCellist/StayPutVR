@@ -97,6 +97,25 @@ toys bound to that body part — bound on the Devices tab, Visual view, "Bite
 zones" — at that zone's own intensity/duration. A zone with nothing bound falls
 back to firing everything.
 
+### Shock Trigger (Incoming)
+
+A direct shock on your configured devices, for prefabs and companion apps that
+want to fire a shock without a bite (Simple Shock System, the Dungeons of
+Eternity mod).
+
+**Default Path:** `/avatar/parameters/Shock`
+
+**Value Type**: Boolean or Float
+
+- **Boolean** `true` fires the plain shock at the Shock intensity/duration on
+  Integrations → OSC Triggers, or at each device's disobedience intensity with
+  *Use per-device disobedience intensities* on.
+- **Float** `0..1` (1.5.2) says how hard: the shock scales from that intensity
+  (0) up to **Shock max intensity** (1). With per-device intensities on, each
+  PiShock and OpenShock device has its own **Shock max** in its tab; DG-Lab and
+  the PiShock legacy API use the global one. A float of `0` is the release and
+  fires nothing, and a max below the intensity counts as the intensity.
+
 ### Supported Device Types
 
 StayPutVR recognizes and can control the following device types:

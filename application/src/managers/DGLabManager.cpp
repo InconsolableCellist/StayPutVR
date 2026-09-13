@@ -355,12 +355,12 @@ void DGLabManager::TriggerShock(float intensity, float duration_seconds, const s
     FirePulse(ResolveChannels(device_serial), intensity, duration_seconds, reason);
 }
 
-void DGLabManager::TriggerDisobedienceActions(const std::string& device_serial) {
+void DGLabManager::TriggerDisobedienceActions(const std::string& device_serial, float magnitude) {
     if (!config_ || config_->dglab_disobedience_action == 0) return;
     if (!CanTriggerAction()) return;
     last_pulse_ = std::chrono::steady_clock::now();
     FirePulse(ResolveChannels(device_serial),
-              config_->dglab_disobedience_intensity,
+              Config::ScaleShock(config_->dglab_disobedience_intensity, config_->osc_shock_max_intensity, magnitude),
               config_->dglab_disobedience_duration,
               device_serial.empty() ? "disobedience" : "disobedience: " + device_serial);
 }

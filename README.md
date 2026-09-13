@@ -104,7 +104,8 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
-**1.5.2** - OSC Query answers plain UDP askers (9/12/2026)
+**1.5.2** - OSC Query answers plain UDP askers; the Shock param takes a magnitude (9/12/2026)
+- The `Shock` OSC param now also accepts a float 0..1, scaling the shock between the Shock intensity (0) and a new **Shock max intensity** (1), with per-device maxes for PiShock and OpenShock when per-device intensities are on; a bool still fires the plain shock. Used by the Dungeons of Eternity mod to shock harder the closer to death a hit leaves you
 - OSC Query now answers a query that comes from a port other than 5353 by unicast to the asker (RFC 6762 legacy unicast), so a program that never binds the mDNS port can still discover StayPutVR's receive port. Used by the Dungeons of Eternity mod; VRChat and VRCFaceTracking are unaffected
 
 **1.5.1** - Bite zones (8/9/2026)

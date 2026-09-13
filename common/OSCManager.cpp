@@ -481,9 +481,18 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     bite_callback_(static_cast<BiteZone>(bite_zone));
                 }
 
-                // External shock path (/avatar/parameters/Shock)
-                else if (address == osc_shock_path_ && shock_callback_ && value_bool) {
-                    shock_callback_(true);
+                // External shock path (/avatar/parameters/Shock). A bool or int
+                // fires the plain configured shock; a float in (0, 1] carries a
+                // magnitude that scales the shock between the configured
+                // intensity and the configured max. A float of 0 is the release
+                // and fires nothing (the 0.5 bool threshold above does not apply
+                // here, so a light hit is still a hit).
+                else if (address == osc_shock_path_ && shock_callback_) {
+                    if (tag == 'f') {
+                        if (float_value > 0.0f) shock_callback_(float_value > 1.0f ? 1.0f : float_value);
+                    } else if (value_bool) {
+                        shock_callback_(-1.0f);
+                    }
                 }
                 
                 // Emergency stop stretch path

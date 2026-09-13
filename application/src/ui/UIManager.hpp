@@ -564,8 +564,10 @@ namespace StayPutVR {
                                   const std::string& device_serial = "");
         // Like TriggerExternalShock but each shocker uses its per-device
         // disobedience intensity (OSC bite/shock "use individual" option).
+        // magnitude: -1 for the plain per-device intensity, or 0..1 to scale
+        // each device between its intensity and its Shock max (float Shock param).
         void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
-                                            const std::string& device_serial = "");
+                                            const std::string& device_serial = "", float magnitude = -1.0f);
         void ResetEmergencyStop();
         
         // Helper functions
