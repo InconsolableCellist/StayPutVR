@@ -1,11 +1,17 @@
-# What's New in StayPutVR 1.5.1
+# What's New in StayPutVR 1.5.2
 
-Thanks for your support! This release teaches bites where they landed: your avatar
-now reports which body part was bitten, and you can send each one to a different
-shocker or toy.
+Thanks for your support! This is a small release: OSC Query discovery now works
+for programs other than VRChat, so companion tools can find StayPutVR without
+anyone copying a port number around.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.5.2
+- **Plays nicer with other OSC Query clients:** StayPutVR now answers discovery
+  queries from any UDP port, not just the mDNS port, so tools like the Dungeons of
+  Eternity mod can find its receive port with OSC Query left on. Nothing changes
+  for VRChat or VRCFaceTracking.
 
 ## New in 1.5.1
 - **Bite zones:** your prefab now reports *where* it was bitten — tail, either ear,
