@@ -104,6 +104,9 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
+**1.5.2** - OSC Query answers plain UDP askers (9/12/2026)
+- OSC Query now answers a query that comes from a port other than 5353 by unicast to the asker (RFC 6762 legacy unicast), so a program that never binds the mDNS port can still discover StayPutVR's receive port. Used by the Dungeons of Eternity mod; VRChat and VRCFaceTracking are unaffected
+
 **1.5.1** - Bite zones (8/9/2026)
 - Added **bite zones**: the prefab now reports where it was bitten (`SPVR_Bite_Tail`, `SPVR_Bite_Ear_Left`, `SPVR_Bite_Ear_Right`, `SPVR_Bite_Thigh_Left`, `SPVR_Bite_Thigh_Right`, `SPVR_Bite_Jaw`), and each body part can be bound to its own shockers, DG-Lab channels and BPIO toys — bind them in Devices → Visual with the view switched to **Bite zones**
 - Each zone carries its own bite intensity and duration

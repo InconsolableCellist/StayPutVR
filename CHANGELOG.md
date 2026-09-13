@@ -27,6 +27,18 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
 
+## 1.5.2 — OSC Query answers plain UDP askers (9/12/2026)
+
+### Fixes
+- **OSC Query now answers queries that come from a port other than 5353** by
+  unicast, straight back to the asker, as RFC 6762 asks. Before, every answer
+  went out by multicast only, so a program that had not bound the mDNS port
+  itself could ask for StayPutVR's OSC service and never hear the reply. The
+  Dungeons of Eternity mod uses this to find the ephemeral receive port with a
+  plain UDP socket, so OSC Query can stay on and nobody has to copy a port
+  number between the two. VRChat, VRCFaceTracking and the Windows resolver all
+  ask from 5353 and are answered by multicast exactly as before.
+
 ## 1.5.1 — Bite zones (8/9/2026)
 
 ### New features
