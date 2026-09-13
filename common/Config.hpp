@@ -95,14 +95,13 @@ public:
     static constexpr int CURRENT_CONFIG_VERSION = 2;
 
     // Intensity for a Shock-param trigger. magnitude < 0 means the param was a
-    // bool or int and the floor is used as it is; 0..1 scales from the floor
-    // (0) to the ceiling (1). A ceiling below the floor counts as the floor,
-    // so a float can never make a shock lighter than the plain trigger.
-    static float ScaleShock(float floor, float ceiling, float magnitude) {
-        if (magnitude < 0.0f) return floor;
+    // bool or int and the plain intensity is used as it is; 0..1 is a float
+    // and the shock fires at magnitude x ceiling, so a float has the whole
+    // range 0..ceiling to itself and the plain intensity plays no part.
+    static float ScaleShock(float plain, float ceiling, float magnitude) {
+        if (magnitude < 0.0f) return plain;
         if (magnitude > 1.0f) magnitude = 1.0f;
-        if (ceiling < floor) ceiling = floor;
-        return floor + magnitude * (ceiling - floor);
+        return magnitude * ceiling;
     }
 
     Config();
@@ -193,12 +192,12 @@ public:
     std::string osc_shock_path = "/avatar/parameters/Shock";
     bool osc_shock_enabled = true;
     float osc_shock_intensity = 0.25f;
-    // A float on the Shock param carries a magnitude 0..1, and the shock is
-    // scaled between osc_shock_intensity (magnitude 0) and this ceiling
-    // (magnitude 1). A bool or int on the param is the plain intensity, as
-    // before. With per-device intensities on, PiShock and OpenShock devices
-    // use their own ceilings (below); this one covers DG-Lab and the PiShock
-    // legacy API, which have no per-device intensities.
+    // A float on the Shock param carries a magnitude 0..1, and the shock fires
+    // at magnitude x this ceiling: the float unlocks the whole range 0..max.
+    // A bool or int on the param is the plain osc_shock_intensity, as before;
+    // the two sliders are independent. With per-device intensities on, PiShock
+    // and OpenShock devices use their own ceilings (below); this one covers
+    // DG-Lab and the PiShock legacy API, which have no per-device intensities.
     float osc_shock_max_intensity = 0.25f;
     float osc_shock_duration = 1.0f;
     float osc_bite_intensity = 0.25f;

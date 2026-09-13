@@ -137,12 +137,13 @@ namespace StayPutVR {
         if (ImGuiHelpers::SliderFloatWithButtons("Shock max intensity", &config_.osc_shock_max_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
         ImGui::SameLine();
         ImGuiHelpers::HelpTooltip("For a Shock param sent as a float (0..1):\n"
-                                  "the shock scales from Shock intensity (0)\n"
-                                  "up to this (1). A bool is the plain Shock\n"
-                                  "intensity. With per-device intensities on,\n"
-                                  "each PiShock/OpenShock device has its own\n"
-                                  "Shock max in its tab; this one then covers\n"
-                                  "DG-Lab and the PiShock legacy API.");
+                                  "the shock fires at that fraction of this,\n"
+                                  "so a float has the whole range 0..max. A\n"
+                                  "bool fires the plain Shock intensity above;\n"
+                                  "the two are independent. With per-device\n"
+                                  "intensities on, each PiShock/OpenShock device\n"
+                                  "has its own Shock max in its tab; this one\n"
+                                  "then covers DG-Lab and the PiShock legacy API.");
         if (ImGuiHelpers::SliderFloatWithButtons("Shock duration (s)", &config_.osc_shock_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
         ImGui::Spacing();
