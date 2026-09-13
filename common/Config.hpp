@@ -94,6 +94,17 @@ public:
     // v2: OpenShock durations migrated 0..1 -> seconds.
     static constexpr int CURRENT_CONFIG_VERSION = 2;
 
+    // Intensity for a Shock-param trigger. magnitude < 0 means the param was a
+    // bool or int and the floor is used as it is; 0..1 scales from the floor
+    // (0) to the ceiling (1). A ceiling below the floor counts as the floor,
+    // so a float can never make a shock lighter than the plain trigger.
+    static float ScaleShock(float floor, float ceiling, float magnitude) {
+        if (magnitude < 0.0f) return floor;
+        if (magnitude > 1.0f) magnitude = 1.0f;
+        if (ceiling < floor) ceiling = floor;
+        return floor + magnitude * (ceiling - floor);
+    }
+
     Config();
     ~Config() = default;
 
@@ -187,6 +198,13 @@ public:
     std::string osc_shock_path = "/avatar/parameters/Shock";
     bool osc_shock_enabled = true;
     float osc_shock_intensity = 0.25f;
+    // A float on the Shock param carries a magnitude 0..1, and the shock is
+    // scaled between osc_shock_intensity (magnitude 0) and this ceiling
+    // (magnitude 1). A bool or int on the param is the plain intensity, as
+    // before. With per-device intensities on, PiShock and OpenShock devices
+    // use their own ceilings (below); this one covers DG-Lab and the PiShock
+    // legacy API, which have no per-device intensities.
+    float osc_shock_max_intensity = 0.25f;
     float osc_shock_duration = 1.0f;
     float osc_bite_intensity = 0.25f;
     float osc_bite_duration = 1.0f;
@@ -312,6 +330,8 @@ public:
     // Individual device intensities for PiShock WebSocket v2 (disobedience for each of 5 devices)
     bool pishock_use_individual_disobedience_intensities = false;
     std::array<float, 5> pishock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f}; 
+    // Per-device ceiling for a Shock param sent as a float (see osc_shock_max_intensity).
+    std::array<float, 5> pishock_individual_shock_max_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
     // OpenShock Settings
     bool openshock_enabled = false;
@@ -344,6 +364,8 @@ public:
     // Individual device intensities for OpenShock (warning and disobedience for each of 5 devices)
     std::array<float, 5> openshock_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
     std::array<float, 5> openshock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+    // Per-device ceiling for a Shock param sent as a float (see osc_shock_max_intensity).
+    std::array<float, 5> openshock_individual_shock_max_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
     // DG-Lab Coyote 3.0 Settings (app-bridged WebSocket: we run a local WS
     // server, the DG-Lab phone app scans our QR code and relays to the device

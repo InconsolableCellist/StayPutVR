@@ -40,8 +40,10 @@ namespace StayPutVR {
                           const std::string& device_serial = "");
         // Legacy API is single-device; "individual" maps to the disobedience
         // intensity (for OSC bite/shock per-device-intensity option).
+        // magnitude: -1 for the plain disobedience intensity, 0..1 to scale it
+        // up to the global Shock max (float Shock param).
         void TriggerShockIndividual(float duration_seconds, const std::string& reason = "",
-                                    const std::string& device_serial = "");
+                                    const std::string& device_serial = "", float magnitude = -1.0f);
         void TestActions() override;
         std::string GetConnectionStatus() const override;
 

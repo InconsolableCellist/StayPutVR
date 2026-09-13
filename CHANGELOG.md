@@ -27,7 +27,20 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
 
-## 1.5.2 — OSC Query answers plain UDP askers (9/12/2026)
+## 1.5.2 — OSC Query answers plain UDP askers; the Shock param takes a magnitude (9/12/2026)
+
+### New features
+- **The Shock param can carry how hard to shock.** `/avatar/parameters/Shock` still
+  takes a bool for the plain shock at the configured Shock intensity (or each
+  device's disobedience intensity, with per-device intensities on). Sent as a
+  float from 0 to 1 it now scales the shock between that intensity (0) and a new
+  **Shock max intensity** (1), on Integrations → OSC Triggers. With per-device
+  intensities on, each PiShock and OpenShock device gets its own **Shock max** in
+  its tab; DG-Lab and the PiShock legacy API use the global one. A float of 0 is
+  the release and fires nothing. A max below the intensity counts as the
+  intensity, so a float can never make a shock lighter than the plain trigger.
+  Used by the Dungeons of Eternity mod to shock harder the closer to death a hit
+  leaves you.
 
 ### Fixes
 - **OSC Query now answers queries that come from a port other than 5353** by

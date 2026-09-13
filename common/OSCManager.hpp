@@ -130,7 +130,10 @@ public:
     void SetAvatarChangeCallback(std::function<void()> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); avatar_change_callback_ = std::move(callback); }
 
     // Set callback for the external shock param (/avatar/parameters/Shock).
-    void SetShockCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); shock_callback_ = std::move(callback); }
+    // The argument is the magnitude: -1 for a bool/int trigger (the plain
+    // configured shock), or 0..1 from a float, scaling the shock between the
+    // configured intensity and the configured max.
+    void SetShockCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); shock_callback_ = std::move(callback); }
 
     // Set callback for emergency stop stretch actions
     void SetEStopStretchCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); estop_stretch_callback_ = std::move(callback); }
@@ -265,8 +268,8 @@ private:
     static constexpr int kBiteNoMatch = -2;
     int MatchBiteZone(const std::string& address) const;
 
-    // Callback for external shock param (/avatar/parameters/Shock)
-    std::function<void(bool)> shock_callback_;
+    // Callback for external shock param (/avatar/parameters/Shock); see SetShockCallback
+    std::function<void(float)> shock_callback_;
 
     // Callback for avatar change events (/avatar/change)
     std::function<void()> avatar_change_callback_;
