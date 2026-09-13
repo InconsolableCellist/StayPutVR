@@ -110,11 +110,11 @@ Eternity mod).
 - **Boolean** `true` fires the plain shock at the Shock intensity/duration on
   Integrations → OSC Triggers, or at each device's disobedience intensity with
   *Use per-device disobedience intensities* on.
-- **Float** `0..1` (1.5.2) says how hard: the shock scales from that intensity
-  (0) up to **Shock max intensity** (1). With per-device intensities on, each
-  PiShock and OpenShock device has its own **Shock max** in its tab; DG-Lab and
-  the PiShock legacy API use the global one. A float of `0` is the release and
-  fires nothing, and a max below the intensity counts as the intensity.
+- **Float** `0..1` (1.5.2) says how hard: the shock fires at that fraction of
+  **Shock max intensity**, anywhere from 0 up to it; the bool intensity plays no
+  part. With per-device intensities on, each PiShock and OpenShock device has
+  its own **Shock max** in its tab; DG-Lab and the PiShock legacy API use the
+  global one. A float of `0` is the release and fires nothing.
 
 ### Supported Device Types
 

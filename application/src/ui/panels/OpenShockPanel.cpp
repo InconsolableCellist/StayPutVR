@@ -256,8 +256,9 @@ void OpenShockPanel::Render() {
                 }
                 ImGui::SameLine();
                 ImGuiHelpers::HelpTooltip("Ceiling for the OSC Shock param when it is sent\n"
-                                          "as a float: the shock scales from this device's\n"
-                                          "disobedience intensity (0) up to this (1).");
+                                          "as a float: this device fires at that fraction\n"
+                                          "of this, anywhere from 0 up to it. A bool uses\n"
+                                          "the disobedience intensity above instead.");
 
                 ImGui::PopID();
             }
