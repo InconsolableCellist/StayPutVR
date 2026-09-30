@@ -537,17 +537,18 @@ namespace StayPutVR {
         }
 
         try {
-            // Build API URL
-            std::string url = "https://auth.pishock.com/Auth/GetUserIfAPIKeyValid?apikey=" + 
-                             config_->pishock_api_key + 
-                             "&username=" + config_->pishock_username;
+            // PiShock retired Auth/GetUserIfAPIKeyValid (key in the query string);
+            // /Account identifies the key's owner from the X-PiShock-Api-Key header.
+            std::string url = "https://auth.pishock.com/Account";
 
             Logger::Debug("Fetching User ID from: " + url);
 
             // Make HTTP GET request
             std::string response;
             std::map<std::string, std::string> headers;
-            
+            headers["X-PiShock-Api-Key"] = config_->pishock_api_key;
+            headers["Accept"] = "application/json";
+
             bool success = HttpClient::SendHttpRequest(
                 url,
                 "GET",
@@ -557,7 +558,8 @@ namespace StayPutVR {
             );
 
             if (!success || response.empty()) {
-                Logger::Error("Failed to fetch User ID from API");
+                Logger::Error("Failed to fetch User ID from API" +
+                              (response.empty() ? std::string() : ": " + response));
                 return false;
             }
 

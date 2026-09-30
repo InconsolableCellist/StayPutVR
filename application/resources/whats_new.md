@@ -1,11 +1,16 @@
-# What's New in StayPutVR 1.5.1
+# What's New in StayPutVR 1.5.3
 
-Thanks for your support! This release teaches bites where they landed: your avatar
-now reports which body part was bitten, and you can send each one to a different
-shocker or toy.
+Thanks for your support! This is a quick fix for PiShock, which changed how its API
+checks your API key and broke the connection.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.5.3
+- **PiShock works again.** PiShock stopped accepting the API key the way StayPutVR
+  was sending it, so WebSocket v2 couldn't connect ("Failed to fetch User ID") and
+  Legacy HTTP commands failed. Both now use PiShock's new API. Nothing to change on
+  your end. Legacy HTTP mode now needs your hub on V3 firmware.
 
 ## New in 1.5.1
 - **Bite zones:** your prefab now reports *where* it was bitten — tail, either ear,
