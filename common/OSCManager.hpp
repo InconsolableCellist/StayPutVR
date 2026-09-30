@@ -113,9 +113,9 @@ public:
     // Set callback for global out-of-bounds
     void SetGlobalOutOfBoundsCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); global_out_of_bounds_callback_ = std::move(callback); }
 
-    // Set callback for bite actions. The argument is the body part that was
-    // bitten: BiteZone::Generic for the plain SPVR_Bite parameter, or the zone
-    // whose suffixed parameter arrived (SPVR_Bite_Tail -> BiteZone::Tail, ...).
+    // Set callback for bite actions. The argument is the body part bitten:
+    // Generic for the plain SPVR_Bite, else the zone whose suffixed parameter
+    // arrived (SPVR_Bite_Tail -> BiteZone::Tail).
     void SetBiteCallback(std::function<void(BiteZone)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); bite_callback_ = std::move(callback); }
 
     // Full parameter address for a bite zone, i.e. the configured bite path

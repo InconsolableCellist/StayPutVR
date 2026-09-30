@@ -285,8 +285,8 @@ namespace StayPutVR {
             SendVibrateContinuous(device_index, intensity, reason);
         }
 
-        // Arm the stop. A pulse that lands while another is in flight simply
-        // extends it and adopts the union of both device sets.
+        // A pulse landing mid-pulse extends it and takes the union of both
+        // device sets.
         {
             std::lock_guard<std::mutex> lock(pulse_mutex_);
             for (int idx : device_indices) {
@@ -312,10 +312,9 @@ namespace StayPutVR {
 
         StopVibrationMulti(to_stop);
 
-        // The pulse drove these devices directly, bypassing the zone cache, so a
-        // device that was mid zone-vibration is now silent while the cache still
-        // says it is in that zone. Dropping the cache makes the next zone update
-        // re-send, restoring the vibration.
+        // A device that was mid zone-vibration is now silent while the cache
+        // still says it is in that zone; dropping the cache makes the next zone
+        // update re-send.
         {
             std::lock_guard<std::mutex> lock(zone_state_mutex_);
             current_zone_state_.clear();
