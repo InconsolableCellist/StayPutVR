@@ -62,9 +62,7 @@ namespace StayPutVR {
         int GetAppLimit(int channel) const { return app_limit_[channel & 1]; }
 
         // Fire a pulse. intensity 0..1, duration in seconds (capped at 10s =
-        // one pulse message). An empty device_serial fires all enabled
-        // channels; a serial fires only the channels bound to it in the
-        // Devices tab (used by bite-zone routing).
+        // one pulse message). Serial resolution as below.
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
         // Zone-driven triggers. An empty serial means "all enabled channels";

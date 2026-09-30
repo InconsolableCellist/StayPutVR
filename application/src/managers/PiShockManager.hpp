@@ -32,10 +32,8 @@ namespace StayPutVR {
         void TriggerDisobedienceActions(const std::string& device_serial = "") override;
         void TriggerWarningActions(const std::string& device_serial = "") override;
         // Fire a direct shock at an explicit intensity (0..1) and duration
-        // (seconds). Used by external triggers (bite / Shock param).
-        // device_serial is accepted for interface parity with the WebSocket v2
-        // manager and is ignored: the legacy API drives the single shocker
-        // behind the share code, so there is nothing to route between.
+        // (seconds). device_serial is ignored -- the legacy API drives the one
+        // shocker behind the share code, so there is nothing to route between.
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
         // Legacy API is single-device; "individual" maps to the disobedience

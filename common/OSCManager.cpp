@@ -247,8 +247,7 @@ void OSCManager::SetConfig(const Config& config) {
 int OSCManager::MatchBiteZone(const std::string& address) const {
     if (osc_bite_path_.empty()) return kBiteNoMatch;
     if (address == osc_bite_path_) return static_cast<int>(BiteZone::Generic);
-    // Every zone parameter is the base path plus a suffix, so a cheap prefix
-    // test rejects the overwhelming majority of inbound addresses first.
+    // Prefix test first: it rejects almost every inbound address cheaply.
     if (address.size() <= osc_bite_path_.size()) return kBiteNoMatch;
     if (address.compare(0, osc_bite_path_.size(), osc_bite_path_) != 0) return kBiteNoMatch;
     const std::string suffix = address.substr(osc_bite_path_.size());

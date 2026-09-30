@@ -57,12 +57,9 @@ namespace StayPutVR {
         void TriggerWarningActions(const std::string& device_serial = "");
         void TriggerDisobedienceActions(const std::string& device_serial = "");
         void ClearZoneState(const std::string& device_serial = ""); // Stop vibration when returning to safe/neutral
-        // One-shot timed pulse used by the bite triggers: vibrate the devices
-        // bound to device_serial (empty => every configured device) at the given
-        // intensity, then stop them once duration_seconds has elapsed. Unlike the
-        // zone actions this is momentary, not a state the toy sits in, so it does
-        // not participate in the zone-state cache -- it invalidates it on stop so
-        // an interrupted zone vibration is re-applied on the next update.
+        // One-shot timed pulse for the bite triggers. Bite is momentary, not a
+        // state the toy sits in, so this bypasses the zone-state cache above and
+        // invalidates it on stop (see UpdatePulse).
         void TriggerPulse(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
         void UpdatePulse(); // per-frame: stop an expired TriggerPulse (called from Update)

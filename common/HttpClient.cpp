@@ -400,6 +400,58 @@ bool HttpClient::SendHttpRequest(
     }
 }
 
+// PiShock retired do.pishock.com/api/apioperate (credentials in the body) in
+// favour of api.pishock.com, which authenticates with the X-PiShock-Api-Key
+// header and takes the share code in the path. The username is no longer sent.
+// The new endpoint wants milliseconds (16-15000) and answers 204 on success.
+static bool PostPiShockOperate(
+    const std::string& apiKey,
+    const std::string& shareCode,
+    int operation,
+    int intensity,
+    int duration,
+    std::string& response,
+    const char* logPrefix) {
+
+    nlohmann::json requestBody;
+    requestBody["AgentName"] = "StayPutVR";
+    requestBody["Operation"] = operation;
+
+    // Beep ignores intensity; shock and vibrate are clamped to 1-100
+    int clampedIntensity = 0;
+    if (operation == 0 || operation == 1) {
+        clampedIntensity = (std::max)(1, (std::min)(100, intensity));
+    }
+    requestBody["Intensity"] = clampedIntensity;
+
+    // Callers pass whole seconds (1-15)
+    int clampedDuration = (std::max)(1, (std::min)(15, duration));
+    requestBody["Duration"] = clampedDuration * 1000;
+
+    Logger::Info(std::string(logPrefix) + "PiShock command. Operation: " + std::to_string(operation) +
+                 ", Intensity: " + std::to_string(clampedIntensity) +
+                 ", Duration: " + std::to_string(clampedDuration) + "s");
+
+    std::map<std::string, std::string> headers;
+    headers["X-PiShock-Api-Key"] = apiKey;
+    headers["Accept"] = "application/json";
+
+    bool success = HttpClient::PostJson(
+        "https://api.pishock.com/Shockers/OperateByShare/" + shareCode,
+        requestBody,
+        response,
+        headers
+    );
+
+    if (success) {
+        Logger::Info(std::string(logPrefix) + "PiShock command succeeded");
+    } else {
+        Logger::Error(std::string(logPrefix) + "PiShock command failed: " + response);
+    }
+
+    return success;
+}
+
 bool SendPiShockCommand(
     const std::string& username,
     const std::string& apiKey,
@@ -408,54 +460,13 @@ bool SendPiShockCommand(
     int intensity,
     int duration,
     std::string& response) {
-    
+
     if (!HttpClient::Initialize()) {
         Logger::Error("Failed to initialize HTTP client for PiShock");
         return false;
     }
-    
-    nlohmann::json requestBody;
-    requestBody["Username"] = username;
-    requestBody["Apikey"] = apiKey;
-    requestBody["Code"] = shareCode;
-    requestBody["Name"] = "StayPutVR";
-    requestBody["Op"] = operation;
-    
-    // For shock and vibrate, also include intensity
-    if (operation == 0 || operation == 1) {
-        // Clamp intensity between 1 and 100
-        intensity = (std::max)(1, (std::min)(100, intensity));
-        requestBody["Intensity"] = std::to_string(intensity);
-    }
-    
-    // Duration is required for all operations
-    // Clamp duration between 1 and 15 seconds
-    duration = (std::max)(1, (std::min)(15, duration));
-    requestBody["Duration"] = std::to_string(duration);
-    
-    Logger::Info("Sending PiShock command. Operation: " + std::to_string(operation) + 
-                 ", Intensity: " + std::to_string(intensity) + 
-                 ", Duration: " + std::to_string(duration));
-    
-    // PiShock asks that the API key also be sent as a header (mirroring the
-    // Apikey we put in the body) ahead of the api.pishock.com migration.
-    std::map<std::string, std::string> headers;
-    headers["X-PiShock-Api-Key"] = apiKey;
 
-    bool success = HttpClient::PostJson(
-        "https://do.pishock.com/api/apioperate",
-        requestBody,
-        response,
-        headers
-    );
-
-    if (success) {
-        Logger::Info("PiShock command succeeded: " + response);
-    } else {
-        Logger::Error("PiShock command failed: " + response);
-    }
-    
-    return success;
+    return PostPiShockOperate(apiKey, shareCode, operation, intensity, duration, response, "Sending ");
 }
 
 void SendPiShockCommandAsync(
@@ -466,7 +477,7 @@ void SendPiShockCommandAsync(
     int intensity,
     int duration,
     std::function<void(bool success, const std::string& response)> callback) {
-    
+
     if (!HttpClient::Initialize()) {
         Logger::Error("Failed to initialize HTTP client for PiShock");
         if (callback) {
@@ -474,58 +485,18 @@ void SendPiShockCommandAsync(
         }
         return;
     }
-    
+
     // Create a lambda that will make the request on a background thread
-    auto request = [username, apiKey, shareCode, operation, intensity, duration, callback]() {
+    auto request = [apiKey, shareCode, operation, intensity, duration, callback]() {
         std::string response;
-        nlohmann::json requestBody;
-        requestBody["Username"] = username;
-        requestBody["Apikey"] = apiKey;
-        requestBody["Code"] = shareCode;
-        requestBody["Name"] = "StayPutVR";
-        requestBody["Op"] = operation;
-        
-        // For shock and vibrate, also include intensity
-        int clampedIntensity = intensity;
-        if (operation == 0 || operation == 1) {
-            // Clamp intensity between 1 and 100
-            clampedIntensity = (std::max)(1, (std::min)(100, clampedIntensity));
-            requestBody["Intensity"] = std::to_string(clampedIntensity);
-        }
-        
-        // Duration is required for all operations
-        // Clamp duration between 1 and 15 seconds
-        int clampedDuration = (std::max)(1, (std::min)(15, duration));
-        requestBody["Duration"] = std::to_string(clampedDuration);
-        
-        Logger::Info("Sending async PiShock command. Operation: " + std::to_string(operation) + 
-                    ", Intensity: " + std::to_string(clampedIntensity) + 
-                    ", Duration: " + std::to_string(clampedDuration));
-        
-        // PiShock asks that the API key also be sent as a header (mirroring the
-        // Apikey we put in the body) ahead of the api.pishock.com migration.
-        std::map<std::string, std::string> headers;
-        headers["X-PiShock-Api-Key"] = apiKey;
+        bool success = PostPiShockOperate(apiKey, shareCode, operation, intensity, duration, response, "Async ");
 
-        bool success = HttpClient::PostJson(
-            "https://do.pishock.com/api/apioperate",
-            requestBody,
-            response,
-            headers
-        );
-
-        if (success) {
-            Logger::Info("Async PiShock command succeeded: " + response);
-        } else {
-            Logger::Error("Async PiShock command failed: " + response);
-        }
-        
         // Call the callback if provided
         if (callback) {
             callback(success, response);
         }
     };
-    
+
     // Add the request to the async queue
     HttpClient::QueueAsyncRequest(request);
 }
@@ -771,16 +742,18 @@ std::mutex HttpClient::queue_mutex_;
 bool HttpClient::Initialize() { initialized_ = true; return true; }
 void HttpClient::Shutdown() { initialized_ = false; }
 
-bool HttpClient::PostJson(const std::string&, const nlohmann::json&, std::string& responseText,
+bool HttpClient::PostJson(const std::string& url, const nlohmann::json&, std::string& responseText,
                           const std::map<std::string, std::string>&, std::function<void(int)>) {
     responseText = "HTTP disabled on Linux development build";
+    Logger::Warning("HttpClient: not sending POST " + url + " - " + responseText);
     return false;
 }
 
-bool HttpClient::SendHttpRequest(const std::string&, const std::string&,
+bool HttpClient::SendHttpRequest(const std::string& url, const std::string& method,
                                  const std::map<std::string, std::string>&, const std::string&,
                                  std::string& responseText, std::function<void(int)>) {
     responseText = "HTTP disabled on Linux development build";
+    Logger::Warning("HttpClient: not sending " + method + " " + url + " - " + responseText);
     return false;
 }
 

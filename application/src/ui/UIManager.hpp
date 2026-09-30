@@ -540,19 +540,14 @@ namespace StayPutVR {
         void OnDeviceLocked(OSCDeviceType device, bool locked);
         void OnDeviceIncluded(OSCDeviceType device, bool include);
         void TriggerGlobalOutOfBoundsActions();
-        // zone is the bitten body part (BiteZone::Generic for the unsuffixed
-        // SPVR_Bite). With zone routing off, or for a zone nothing is bound to,
-        // this fires every configured device exactly as it always has.
+        // zone is the bitten body part (Generic = the unsuffixed SPVR_Bite).
         // count_bite=false is for the UI test buttons, so a rehearsal doesn't
-        // inflate the issue-#16 tally of bites actually taken.
+        // inflate the issue-#16 tally.
         void TriggerBiteActions(BiteZone zone = BiteZone::Generic, bool count_bite = true);
-        // Bite coalescing. A prefab that reports the body part may also send the
-        // plain SPVR_Bite for the same bite, and VRChat can deliver the two in
-        // either order, so acting on each parameter as it lands would shock
-        // twice and could act on the unspecific one first. Inbound bites are
-        // instead collected for a brief window and fired once, preferring the
-        // specific zone. QueueBite runs on the OSC receive thread;
-        // ProcessPendingBite runs every frame on the UI thread.
+        // Bite coalescing: one bite can arrive as two parameters (the zoned one
+        // and the plain SPVR_Bite) in either order, so bites are collected for a
+        // brief window and fired once, preferring the specific zone. QueueBite
+        // runs on the OSC receive thread, ProcessPendingBite on the UI thread.
         void QueueBite(BiteZone zone);
         void ProcessPendingBite();
         void HandleAvatarChange();
@@ -648,11 +643,10 @@ namespace StayPutVR {
         std::chrono::steady_clock::time_point bite_timer_start_;
         static constexpr float BITE_DURATION = 3.0f; // Duration in seconds
 
-        // Issue #16: bite tallies. Both are written from the OSC receive thread in
-        // TriggerBiteActions, so they are atomic. The session count deliberately
-        // resets every launch; the lifetime count is mirrored to/from
-        // config_.bite_count_lifetime by UpdateConfigFromUI/UpdateUIFromConfig so
-        // it survives restarts.
+        // Issue #16: bite tallies (atomic from when bites fired on the OSC thread;
+        // ProcessPendingBite now fires them on the UI thread). The session count
+        // deliberately resets every launch; the lifetime count is mirrored to/from
+        // config_.bite_count_lifetime so it survives restarts.
         std::atomic<int> bite_count_session_{0};
         std::atomic<int> bite_count_lifetime_{0};
 

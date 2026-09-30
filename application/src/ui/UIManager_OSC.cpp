@@ -1327,10 +1327,9 @@ namespace StayPutVR {
         }
     }
 
-    // OSC receive thread: remember this bite instead of acting on it. The plain
-    // SPVR_Bite and the body-part parameter for one bite arrive as two separate
-    // messages in no guaranteed order, so acting immediately would shock twice
-    // and might use the unspecific one. Repeats inside the window collapse into
+    // OSC receive thread: remember this bite instead of acting on it, since the
+    // plain SPVR_Bite and the body-part parameter for one bite arrive as two
+    // messages in no guaranteed order. Repeats inside the window collapse into
     // the same pending bite, and the most specific zone seen wins.
     void UIManager::QueueBite(BiteZone zone) {
         const int zi = static_cast<int>(zone);
@@ -1376,8 +1375,6 @@ namespace StayPutVR {
         // Issue #16: count only bites that actually fire -- this is past both the
         // osc_bite_enabled check (in the OSC callback) and the emergency-stop gate
         // above, so a bite suppressed by the safeword never inflates the tally.
-        // Atomic because this runs on the OSC receive thread; the UI thread mirrors
-        // the lifetime value into config_ in UpdateConfigFromUI().
         if (count_bite) {
             bite_count_session_.fetch_add(1, std::memory_order_relaxed);
             bite_count_lifetime_.fetch_add(1, std::memory_order_relaxed);
@@ -1409,11 +1406,10 @@ namespace StayPutVR {
         // Fire a direct shock at the bite intensity/duration (issue #7). Replaces
         // the old beep+vibrate+shock disobedience.
         //
-        // Zone routing (1.5.1): with routing on and something bound to this body
-        // part, the shock goes only to that zone's devices at the zone's own
-        // intensity/duration. Otherwise -- routing off, the unsuffixed SPVR_Bite,
-        // or a zone nothing is bound to -- it fires everything at the global bite
-        // settings, which is what every pre-1.5.1 install did.
+        // Zone routing (1.5.1): routing on and something bound to this body part
+        // => only that zone's devices, at the zone's own intensity/duration.
+        // Otherwise (routing off, plain SPVR_Bite, or an unbound zone) =>
+        // everything at the global bite settings, as in 1.5.0.
         const int zone_index = static_cast<int>(zone);
         const bool zone_valid = zone_index >= 0 && zone_index < kBiteZoneCount;
         float bite_intensity, bite_duration; bool bite_use_individual, zone_routing;
@@ -1434,11 +1430,8 @@ namespace StayPutVR {
         const std::string zone_serial = routed ? kBiteZoneSerials[zone_index] : std::string();
         const std::string reason = zone_valid ? std::string("Bite: ") + kBiteZoneNames[zone_index] : "Bite";
 
-        // Spell out the whole routing decision on one line: which body part the
-        // parameter resolved to, the binding key it looked up, and whether it
-        // narrowed to that zone's devices. Left/right wiring mistakes live
-        // somewhere on this line -- either the zone is wrong (avatar side) or the
-        // devices it resolves to are (binding side).
+        // The whole routing decision on one line: a left/right wiring mistake is
+        // either in the zone (avatar side) or in what it resolves to (bindings).
         if (Logger::IsInitialized()) {
             Logger::Info("Bite zone: " + std::string(zone_valid ? kBiteZoneNames[zone_index] : "unspecified") +
                          " -> " + (routed ? zone_serial + " (routed to its bound devices)"

@@ -57,7 +57,8 @@ private:
     static void WorkerThreadFunction();
 };
 
-// Synchronous utility function for PiShock API
+// Synchronous utility function for PiShock API (username is no longer sent;
+// api.pishock.com identifies the account from the API key header)
 bool SendPiShockCommand(
     const std::string& username,
     const std::string& apiKey,

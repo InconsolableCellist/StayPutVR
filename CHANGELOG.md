@@ -2,6 +2,21 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
+## 1.5.3 — PiShock API fix (9/29/2026)
+
+### Fixes
+- **PiShock stopped working:** PiShock retired the endpoints that took the API
+  key in the query string or request body. StayPutVR now authenticates with the
+  `X-PiShock-Api-Key` header everywhere PiShock still accepts it:
+  - WebSocket v2 looks up your User ID from `auth.pishock.com/Account` instead of
+    the removed `Auth/GetUserIfAPIKeyValid`, which was failing the connection
+    with "Failed to fetch User ID - check credentials".
+  - Legacy HTTP mode now sends commands to
+    `api.pishock.com/Shockers/OperateByShare/{code}` instead of the removed
+    `do.pishock.com/api/apioperate`. The new endpoint only works with hubs on V3
+    firmware.
+- The WebSocket v2 broker connection itself is unchanged.
+
 ## 1.5.2 — OSC Query answers plain UDP askers; the Shock param takes a magnitude (9/12/2026)
 
 ### New features
