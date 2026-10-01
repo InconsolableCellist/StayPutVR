@@ -104,6 +104,10 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
+**1.5.4** - Spank trigger; the Shock param moves to SPVR_Shock (10/1/2026)
+- Added a **Spank trigger** (`SPVR_Spank`) on Integrations → Spank: each spank fires a step harder than the last, from a min up to a max (staying there or wrapping back to min), then glides back down after a few seconds without one. Pick which of PiShock, OpenShock, DG-Lab and BPIO it fires, and whether PiShock/OpenShock shock or vibrate
+- The Shock param now defaults to `/avatar/parameters/SPVR_Shock`, since VRChat doesn't send back out a param it received over OSC. Configs on the old default move over automatically, and `/avatar/parameters/Shock` is still accepted (Settings → OSC) so the Dungeons of Eternity mod keeps working
+
 **1.5.3** - PiShock API fix (9/29/2026)
 - Fixed **PiShock not connecting**: PiShock retired the API calls that passed your API key in the URL or request body. The User ID lookup (WebSocket v2) and Legacy HTTP commands now send the key as an `X-PiShock-Api-Key` header
 

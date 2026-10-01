@@ -313,8 +313,12 @@ namespace StayPutVR {
             SaveConfig();
         }
         ImGui::SameLine();
+        if (ImGui::Checkbox("Spank trigger", &config_.spank_enabled)) {
+            SaveConfig();
+        }
+        ImGui::SameLine();
         ImGuiHelpers::HelpTooltip("Fire a shock from avatar parameters. Tune intensity/duration in "
-            "Integrations > OSC Triggers; change parameter paths in Settings > OSC.");
+            "Integrations > OSC Triggers (Spank has its own tab); change parameter paths in Settings > OSC.");
         ImGui::EndChild();
 
         // Global Lock controls, to the right of the OSC controls.

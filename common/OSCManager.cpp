@@ -233,6 +233,8 @@ void OSCManager::SetConfig(const Config& config) {
     osc_global_out_of_bounds_path_ = config.osc_global_out_of_bounds_path;
     osc_bite_path_ = config.osc_bite_path;
     osc_shock_path_ = config.osc_shock_path;
+    osc_shock_accept_legacy_path_ = config.osc_shock_accept_legacy_path;
+    osc_spank_path_ = config.osc_spank_path;
     osc_estop_stretch_path_ = config.osc_estop_stretch_path;
     osc_jawopen_path_ = config.osc_jawopen_path;
     osc_collar_toggle_path_ = config.osc_collar_toggle_path;
@@ -480,13 +482,16 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     bite_callback_(static_cast<BiteZone>(bite_zone));
                 }
 
-                // External shock path (/avatar/parameters/Shock). A bool or int
+                // External shock path (SPVR_Shock, plus the legacy Shock path
+                // when accepted). A bool or int
                 // fires the plain configured shock; a float in (0, 1] carries a
                 // magnitude that scales the shock between the configured
                 // intensity and the configured max. A float of 0 is the release
                 // and fires nothing (the 0.5 bool threshold above does not apply
                 // here, so a light hit is still a hit).
-                else if (address == osc_shock_path_ && shock_callback_) {
+                else if ((address == osc_shock_path_ ||
+                          (osc_shock_accept_legacy_path_ && address == Config::kLegacyShockPath))
+                         && shock_callback_) {
                     if (tag == 'f') {
                         if (float_value > 0.0f) shock_callback_(float_value > 1.0f ? 1.0f : float_value);
                     } else if (value_bool) {
@@ -494,6 +499,12 @@ void OSCManager::ProcessOSCMessage(const char* data, size_t size) {
                     }
                 }
                 
+                // Spank path: pass every value through so the receiver sees
+                // the release too (it acts on the false -> true edge).
+                else if (address == osc_spank_path_ && spank_callback_) {
+                    spank_callback_(value_bool);
+                }
+
                 // Emergency stop stretch path
                 else if (address == osc_estop_stretch_path_ && estop_stretch_callback_ && tag == 'f') {
                     if (float_value >= 0.5f) {

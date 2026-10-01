@@ -457,7 +457,8 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         osc_collar_toggle_path = jval(j, "osc_collar_toggle_path", "/avatar/parameters/SPVR_Collar_ToggleButton");
         osc_bite_path = jval(j, "osc_bite_path", "/avatar/parameters/SPVR_Bite");
         osc_bite_enabled = jval(j, "osc_bite_enabled", true);
-        osc_shock_path = jval(j, "osc_shock_path", "/avatar/parameters/Shock");
+        osc_shock_path = jval(j, "osc_shock_path", "/avatar/parameters/SPVR_Shock");
+        osc_shock_accept_legacy_path = jval(j, "osc_shock_accept_legacy_path", true);
         osc_shock_enabled = jval(j, "osc_shock_enabled", true);
         osc_shock_intensity = jval(j, "osc_shock_intensity", 0.25f);
         osc_shock_max_intensity = jval(j, "osc_shock_max_intensity", 0.25f);
@@ -466,6 +467,7 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         osc_bite_duration = jval(j, "osc_bite_duration", 1.0f);
         osc_bite_use_individual_intensities = jval(j, "osc_bite_use_individual_intensities", false);
         bite_count_lifetime = jval(j, "bite_count_lifetime", 0);
+        spank_count_lifetime = jval(j, "spank_count_lifetime", 0);
 
         // Bite zone routing (1.5.1). Absent in pre-1.5.1 configs, so the
         // defaults keep the old "any bite fires everything" behaviour.
@@ -480,6 +482,21 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
         load_zone_floats("osc_bite_zone_intensity", osc_bite_zone_intensity);
         load_zone_floats("osc_bite_zone_duration", osc_bite_zone_duration);
         osc_shock_use_individual_intensities = jval(j, "osc_shock_use_individual_intensities", false);
+        osc_spank_path = jval(j, "osc_spank_path", "/avatar/parameters/SPVR_Spank");
+        spank_enabled = jval(j, "spank_enabled", true);
+        spank_use_pishock = jval(j, "spank_use_pishock", true);
+        spank_use_openshock = jval(j, "spank_use_openshock", true);
+        spank_use_dglab = jval(j, "spank_use_dglab", true);
+        spank_use_buttplug = jval(j, "spank_use_buttplug", true);
+        spank_action = jval(j, "spank_action", 0);
+        spank_min_intensity = jval(j, "spank_min_intensity", 0.10f);
+        spank_max_intensity = jval(j, "spank_max_intensity", 0.50f);
+        spank_step = jval(j, "spank_step", 0.10f);
+        spank_duration = jval(j, "spank_duration", 1.0f);
+        spank_wrap_at_max = jval(j, "spank_wrap_at_max", false);
+        spank_debounce_seconds = jval(j, "spank_debounce_seconds", 2.5f);
+        spank_hold_seconds = jval(j, "spank_hold_seconds", 5.0f);
+        spank_rampdown_seconds = jval(j, "spank_rampdown_seconds", 3.0f);
 
         // PiShock settings
         pishock_enabled = jval(j, "pishock_enabled", false);
@@ -622,6 +639,13 @@ ConfigResult Config::LoadFromFileEx(const std::string& filename) {
                 (300.0f + openshock_warning_duration * 10714.0f) / 1000.0f));
             openshock_disobedience_duration = (std::max)(0.3f, (std::min)(15.0f,
                 (300.0f + openshock_disobedience_duration * 10714.0f) / 1000.0f));
+        }
+
+        // Move the Shock path off the old default (v < 3). Only the untouched
+        // default moves; a path the user set by hand is left alone. The old
+        // path is still accepted via osc_shock_accept_legacy_path.
+        if (loaded_config_version < 3 && osc_shock_path == kLegacyShockPath) {
+            osc_shock_path = "/avatar/parameters/SPVR_Shock";
         }
 
         // All version-gated migrations are done; stamp the member current.
@@ -1068,6 +1092,7 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["osc_bite_path"] = osc_bite_path;
         j["osc_bite_enabled"] = osc_bite_enabled;
         j["osc_shock_path"] = osc_shock_path;
+        j["osc_shock_accept_legacy_path"] = osc_shock_accept_legacy_path;
         j["osc_shock_enabled"] = osc_shock_enabled;
         j["osc_shock_intensity"] = osc_shock_intensity;
         j["osc_shock_max_intensity"] = osc_shock_max_intensity;
@@ -1076,12 +1101,28 @@ ConfigResult Config::SaveToFileEx(const std::string& filename) const {
         j["osc_bite_duration"] = osc_bite_duration;
         j["osc_bite_use_individual_intensities"] = osc_bite_use_individual_intensities;
         j["bite_count_lifetime"] = bite_count_lifetime;
+        j["spank_count_lifetime"] = spank_count_lifetime;
 
         // Bite zone routing (1.5.1)
         j["osc_bite_zone_routing"] = osc_bite_zone_routing;
         j["osc_bite_zone_intensity"] = nlohmann::json(osc_bite_zone_intensity);
         j["osc_bite_zone_duration"] = nlohmann::json(osc_bite_zone_duration);
         j["osc_shock_use_individual_intensities"] = osc_shock_use_individual_intensities;
+        j["osc_spank_path"] = osc_spank_path;
+        j["spank_enabled"] = spank_enabled;
+        j["spank_use_pishock"] = spank_use_pishock;
+        j["spank_use_openshock"] = spank_use_openshock;
+        j["spank_use_dglab"] = spank_use_dglab;
+        j["spank_use_buttplug"] = spank_use_buttplug;
+        j["spank_action"] = spank_action;
+        j["spank_min_intensity"] = spank_min_intensity;
+        j["spank_max_intensity"] = spank_max_intensity;
+        j["spank_step"] = spank_step;
+        j["spank_duration"] = spank_duration;
+        j["spank_wrap_at_max"] = spank_wrap_at_max;
+        j["spank_debounce_seconds"] = spank_debounce_seconds;
+        j["spank_hold_seconds"] = spank_hold_seconds;
+        j["spank_rampdown_seconds"] = spank_rampdown_seconds;
 
         // PiShock settings
         j["pishock_enabled"] = pishock_enabled;

@@ -128,7 +128,18 @@ A direct shock on your configured devices, for prefabs and companion apps that
 want to fire a shock without a bite (Simple Shock System, the Dungeons of
 Eternity mod).
 
-**Default Path:** `/avatar/parameters/Shock`
+**Default Path:** `/avatar/parameters/SPVR_Shock` (1.5.4; it was
+`/avatar/parameters/Shock` before)
+
+The old `/avatar/parameters/Shock` is still accepted alongside it while *Also
+accept /avatar/parameters/Shock* is on in Settings → OSC (the default), since
+apps like the Dungeons of Eternity mod send it straight to StayPutVR. On an
+avatar the path changed because VRChat doesn't send back out a parameter it
+received over OSC: an avatar that receives `Shock` copies it to `SPVR_Shock`
+(copy the float, not just a bool, to keep the magnitude). If your avatar drives
+`Shock` itself *and* copies it to `SPVR_Shock`, turn the legacy option off or
+each hit fires twice. Configs still on the old default move to `SPVR_Shock` on
+first launch of 1.5.4; a path you set yourself is left alone.
 
 **Value Type**: Boolean or Float
 
@@ -140,6 +151,35 @@ Eternity mod).
   part. With per-device intensities on, each PiShock and OpenShock device has
   its own **Shock max** in its tab; DG-Lab and the PiShock legacy API use the
   global one. A float of `0` is the release and fires nothing.
+
+### Spank Trigger (Incoming)
+
+A spank that comes a step harder each time, for an avatar contact that only
+trips on a fast-moving hand.
+
+**Default Path:** `/avatar/parameters/SPVR_Spank`
+
+**Value Type**: Boolean (true/1 = spanked; StayPutVR acts on the false → true
+change, so a held contact counts once)
+
+Set it up on Integrations → Spank:
+
+- **Fires on**: any of PiShock, OpenShock, DG-Lab and BPIO, and whether
+  PiShock/OpenShock shock or vibrate. DG-Lab always pulses and BPIO always
+  vibrates.
+- **Intensity ladder**: the first spank fires at *Min intensity*, each after it
+  *Step per spank* higher, up to *Max intensity*. At max it stays there, or with
+  *Wrap back to min after max* the next spank starts over at min. Every step fires
+  for the same *Duration*.
+- **Timing**: spanks closer together than *Debounce* (2.5s) count once.
+  *Hold before ramp-down* (5s) after the last spank, the level glides back to min
+  over *Ramp-down time* (3s). A spank on the way down climbs from wherever the
+  level has got to and starts the hold again; once the level is all the way down
+  the next spank starts at min.
+
+PiShock refuses a second action within 2s and OpenShock within 1s, so with a
+debounce under about 2.5s some spanks climb the ladder without firing PiShock.
+Blocked while emergency stop is active, like Bite and Shock.
 
 ### Supported Device Types
 

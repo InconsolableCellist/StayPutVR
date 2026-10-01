@@ -149,6 +149,19 @@ namespace StayPutVR {
         SendShock(ConvertIntensityToAPI(intensity), ConvertDurationToAPI(duration_seconds), reason);
     }
 
+    void PiShockManager::TriggerVibrate(float intensity, float duration_seconds, const std::string& reason,
+                                        const std::string& /*device_serial*/) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock not enabled, skipping external vibrate");
+            return;
+        }
+        if (!CheckRateLimit()) {
+            Logger::Info("Rate limit active, skipping external vibrate");
+            return;
+        }
+        SendVibrate(ConvertIntensityToAPI(intensity), ConvertDurationToAPI(duration_seconds), reason);
+    }
+
     void PiShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
                                                  const std::string& /*device_serial*/, float magnitude) {
         if (!IsEnabled()) {

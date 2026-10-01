@@ -35,6 +35,9 @@ namespace StayPutVR {
         // (seconds); empty device_serial fires every configured device.
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
+        // The same, vibrating instead of shocking (spank in vibrate mode).
+        void TriggerVibrate(float intensity, float duration_seconds, const std::string& reason = "",
+                            const std::string& device_serial = "");
         // Like TriggerShock but uses the per-device disobedience intensities
         // instead of a single supplied intensity (for OSC bite/shock).
         // magnitude: -1 for the plain per-device intensity, 0..1 to scale each

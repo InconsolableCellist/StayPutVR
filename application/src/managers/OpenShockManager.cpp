@@ -123,6 +123,17 @@ namespace StayPutVR {
         SendShock(ConvertIntensityToAPI(intensity), duration_ms, reason, device_serial);
     }
 
+    void OpenShockManager::TriggerVibrate(float intensity, float duration_seconds, const std::string& reason,
+                                          const std::string& device_serial) {
+        if (!IsEnabled()) {
+            Logger::Info("OpenShock not enabled, skipping external vibrate");
+            return;
+        }
+        // Rate limit applied in ExecuteAction, as for TriggerShock.
+        int duration_ms = (std::max)(300, (std::min)(65535, static_cast<int>(duration_seconds * 1000.0f)));
+        SendVibrate(ConvertIntensityToAPI(intensity), duration_ms, reason, device_serial);
+    }
+
     void OpenShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
                                                   const std::string& device_serial, float magnitude) {
         if (!IsEnabled()) {

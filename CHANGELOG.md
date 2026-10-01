@@ -2,6 +2,37 @@
 
 All notable user-facing changes to StayPutVR are documented here. Dates are M/D/YYYY.
 
+## 1.5.4 — Spank trigger; the Shock param moves to SPVR_Shock (10/1/2026)
+
+### New features
+- **Spank trigger** (`/avatar/parameters/SPVR_Spank`), with its own tab under
+  Integrations → Spank. Each spank fires a step harder than the last: the first
+  at **Min intensity**, then up by **Step per spank** to **Max intensity**,
+  where it stays or (with *Wrap back to min after max*) starts over at min.
+  **Hold before ramp-down** (5s) after the last spank the level glides back to
+  min over **Ramp-down time** (3s); a spank on the way down climbs from
+  wherever the level has got to. Spanks closer together than **Debounce**
+  (2.5s) count once.
+  - Tick which of PiShock, OpenShock, DG-Lab and BPIO it fires, and whether
+    PiShock/OpenShock shock or vibrate. DG-Lab always pulses and BPIO always
+    vibrates.
+  - The tab shows the live level and the next spank's intensity, and has a
+    *Test spank* button.
+  - PiShock refuses a second action within 2s and OpenShock within 1s, so a
+    debounce shorter than about 2.5s lets the ladder climb past spanks PiShock
+    dropped.
+
+### Changes
+- **The Shock param's default path is now `/avatar/parameters/SPVR_Shock`.**
+  VRChat doesn't send back out a param it received over OSC, so an avatar that
+  receives `Shock` copies it to `SPVR_Shock`. Configs still on the old default
+  move over on first launch; a path you set yourself is left alone.
+- `/avatar/parameters/Shock` is still accepted alongside it while *Also accept
+  /avatar/parameters/Shock* is on in Settings → OSC (the default), so apps that
+  send it straight to StayPutVR, like the Dungeons of Eternity mod, keep
+  working. Turn it off if your avatar drives `Shock` itself and also copies it
+  to `SPVR_Shock`, or each hit fires twice.
+
 ## 1.5.3 — PiShock API fix (9/29/2026)
 
 ### Fixes

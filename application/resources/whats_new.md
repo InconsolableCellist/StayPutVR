@@ -1,10 +1,21 @@
-# What's New in StayPutVR 1.5.3
+# What's New in StayPutVR 1.5.4
 
-Thanks for your support! This is a quick fix for PiShock, which changed how its API
-checks your API key and broke the connection.
+Thanks for your support! This one adds a spank trigger and moves the Shock param to
+a name your avatar can send.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.5.4
+- **Spank trigger:** when your avatar sends `SPVR_Spank` (say, from a contact that
+  only trips on a fast-moving hand), StayPutVR fires a spank, and each one comes a
+  step harder than the last, up to a max you choose. Leave it alone for a few
+  seconds and it eases back down. Set it up on the new **Integrations → Spank**
+  tab: which devices it fires, shock or vibrate, the min/max/step, and the timing.
+- **Shock is now `SPVR_Shock`:** VRChat doesn't pass on a param it received over
+  OSC, so avatars copy `Shock` to `SPVR_Shock`. If you were on the old default
+  you've been moved over automatically. The old `Shock` still works too, so the
+  Dungeons of Eternity mod is unaffected.
 
 ## New in 1.5.3
 - **PiShock works again.** PiShock stopped accepting the API key the way StayPutVR

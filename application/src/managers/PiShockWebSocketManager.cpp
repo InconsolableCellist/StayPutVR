@@ -276,6 +276,23 @@ namespace StayPutVR {
         SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, device_serial, ConvertIntensityToAPI(intensity));
     }
 
+    void PiShockWebSocketManager::TriggerVibrate(float intensity, float duration_seconds, const std::string& reason,
+                                                 const std::string& device_serial) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock WebSocket not enabled, skipping external vibrate");
+            return;
+        }
+        if (!IsConnected()) {
+            Logger::Warning("PiShock WebSocket not connected, skipping external vibrate");
+            return;
+        }
+        if (!CheckRateLimit()) {
+            Logger::Info("Rate limit active, skipping external vibrate");
+            return;
+        }
+        SendVibrateMulti(ConvertDurationToAPI(duration_seconds), reason, device_serial, ConvertIntensityToAPI(intensity));
+    }
+
     void PiShockWebSocketManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
                                                           const std::string& device_serial, float magnitude) {
         if (!IsEnabled()) {
