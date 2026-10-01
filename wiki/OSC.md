@@ -68,6 +68,9 @@ Control all devices simultaneously:
 **Default Paths:**
 - `/avatar/parameters/SPVR_Global_Lock` - Lock all included devices
 - `/avatar/parameters/SPVR_Global_Unlock` - Unlock all devices
+- `/avatar/parameters/SPVR_Global_OutOfBounds` - Run the out-of-bounds actions on
+  all included devices (the same actions a real boundary violation triggers,
+  shocks included). Must be enabled in Settings → OSC.
 
 **Value Type**: Boolean (true/1 = activate)
 
@@ -96,6 +99,28 @@ Integrations → OSC Triggers. With it on, a bite fires only the shockers and BP
 toys bound to that body part — bound on the Devices tab, Visual view, "Bite
 zones" — at that zone's own intensity/duration. A zone with nothing bound falls
 back to firing everything.
+
+#### Contact tags are not OSC parameters
+
+A common point of confusion: biter assets (spray bottles, mouths, toys) carry a
+`VRCContactSender` with a tag such as `BT_Bite`. **StayPutVR never sees that
+tag.** Contact senders and receivers talk to each other inside VRChat's physics
+world and emit no OSC at all. The chain is:
+
+1. The biting asset's contact **sender** broadcasts its tag (e.g. `BT_Bite`).
+2. A contact **receiver** on *your* avatar (the VRC BiteTech prefab) is listening
+   for that tag and sets an animator parameter when it collides.
+3. That prefab drives the expression parameter `SPVR_Bite` (or one of the
+   body-part variants) — directly or via a VRC Avatar Parameter Driver.
+4. VRChat sends `/avatar/parameters/SPVR_Bite` out over OSC, and StayPutVR
+   shocks.
+
+So the tag name and the OSC parameter name are independent, and only step 4
+concerns StayPutVR. If bites aren't registering, the break is almost always at
+step 3 — the receiver is firing but nothing is driving `SPVR_Bite`. Matching is
+exact: only the configured bite path plus one of the six fixed suffixes is
+recognised, so pointing an asset at `/avatar/parameters/BT_Bite` does nothing
+unless you also change the bite path in Settings → OSC.
 
 ### Shock Trigger (Incoming)
 
