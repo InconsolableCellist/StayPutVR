@@ -104,6 +104,17 @@ View the [wiki](https://github.com/InconsolableCellist/StayPutVR/wiki) for more 
 
 See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
+**1.5.4** - Spank trigger; the Shock param moves to SPVR_Shock (10/1/2026)
+- Added a **Spank trigger** (`SPVR_Spank`) on Integrations → Spank: each spank fires a step harder than the last, from a min up to a max (staying there or wrapping back to min), then glides back down after a few seconds without one. Pick which of PiShock, OpenShock, DG-Lab and BPIO it fires, and whether PiShock/OpenShock shock or vibrate
+- The Shock param now defaults to `/avatar/parameters/SPVR_Shock`, since VRChat doesn't send back out a param it received over OSC. Configs on the old default move over automatically, and `/avatar/parameters/Shock` is still accepted (Settings → OSC) so the Dungeons of Eternity mod keeps working
+
+**1.5.3** - PiShock API fix (9/29/2026)
+- Fixed **PiShock not connecting**: PiShock retired the API calls that passed your API key in the URL or request body. The User ID lookup (WebSocket v2) and Legacy HTTP commands now send the key as an `X-PiShock-Api-Key` header
+
+**1.5.2** - OSC Query answers plain UDP askers; the Shock param takes a magnitude (9/12/2026)
+- The `Shock` OSC param now also accepts a float 0..1, firing at that fraction of a new **Shock max intensity** (the whole range 0..max), with per-device maxes for PiShock and OpenShock when per-device intensities are on; a bool still fires the plain Shock intensity. Used by the Dungeons of Eternity mod to shock harder the closer to death a hit leaves you
+- OSC Query now answers a query that comes from a port other than 5353 by unicast to the asker (RFC 6762 legacy unicast), so a program that never binds the mDNS port can still discover StayPutVR's receive port. Used by the Dungeons of Eternity mod; VRChat and VRCFaceTracking are unaffected
+
 **1.5.1** - Bite zones (8/9/2026)
 - Added **bite zones**: the prefab now reports where it was bitten (`SPVR_Bite_Tail`, `SPVR_Bite_Ear_Left`, `SPVR_Bite_Ear_Right`, `SPVR_Bite_Thigh_Left`, `SPVR_Bite_Thigh_Right`, `SPVR_Bite_Jaw`), and each body part can be bound to its own shockers, DG-Lab channels and BPIO toys — bind them in Devices → Visual with the view switched to **Bite zones**
 - Each zone carries its own bite intensity and duration

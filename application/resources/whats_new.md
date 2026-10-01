@@ -1,11 +1,38 @@
-# What's New in StayPutVR 1.5.1
+# What's New in StayPutVR 1.5.4
 
-Thanks for your support! This release teaches bites where they landed: your avatar
-now reports which body part was bitten, and you can send each one to a different
-shocker or toy.
+Thanks for your support! This one adds a spank trigger and moves the Shock param to
+a name your avatar can send.
 
 As always you can get support on my Discord, and join my Patreon for supporter
 recognition, to support my work, and for exclusives.
+
+## New in 1.5.4
+- **Spank trigger:** when your avatar sends `SPVR_Spank` (say, from a contact that
+  only trips on a fast-moving hand), StayPutVR fires a spank, and each one comes a
+  step harder than the last, up to a max you choose. Leave it alone for a few
+  seconds and it eases back down. Set it up on the new **Integrations → Spank**
+  tab: which devices it fires, shock or vibrate, the min/max/step, and the timing.
+- **Shock is now `SPVR_Shock`:** VRChat doesn't pass on a param it received over
+  OSC, so avatars copy `Shock` to `SPVR_Shock`. If you were on the old default
+  you've been moved over automatically. The old `Shock` still works too, so the
+  Dungeons of Eternity mod is unaffected.
+
+## New in 1.5.3
+- **PiShock works again.** PiShock stopped accepting the API key the way StayPutVR
+  was sending it, so WebSocket v2 couldn't connect ("Failed to fetch User ID") and
+  Legacy HTTP commands failed. Both now use PiShock's new API. Nothing to change on
+  your end. Legacy HTTP mode now needs your hub on V3 firmware.
+
+## New in 1.5.2
+- **How hard, not just whether:** the OSC `Shock` param now also takes a float from
+  0 to 1 and fires at that fraction of a new **Shock max intensity** slider (per
+  device too, when per-device intensities are on), so it has the whole range from
+  0 to your max. A bool still fires the plain Shock intensity. The Dungeons of Eternity mod uses this to shock
+  harder the closer to death a hit leaves you.
+- **Plays nicer with other OSC Query clients:** StayPutVR now answers discovery
+  queries from any UDP port, not just the mDNS port, so tools like the Dungeons of
+  Eternity mod can find its receive port with OSC Query left on. Nothing changes
+  for VRChat or VRCFaceTracking.
 
 ## New in 1.5.1
 - **Bite zones:** your prefab now reports *where* it was bitten — tail, either ear,

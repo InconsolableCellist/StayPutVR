@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <vector>
 #include <array>
+#include <algorithm>
 #include <mutex>
 #include <shared_mutex>
 #include <nlohmann/json.hpp>
@@ -91,7 +92,41 @@ class Config {
 public:
     // v1: PiShock durations migrated 0..1 -> seconds.
     // v2: OpenShock durations migrated 0..1 -> seconds.
-    static constexpr int CURRENT_CONFIG_VERSION = 2;
+    // v3: Shock path default moved from Shock to SPVR_Shock.
+    static constexpr int CURRENT_CONFIG_VERSION = 3;
+
+    // The pre-1.5.4 Shock path. Still accepted alongside osc_shock_path (see
+    // osc_shock_accept_legacy_path): the Dungeons of Eternity mod sends it
+    // straight to StayPutVR rather than through the avatar.
+    static constexpr const char* kLegacyShockPath = "/avatar/parameters/Shock";
+
+    // Intensity for a Shock-param trigger. magnitude < 0 means the param was a
+    // bool or int and the plain intensity is used as it is; 0..1 is a float
+    // and the shock fires at magnitude x ceiling, so a float has the whole
+    // range 0..ceiling to itself and the plain intensity plays no part.
+    static float ScaleShock(float plain, float ceiling, float magnitude) {
+        if (magnitude < 0.0f) return plain;
+        if (magnitude > 1.0f) magnitude = 1.0f;
+        return magnitude * ceiling;
+    }
+
+    // Spank ladder level since_last seconds after a spank that fired at
+    // `level`: held for `hold`, then a straight glide down to min_level over
+    // `ramp`. -1 once fully down (the next spank starts again at min).
+    static float SpankLevelAt(float level, float since_last, float hold, float ramp, float min_level) {
+        if (since_last <= hold) return level;
+        if (ramp <= 0.0f || since_last >= hold + ramp) return -1.0f;
+        return level + (min_level - level) * ((since_last - hold) / ramp);
+    }
+
+    // The intensity the next spank fires at, given the current level from
+    // SpankLevelAt (-1 = idle). At max it stays there or wraps back to min.
+    static float SpankNextLevel(float current, float min_level, float max_level, float step, bool wrap) {
+        if (max_level < min_level) max_level = min_level;
+        if (current < 0.0f) return min_level;
+        if (wrap && current >= max_level - 0.001f) return min_level;
+        return (std::min)(current + step, max_level);
+    }
 
     Config();
     ~Config() = default;
@@ -183,9 +218,21 @@ public:
     // External shock triggers (issue #7): the bite param and the new Shock param
     // each fire a direct shock on all configured shockers at their own intensity
     // (0..1) and duration (seconds). Both are blocked while emergency stop is active.
-    std::string osc_shock_path = "/avatar/parameters/Shock";
+    // SPVR_Shock since 1.5.4: VRChat doesn't send back out a param it received
+    // over OSC, so an avatar that receives Shock copies it to SPVR_Shock.
+    std::string osc_shock_path = "/avatar/parameters/SPVR_Shock";
+    // Also fire on kLegacyShockPath. An avatar that drives Shock itself AND
+    // copies it to SPVR_Shock would fire twice per hit with this on.
+    bool osc_shock_accept_legacy_path = true;
     bool osc_shock_enabled = true;
     float osc_shock_intensity = 0.25f;
+    // A float on the Shock param carries a magnitude 0..1, and the shock fires
+    // at magnitude x this ceiling: the float unlocks the whole range 0..max.
+    // A bool or int on the param is the plain osc_shock_intensity, as before;
+    // the two sliders are independent. With per-device intensities on, PiShock
+    // and OpenShock devices use their own ceilings (below); this one covers
+    // DG-Lab and the PiShock legacy API, which have no per-device intensities.
+    float osc_shock_max_intensity = 0.25f;
     float osc_shock_duration = 1.0f;
     float osc_bite_intensity = 0.25f;
     float osc_bite_duration = 1.0f;
@@ -193,6 +240,33 @@ public:
     // disobedience intensity instead of the single intensity above.
     bool osc_bite_use_individual_intensities = false;
     bool osc_shock_use_individual_intensities = false;
+
+    // Spank (1.5.4): the avatar sends SPVR_Spank when a hand hits it fast enough.
+    // Each spank climbs a ladder: the first fires at spank_min_intensity, each
+    // one after it a spank_step higher, up to spank_max_intensity (where it
+    // stays, or wraps back to min). spank_hold_seconds after the last spank the
+    // level glides back down to min over spank_rampdown_seconds; a spank on the
+    // way down climbs from wherever the level has got to. Spanks closer
+    // together than spank_debounce_seconds count once.
+    std::string osc_spank_path = "/avatar/parameters/SPVR_Spank";
+    bool spank_enabled = true;
+    bool spank_use_pishock = true;
+    bool spank_use_openshock = true;
+    bool spank_use_dglab = true;
+    bool spank_use_buttplug = true;
+    // PiShock/OpenShock action: 0 = shock, 1 = vibrate. DG-Lab only pulses
+    // and BPIO only vibrates, so it doesn't apply to them.
+    int spank_action = 0;
+    float spank_min_intensity = 0.10f;
+    float spank_max_intensity = 0.50f;
+    float spank_step = 0.10f;
+    float spank_duration = 1.0f;
+    bool spank_wrap_at_max = false;
+    // 2.5s by default: PiShock refuses a second action within 2s, so a shorter
+    // debounce lets the ladder climb past spanks PiShock dropped.
+    float spank_debounce_seconds = 2.5f;
+    float spank_hold_seconds = 5.0f;
+    float spank_rampdown_seconds = 3.0f;
 
     // Bite zone routing (1.5.1). Off => every SPVR_Bite_* fires all configured
     // shockers at the global intensity/duration above. On => a bite fires only
@@ -206,6 +280,8 @@ public:
     // enable check and the emergency-stop gate). Persisted across runs; the
     // session count lives on UIManager and resets every launch.
     int bite_count_lifetime = 0;
+    // The same for spanks (1.5.4).
+    int spank_count_lifetime = 0;
 
     // Global lock/unlock paths
     std::string osc_global_lock_path = "/avatar/parameters/SPVR_Global_Lock";
@@ -310,6 +386,8 @@ public:
     // Individual device intensities for PiShock WebSocket v2 (disobedience for each of 5 devices)
     bool pishock_use_individual_disobedience_intensities = false;
     std::array<float, 5> pishock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f}; 
+    // Per-device ceiling for a Shock param sent as a float (see osc_shock_max_intensity).
+    std::array<float, 5> pishock_individual_shock_max_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
     // OpenShock Settings
     bool openshock_enabled = false;
@@ -342,6 +420,8 @@ public:
     // Individual device intensities for OpenShock (warning and disobedience for each of 5 devices)
     std::array<float, 5> openshock_individual_warning_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
     std::array<float, 5> openshock_individual_disobedience_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
+    // Per-device ceiling for a Shock param sent as a float (see osc_shock_max_intensity).
+    std::array<float, 5> openshock_individual_shock_max_intensities = {0.25f, 0.25f, 0.25f, 0.25f, 0.25f};
 
     // DG-Lab Coyote 3.0 Settings (app-bridged WebSocket: we run a local WS
     // server, the DG-Lab phone app scans our QR code and relays to the device

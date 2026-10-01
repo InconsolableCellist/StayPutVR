@@ -576,6 +576,37 @@ struct ListenContext {
     struct sockaddr_in local_addr;
 };
 
+// Send one answer back to whoever asked. RFC 6762 section 6.7: a query that did
+// not come from port 5353 is a "legacy unicast" query from a plain UDP socket
+// that has no way to hear a multicast reply, so the answer has to go back by
+// unicast to the asker's own address and port. That is what lets a program that
+// never binds the mDNS port itself (the Dungeons of Eternity mod, or
+// `dig -p 5353 @224.0.0.251 _osc._udp.local ptr`) find our ephemeral OSC port.
+// Anything asking from 5353 -- VRChat, VRCFaceTracking, the Windows resolver --
+// is answered by multicast exactly as before.
+static void AnswerQuery(int sock, const struct sockaddr* from, size_t addrlen, uint16_t query_id,
+                        const char* question, size_t question_len, const mdns_record_t& answer,
+                        const mdns_record_t* additional, size_t additional_count,
+                        void* sendbuf, size_t sendbuf_size) {
+    uint16_t from_port = 0;
+    if (from && from->sa_family == AF_INET)
+        from_port = ntohs(reinterpret_cast<const sockaddr_in*>(from)->sin_port);
+
+    if (from_port != 0 && from_port != MDNS_PORT) {
+        mdns_query_answer_unicast(sock, from, addrlen, sendbuf, sendbuf_size, query_id,
+                                  MDNS_RECORDTYPE_PTR, question, question_len, answer,
+                                  nullptr, 0, additional, additional_count);
+        char ip[INET_ADDRSTRLEN] = {};
+        inet_ntop(AF_INET, &reinterpret_cast<const sockaddr_in*>(from)->sin_addr, ip, sizeof(ip));
+        LogDebug("OSCQuery: answered mDNS query for " + std::string(question, question_len) +
+                 " by unicast to " + ip + ":" + std::to_string(from_port));
+    } else {
+        mdns_query_answer_multicast(sock, sendbuf, sendbuf_size, answer, nullptr, 0,
+                                    additional, additional_count);
+        LogDebug("OSCQuery: answered mDNS query for " + std::string(question, question_len));
+    }
+}
+
 static int MDNSListenCallback(int sock, const struct sockaddr* from, size_t addrlen,
                                mdns_entry_type_t entry, uint16_t query_id, uint16_t rtype,
                                uint16_t rclass, uint32_t ttl, const void* data, size_t size,
@@ -589,13 +620,15 @@ static int MDNSListenCallback(int sock, const struct sockaddr* from, size_t addr
     mdns_string_t name = mdns_string_extract(data, size, &name_offset, name_buf, sizeof(name_buf));
     std::string query_name(name.str, name.length);
 
-    char sendbuf[2048];
+    // The mdns library wants a 32-bit aligned buffer.
+    alignas(4) char sendbuf[2048];
 
     std::string oscjson_service = ctx->service_name + "._oscjson._tcp.local.";
     std::string osc_service = ctx->service_name + "._osc._udp.local.";
     std::string host = ctx->hostname + ".local.";
 
     if (query_name.find("_oscjson._tcp.local") != std::string::npos) {
+        static const char kQuestion[] = "_oscjson._tcp.local.";
         mdns_record_t answer = {};
         answer.name = {MDNS_STRING_CONST("_oscjson._tcp.local.")};
         answer.type = MDNS_RECORDTYPE_PTR;
@@ -619,12 +652,12 @@ static int MDNSListenCallback(int sock, const struct sockaddr* from, size_t addr
         additional[1].rclass = 0;
         additional[1].ttl = 120;
 
-        mdns_query_answer_multicast(sock, sendbuf, sizeof(sendbuf),
-                                     answer, nullptr, 0, additional, 2);
-        LogDebug("OSCQuery: answered mDNS query for _oscjson._tcp.local (asker wants our OSCQuery service)");
+        AnswerQuery(sock, from, addrlen, query_id, kQuestion, sizeof(kQuestion) - 1,
+                    answer, additional, 2, sendbuf, sizeof(sendbuf));
     }
 
     if (query_name.find("_osc._udp.local") != std::string::npos) {
+        static const char kQuestion[] = "_osc._udp.local.";
         mdns_record_t answer = {};
         answer.name = {MDNS_STRING_CONST("_osc._udp.local.")};
         answer.type = MDNS_RECORDTYPE_PTR;
@@ -648,9 +681,8 @@ static int MDNSListenCallback(int sock, const struct sockaddr* from, size_t addr
         additional[1].rclass = 0;
         additional[1].ttl = 120;
 
-        mdns_query_answer_multicast(sock, sendbuf, sizeof(sendbuf),
-                                     answer, nullptr, 0, additional, 2);
-        LogDebug("OSCQuery: answered mDNS query for _osc._udp.local");
+        AnswerQuery(sock, from, addrlen, query_id, kQuestion, sizeof(kQuestion) - 1,
+                    answer, additional, 2, sendbuf, sizeof(sendbuf));
     }
 
     return 0;

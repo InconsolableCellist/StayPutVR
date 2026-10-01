@@ -35,10 +35,15 @@ namespace StayPutVR {
         // (seconds); empty device_serial fires every configured device.
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
+        // The same, vibrating instead of shocking (spank in vibrate mode).
+        void TriggerVibrate(float intensity, float duration_seconds, const std::string& reason = "",
+                            const std::string& device_serial = "");
         // Like TriggerShock but uses the per-device disobedience intensities
         // instead of a single supplied intensity (for OSC bite/shock).
+        // magnitude: -1 for the plain per-device intensity, 0..1 to scale each
+        // device from its intensity up to its Shock max (float Shock param).
         void TriggerShockIndividual(float duration_seconds, const std::string& reason = "",
-                                    const std::string& device_serial = "");
+                                    const std::string& device_serial = "", float magnitude = -1.0f);
         void TestActions() override;
         std::string GetConnectionStatus() const override;
 
@@ -48,7 +53,8 @@ namespace StayPutVR {
         void SendShock(int intensity, int duration, const std::string& reason = "", const std::string& device_serial = "");
 
         // Individual intensity support
-        void SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience);
+        void SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience,
+                                                float magnitude = -1.0f);
         void SendVibrateWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience);
 
         bool IsFullyConfigured() const;

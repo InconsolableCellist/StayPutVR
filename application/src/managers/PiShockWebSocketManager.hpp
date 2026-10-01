@@ -67,10 +67,15 @@ namespace StayPutVR {
         // (seconds); empty device_serial fires every configured shocker.
         void TriggerShock(float intensity, float duration_seconds, const std::string& reason = "",
                           const std::string& device_serial = "");
+        // The same, vibrating instead of shocking (spank in vibrate mode).
+        void TriggerVibrate(float intensity, float duration_seconds, const std::string& reason = "",
+                            const std::string& device_serial = "");
         // Like TriggerShock but fires each shocker at its per-device disobedience
         // intensity instead of a single supplied intensity (for OSC bite/shock).
+        // magnitude: -1 for the plain per-device intensity, 0..1 to scale each
+        // device from its intensity up to its Shock max (float Shock param).
         void TriggerShockIndividual(float duration_seconds, const std::string& reason = "",
-                                    const std::string& device_serial = "");
+                                    const std::string& device_serial = "", float magnitude = -1.0f);
         void TestActions();
         
         // Individual action methods
@@ -168,7 +173,8 @@ namespace StayPutVR {
         // intensity_override: API intensity (0..100) to use for every device;
         // when < 0 the configured disobedience intensities are used.
         void SendVibrateMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override = -1);
-        void SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override = -1);
+        void SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override = -1,
+                            float magnitude = -1.0f);
         
         // Logging helpers
         void LogAction(const PiShockWSActionData& action, bool success, const std::string& response) const;

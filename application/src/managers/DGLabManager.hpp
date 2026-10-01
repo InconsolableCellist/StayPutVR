@@ -69,7 +69,9 @@ namespace StayPutVR {
         // a specific serial fires only the channels bound to it in the Devices
         // tab (no fall-back — a tracker bound to nothing fires nothing).
         void TriggerWarningActions(const std::string& device_serial = "");
-        void TriggerDisobedienceActions(const std::string& device_serial = "");
+        // magnitude: -1 for the plain disobedience intensity, 0..1 to scale it
+        // up to the global Shock max (float Shock param).
+        void TriggerDisobedienceActions(const std::string& device_serial = "", float magnitude = -1.0f);
         // Rate-limit probe for callers that poll while a device stays out of bounds.
         bool CanTriggerAction() const;
         // Single-channel variant used by the panel test buttons. channel 0=A, 1=B.

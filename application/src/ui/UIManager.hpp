@@ -349,6 +349,8 @@ namespace StayPutVR {
         void UpdateDatasetAutoSegmentation();
         // OSC Triggers sub-tab: bite/shock enable + intensity/duration (paths live in Settings > OSC).
         void RenderOSCTriggersTab();
+        // Spank sub-tab: which integrations fire, the intensity ladder and its timing.
+        void RenderSpankTab();
 
         // Startup splash + What's New overlays (see SplashScreen / UIManager_WhatsNew.cpp).
         void OpenWhatsNew();
@@ -582,8 +584,20 @@ namespace StayPutVR {
                                   const std::string& device_serial = "");
         // Like TriggerExternalShock but each shocker uses its per-device
         // disobedience intensity (OSC bite/shock "use individual" option).
+        // magnitude: -1 for the plain per-device intensity, or 0..1 to scale
+        // each device between its intensity and its Shock max (float Shock param).
         void TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
-                                            const std::string& device_serial = "");
+                                            const std::string& device_serial = "", float magnitude = -1.0f);
+        // Spank (1.5.4). OnSpankParam runs on the OSC receive thread with each
+        // SPVR_Spank value; a false -> true edge outside the debounce window
+        // climbs the ladder and fires. SpankLevelNow is the ladder's current
+        // level (-1 = idle) for the UI. FireSpank sends one spank at
+        // `intensity` to the integrations ticked in the Spank tab.
+        void OnSpankParam(bool value);
+        bool AcceptSpank(const std::string& reason, bool count_spank = true);
+        float SpankLevelNow();
+        void ResetSpankLadder();
+        void FireSpank(float intensity, const std::string& reason);
         void ResetEmergencyStop();
         
         // Helper functions
@@ -670,6 +684,18 @@ namespace StayPutVR {
         // config_.bite_count_lifetime so it survives restarts.
         std::atomic<int> bite_count_session_{0};
         std::atomic<int> bite_count_lifetime_{0};
+
+        // Spank ladder. spank_mutex_ guards the level/time pair, which the OSC
+        // thread writes and the Spank tab reads. spank_last_ is the last
+        // accepted spank (default = long ago, so the first passes the debounce).
+        std::mutex spank_mutex_;
+        bool spank_active_ = false;
+        float spank_level_ = 0.0f;
+        std::chrono::steady_clock::time_point spank_last_{};
+        std::atomic<bool> spank_prev_{false};  // last SPVR_Spank value, for edge detection
+        // Spank tallies, as for bites: only spanks that fired, not tests.
+        std::atomic<int> spank_count_session_{0};
+        std::atomic<int> spank_count_lifetime_{0};
 
         // Avatar-change re-sync: VRChat resets all avatar params on avatar load and
         // isn't ready to receive the echo at the instant /avatar/change fires, so the

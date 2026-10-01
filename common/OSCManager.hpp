@@ -130,7 +130,14 @@ public:
     void SetAvatarChangeCallback(std::function<void()> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); avatar_change_callback_ = std::move(callback); }
 
     // Set callback for the external shock param (/avatar/parameters/Shock).
-    void SetShockCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); shock_callback_ = std::move(callback); }
+    // The argument is the magnitude: -1 for a bool/int trigger (the plain
+    // configured shock), or 0..1 from a float, scaling the shock between the
+    // configured intensity and the configured max.
+    void SetShockCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); shock_callback_ = std::move(callback); }
+
+    // Set callback for the spank param (SPVR_Spank). Fired on every inbound
+    // value with the bool reading; the receiver does edge detection/debounce.
+    void SetSpankCallback(std::function<void(bool)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); spank_callback_ = std::move(callback); }
 
     // Set callback for emergency stop stretch actions
     void SetEStopStretchCallback(std::function<void(float)> callback) { std::lock_guard<std::mutex> lk(callback_mutex_); estop_stretch_callback_ = std::move(callback); }
@@ -221,7 +228,9 @@ private:
     std::string osc_global_unlock_path_ = "/avatar/parameters/SPVR_global_unlock";
     std::string osc_global_out_of_bounds_path_ = "/avatar/parameters/SPVR_Global_OutOfBounds";
     std::string osc_bite_path_ = "/avatar/parameters/SPVR_Bite";
-    std::string osc_shock_path_ = "/avatar/parameters/Shock";
+    std::string osc_shock_path_ = "/avatar/parameters/SPVR_Shock";
+    bool osc_shock_accept_legacy_path_ = true;
+    std::string osc_spank_path_ = "/avatar/parameters/SPVR_Spank";
     std::string osc_estop_stretch_path_ = "/avatar/parameters/SPVR_EStop_Stretch";
 
     // JawOpen bridge parameter. The app listens for SPVR_JawOpen (driven by the
@@ -265,8 +274,11 @@ private:
     static constexpr int kBiteNoMatch = -2;
     int MatchBiteZone(const std::string& address) const;
 
-    // Callback for external shock param (/avatar/parameters/Shock)
-    std::function<void(bool)> shock_callback_;
+    // Callback for external shock param (/avatar/parameters/Shock); see SetShockCallback
+    std::function<void(float)> shock_callback_;
+
+    // Callback for the spank param (SPVR_Spank); see SetSpankCallback
+    std::function<void(bool)> spank_callback_;
 
     // Callback for avatar change events (/avatar/change)
     std::function<void()> avatar_change_callback_;

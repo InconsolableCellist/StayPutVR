@@ -27,6 +27,76 @@ All notable user-facing changes to StayPutVR are documented here. Dates are M/D/
 - **Simulated device feed (dev)** — synthetic 6-device ~90 Hz feed to exercise
   the capture path without SteamVR (also used by the Linux dev build).
 
+## 1.5.4 — Spank trigger; the Shock param moves to SPVR_Shock (10/1/2026)
+
+### New features
+- **Spank trigger** (`/avatar/parameters/SPVR_Spank`), with its own tab under
+  Integrations → Spank. Each spank fires a step harder than the last: the first
+  at **Min intensity**, then up by **Step per spank** to **Max intensity**,
+  where it stays or (with *Wrap back to min after max*) starts over at min.
+  **Hold before ramp-down** (5s) after the last spank the level glides back to
+  min over **Ramp-down time** (3s); a spank on the way down climbs from
+  wherever the level has got to. Spanks closer together than **Debounce**
+  (2.5s) count once.
+  - Tick which of PiShock, OpenShock, DG-Lab and BPIO it fires, and whether
+    PiShock/OpenShock shock or vibrate. DG-Lab always pulses and BPIO always
+    vibrates.
+  - The tab shows the live level and the next spank's intensity, and has a
+    *Test spank* button.
+  - PiShock refuses a second action within 2s and OpenShock within 1s, so a
+    debounce shorter than about 2.5s lets the ladder climb past spanks PiShock
+    dropped.
+
+### Changes
+- **The Shock param's default path is now `/avatar/parameters/SPVR_Shock`.**
+  VRChat doesn't send back out a param it received over OSC, so an avatar that
+  receives `Shock` copies it to `SPVR_Shock`. Configs still on the old default
+  move over on first launch; a path you set yourself is left alone.
+- `/avatar/parameters/Shock` is still accepted alongside it while *Also accept
+  /avatar/parameters/Shock* is on in Settings → OSC (the default), so apps that
+  send it straight to StayPutVR, like the Dungeons of Eternity mod, keep
+  working. Turn it off if your avatar drives `Shock` itself and also copies it
+  to `SPVR_Shock`, or each hit fires twice.
+
+## 1.5.3 — PiShock API fix (9/29/2026)
+
+### Fixes
+- **PiShock stopped working:** PiShock retired the endpoints that took the API
+  key in the query string or request body. StayPutVR now authenticates with the
+  `X-PiShock-Api-Key` header everywhere PiShock still accepts it:
+  - WebSocket v2 looks up your User ID from `auth.pishock.com/Account` instead of
+    the removed `Auth/GetUserIfAPIKeyValid`, which was failing the connection
+    with "Failed to fetch User ID - check credentials".
+  - Legacy HTTP mode now sends commands to
+    `api.pishock.com/Shockers/OperateByShare/{code}` instead of the removed
+    `do.pishock.com/api/apioperate`. The new endpoint only works with hubs on V3
+    firmware.
+- The WebSocket v2 broker connection itself is unchanged.
+
+## 1.5.2 — OSC Query answers plain UDP askers; the Shock param takes a magnitude (9/12/2026)
+
+### New features
+- **The Shock param can carry how hard to shock.** `/avatar/parameters/Shock` still
+  takes a bool for the plain shock at the configured Shock intensity (or each
+  device's disobedience intensity, with per-device intensities on). Sent as a
+  float from 0 to 1 it now fires at that fraction of a new **Shock max
+  intensity** on Integrations → OSC Triggers, so a float has the whole range from
+  0 to the max and the bool intensity plays no part in it. With per-device
+  intensities on, each PiShock and OpenShock device gets its own **Shock max** in
+  its tab; DG-Lab and the PiShock legacy API use the global one. A float of 0 is
+  the release and fires nothing. Used by the Dungeons of Eternity mod to shock
+  harder the closer to death a hit leaves you.
+
+### Fixes
+- **OSC Query now answers queries that come from a port other than 5353** by
+  unicast, straight back to the asker, as RFC 6762 asks. Before, every answer
+  went out by multicast only, so a program that had not bound the mDNS port
+  itself could ask for StayPutVR's OSC service and never hear the reply. The
+  Dungeons of Eternity mod uses this to find the ephemeral receive port with a
+  plain UDP socket, so OSC Query can stay on and nobody has to copy a port
+  number between the two. VRChat, VRCFaceTracking and the Windows resolver all
+  ask from 5353 and are answered by multicast exactly as before.
+
 ## 1.5.1 — Bite zones (8/9/2026)
 
 ### New features

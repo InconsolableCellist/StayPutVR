@@ -123,15 +123,26 @@ namespace StayPutVR {
         SendShock(ConvertIntensityToAPI(intensity), duration_ms, reason, device_serial);
     }
 
+    void OpenShockManager::TriggerVibrate(float intensity, float duration_seconds, const std::string& reason,
+                                          const std::string& device_serial) {
+        if (!IsEnabled()) {
+            Logger::Info("OpenShock not enabled, skipping external vibrate");
+            return;
+        }
+        // Rate limit applied in ExecuteAction, as for TriggerShock.
+        int duration_ms = (std::max)(300, (std::min)(65535, static_cast<int>(duration_seconds * 1000.0f)));
+        SendVibrate(ConvertIntensityToAPI(intensity), duration_ms, reason, device_serial);
+    }
+
     void OpenShockManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
-                                                  const std::string& device_serial) {
+                                                  const std::string& device_serial, float magnitude) {
         if (!IsEnabled()) {
             Logger::Info("OpenShock not enabled, skipping external shock");
             return;
         }
         // is_disobedience=true selects the per-device disobedience intensities
         // (or the master disobedience intensity when individual is disabled).
-        SendShockWithIndividualIntensities(ConvertDurationToAPI(duration_seconds), reason, device_serial, true);
+        SendShockWithIndividualIntensities(ConvertDurationToAPI(duration_seconds), reason, device_serial, true, magnitude);
     }
 
     void OpenShockManager::TestActions() {
@@ -151,7 +162,8 @@ namespace StayPutVR {
         TriggerDisobedienceActions("");
     }
 
-    void OpenShockManager::SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience) {
+    void OpenShockManager::SendShockWithIndividualIntensities(int duration, const std::string& reason, const std::string& device_serial, bool is_disobedience,
+                                                              float magnitude) {
         if (!ValidateCredentials()) {
             SetError("Invalid OpenShock credentials");
             return;
@@ -185,6 +197,8 @@ namespace StayPutVR {
             bool use_individual_disob, use_individual_warn;
             std::array<float, 5> individual_disob_intensities, individual_warn_intensities;
             float master_disob_intensity, master_warn_intensity;
+            std::array<float, 5> individual_shock_max;
+            float global_shock_max;
             {
                 auto cfg_lock = config_->ReadLock();
                 server_url = config_->openshock_server_url;
@@ -197,6 +211,8 @@ namespace StayPutVR {
                 individual_warn_intensities = config_->openshock_individual_warning_intensities;
                 master_disob_intensity = config_->openshock_master_disobedience_intensity;
                 master_warn_intensity = config_->openshock_master_warning_intensity;
+                individual_shock_max = config_->openshock_individual_shock_max_intensities;
+                global_shock_max = config_->osc_shock_max_intensity;
             }
 
             std::vector<std::string> device_ids_to_use;
@@ -239,10 +255,13 @@ namespace StayPutVR {
                 float intensity_normalized;
 
                 if (is_disobedience) {
+                    // A magnitude (float Shock param) scales from the disobedience
+                    // intensity up to the device's Shock max.
                     if (use_individual_disob) {
-                        intensity_normalized = individual_disob_intensities[device_index];
+                        intensity_normalized = Config::ScaleShock(individual_disob_intensities[device_index],
+                                                                  individual_shock_max[device_index], magnitude);
                     } else {
-                        intensity_normalized = master_disob_intensity;
+                        intensity_normalized = Config::ScaleShock(master_disob_intensity, global_shock_max, magnitude);
                     }
                 } else {
                     if (use_individual_warn) {

@@ -276,8 +276,25 @@ namespace StayPutVR {
         SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, device_serial, ConvertIntensityToAPI(intensity));
     }
 
+    void PiShockWebSocketManager::TriggerVibrate(float intensity, float duration_seconds, const std::string& reason,
+                                                 const std::string& device_serial) {
+        if (!IsEnabled()) {
+            Logger::Info("PiShock WebSocket not enabled, skipping external vibrate");
+            return;
+        }
+        if (!IsConnected()) {
+            Logger::Warning("PiShock WebSocket not connected, skipping external vibrate");
+            return;
+        }
+        if (!CheckRateLimit()) {
+            Logger::Info("Rate limit active, skipping external vibrate");
+            return;
+        }
+        SendVibrateMulti(ConvertDurationToAPI(duration_seconds), reason, device_serial, ConvertIntensityToAPI(intensity));
+    }
+
     void PiShockWebSocketManager::TriggerShockIndividual(float duration_seconds, const std::string& reason,
-                                                          const std::string& device_serial) {
+                                                          const std::string& device_serial, float magnitude) {
         if (!IsEnabled()) {
             Logger::Info("PiShock WebSocket not enabled, skipping external shock");
             return;
@@ -293,7 +310,7 @@ namespace StayPutVR {
         // intensity_override = -1 (the default) makes SendShockMulti pick each
         // shocker's per-device disobedience intensity (or the master disobedience
         // intensity when individual intensities are disabled).
-        SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, device_serial);
+        SendShockMulti(ConvertDurationToAPI(duration_seconds), reason, device_serial, -1, magnitude);
     }
 
     void PiShockWebSocketManager::TestActions() {
@@ -537,17 +554,18 @@ namespace StayPutVR {
         }
 
         try {
-            // Build API URL
-            std::string url = "https://auth.pishock.com/Auth/GetUserIfAPIKeyValid?apikey=" + 
-                             config_->pishock_api_key + 
-                             "&username=" + config_->pishock_username;
+            // PiShock retired Auth/GetUserIfAPIKeyValid (key in the query string);
+            // /Account identifies the key's owner from the X-PiShock-Api-Key header.
+            std::string url = "https://auth.pishock.com/Account";
 
             Logger::Debug("Fetching User ID from: " + url);
 
             // Make HTTP GET request
             std::string response;
             std::map<std::string, std::string> headers;
-            
+            headers["X-PiShock-Api-Key"] = config_->pishock_api_key;
+            headers["Accept"] = "application/json";
+
             bool success = HttpClient::SendHttpRequest(
                 url,
                 "GET",
@@ -557,7 +575,8 @@ namespace StayPutVR {
             );
 
             if (!success || response.empty()) {
-                Logger::Error("Failed to fetch User ID from API");
+                Logger::Error("Failed to fetch User ID from API" +
+                              (response.empty() ? std::string() : ": " + response));
                 return false;
             }
 
@@ -944,7 +963,8 @@ namespace StayPutVR {
         }
     }
 
-    void PiShockWebSocketManager::SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override) {
+    void PiShockWebSocketManager::SendShockMulti(int duration, const std::string& reason, const std::string& device_serial, int intensity_override,
+                                                 float magnitude) {
         if (!ValidateCredentials()) {
             SetError("Invalid PiShock credentials");
             return;
@@ -1015,11 +1035,14 @@ namespace StayPutVR {
                     intensity = (std::max)(1, intensity_override);
                 } else {
                     float intensity_normalized;
-                    // Use individual disobedience intensities if enabled, otherwise use master
+                    // Use individual disobedience intensities if enabled, otherwise use master.
+                    // A magnitude (float Shock param) scales from there up to the Shock max.
                     if (config_->pishock_use_individual_disobedience_intensities) {
-                        intensity_normalized = config_->pishock_individual_disobedience_intensities[device_index];
+                        intensity_normalized = Config::ScaleShock(config_->pishock_individual_disobedience_intensities[device_index],
+                                                                  config_->pishock_individual_shock_max_intensities[device_index], magnitude);
                     } else {
-                        intensity_normalized = config_->pishock_disobedience_intensity;
+                        intensity_normalized = Config::ScaleShock(config_->pishock_disobedience_intensity,
+                                                                  config_->osc_shock_max_intensity, magnitude);
                     }
                     intensity = (std::max)(1, ConvertIntensityToAPI(intensity_normalized));
                 }

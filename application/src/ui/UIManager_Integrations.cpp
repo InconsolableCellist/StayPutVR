@@ -56,6 +56,10 @@ namespace StayPutVR {
                 RenderOSCTriggersTab();
                 ImGui::EndTabItem();
             }
+            if (ImGui::BeginTabItem("Spank")) {
+                RenderSpankTab();
+                ImGui::EndTabItem();
+            }
             if (ImGui::BeginTabItem("BPIO")) {
                 RenderButtplugTab();
                 ImGui::EndTabItem();

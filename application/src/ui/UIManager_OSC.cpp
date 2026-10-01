@@ -122,7 +122,7 @@ namespace StayPutVR {
             changed = true;
         }
 
-        ImGui::SeparatorText("Shock  (/avatar/parameters/Shock)");
+        ImGui::SeparatorText("Shock  (SPVR_Shock)");
         ImGui::TextDisabled("Supports Simple Shock System");
         if (ImGui::Checkbox("Enable Shock trigger", &config_.osc_shock_enabled)) changed = true;
         if (ImGui::Checkbox("Use per-device disobedience intensities##shock", &config_.osc_shock_use_individual_intensities)) changed = true;
@@ -134,10 +134,118 @@ namespace StayPutVR {
         ImGui::BeginDisabled(config_.osc_shock_use_individual_intensities);
         if (ImGuiHelpers::SliderFloatWithButtons("Shock intensity", &config_.osc_shock_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
         ImGui::EndDisabled();
+        if (ImGuiHelpers::SliderFloatWithButtons("Shock max intensity", &config_.osc_shock_max_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("For a Shock param sent as a float (0..1):\n"
+                                  "the shock fires at that fraction of this,\n"
+                                  "so a float has the whole range 0..max. A\n"
+                                  "bool fires the plain Shock intensity above;\n"
+                                  "the two are independent. With per-device\n"
+                                  "intensities on, each PiShock/OpenShock device\n"
+                                  "has its own Shock max in its tab; this one\n"
+                                  "then covers DG-Lab and the PiShock legacy API.");
         if (ImGuiHelpers::SliderFloatWithButtons("Shock duration (s)", &config_.osc_shock_duration, 0.1f, 15.0f, 0.1f, "%.1f")) changed = true;
 
         ImGui::Spacing();
         ImGui::TextDisabled("Both are blocked while emergency stop is active.");
+
+        if (changed) SaveConfig();
+    }
+
+    void UIManager::RenderSpankTab() {
+        bool changed = false;
+
+        ImGui::SeparatorText("Spank  (SPVR_Spank)");
+        ImGui::TextWrapped("Fires when your avatar sends SPVR_Spank, e.g. from a contact receiver "
+            "that only trips on a fast-moving hand. Each spank fires a step harder than the last.");
+        if (ImGui::Checkbox("Enable Spank trigger", &config_.spank_enabled)) changed = true;
+
+        ImGui::SeparatorText("Fires on");
+        if (ImGui::Checkbox("PiShock##spank", &config_.spank_use_pishock)) changed = true;
+        ImGui::SameLine();
+        if (ImGui::Checkbox("OpenShock##spank", &config_.spank_use_openshock)) changed = true;
+        ImGui::SameLine();
+        if (ImGui::Checkbox("DG-Lab##spank", &config_.spank_use_dglab)) changed = true;
+        ImGui::SameLine();
+        if (ImGui::Checkbox("BPIO##spank", &config_.spank_use_buttplug)) changed = true;
+        ImGui::TextUnformatted("PiShock / OpenShock:");
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Shock##spank", config_.spank_action == 0)) { config_.spank_action = 0; changed = true; }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("Vibrate##spank", config_.spank_action == 1)) { config_.spank_action = 1; changed = true; }
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("DG-Lab always pulses and BPIO always vibrates;\n"
+                                  "this only picks what PiShock and OpenShock do.");
+
+        ImGui::SeparatorText("Intensity ladder");
+        if (ImGuiHelpers::SliderFloatWithButtons("Min intensity", &config_.spank_min_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) {
+            config_.spank_max_intensity = (std::max)(config_.spank_max_intensity, config_.spank_min_intensity);
+            changed = true;
+        }
+        if (ImGuiHelpers::SliderFloatWithButtons("Max intensity", &config_.spank_max_intensity, 0.0f, 1.0f, 0.01f, "%.2f")) {
+            config_.spank_min_intensity = (std::min)(config_.spank_min_intensity, config_.spank_max_intensity);
+            changed = true;
+        }
+        if (ImGuiHelpers::SliderFloatWithButtons("Step per spank", &config_.spank_step, 0.01f, 1.0f, 0.01f, "%.2f")) changed = true;
+        if (ImGuiHelpers::SliderFloatWithButtons("Duration (s)##spank", &config_.spank_duration, 0.3f, 15.0f, 0.1f, "%.1f")) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("How long each spank fires, at every step.");
+        if (ImGui::Checkbox("Wrap back to min after max", &config_.spank_wrap_at_max)) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Off: spanks at the top keep firing at max.\n"
+                                  "On: the spank after max starts over at min.");
+
+        ImGui::SeparatorText("Timing");
+        if (ImGuiHelpers::SliderFloatWithButtons("Debounce (s)", &config_.spank_debounce_seconds, 0.5f, 10.0f, 0.1f, "%.1f")) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Spanks closer together than this count once.\n"
+                                  "PiShock refuses a second action within 2s and\n"
+                                  "OpenShock within 1s, so below about 2.5s some\n"
+                                  "spanks climb the ladder without firing PiShock.");
+        if (ImGuiHelpers::SliderFloatWithButtons("Hold before ramp-down (s)", &config_.spank_hold_seconds, 0.0f, 30.0f, 0.5f, "%.1f")) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("How long the level stays put after a spank.");
+        if (ImGuiHelpers::SliderFloatWithButtons("Ramp-down time (s)", &config_.spank_rampdown_seconds, 0.0f, 30.0f, 0.5f, "%.1f")) changed = true;
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("After the hold, the level glides back to min\n"
+                                  "over this long. A spank on the way down climbs\n"
+                                  "from wherever the level has got to and starts\n"
+                                  "the hold again; once it's all the way down the\n"
+                                  "next spank starts at min.");
+
+        ImGui::SeparatorText("Live");
+        const float level = SpankLevelNow();
+        const float next = Config::SpankNextLevel(level, config_.spank_min_intensity, config_.spank_max_intensity,
+                                                  config_.spank_step, config_.spank_wrap_at_max);
+        char overlay[32];
+        if (level < 0.0f) snprintf(overlay, sizeof(overlay), "idle");
+        else snprintf(overlay, sizeof(overlay), "%.2f", level);
+        ImGui::ProgressBar(level < 0.0f ? 0.0f : level, ImVec2(200.0f, 0.0f), overlay);
+        ImGui::SameLine();
+        ImGui::Text("Next spank: %.2f", next);
+        ImGui::Text("Spanks:  %d this session   /   %d lifetime",
+                    spank_count_session_.load(std::memory_order_relaxed),
+                    spank_count_lifetime_.load(std::memory_order_relaxed));
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Counts spanks that actually fired. Spanks inside the debounce, while\n"
+                                  "the trigger is disabled or emergency stop is active, and test\n"
+                                  "spanks are not counted.");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset##spankcount")) {
+            spank_count_session_.store(0, std::memory_order_relaxed);
+            spank_count_lifetime_.store(0, std::memory_order_relaxed);
+            changed = true;
+        }
+        if (ImGui::Button("Test spank")) AcceptSpank("Spank (test)", /*count_spank=*/false);
+        ImGui::SameLine();
+        ImGuiHelpers::HelpTooltip("Fires a real spank on the ticked devices, with\n"
+                                  "the same ladder and debounce as one from the avatar.\n"
+                                  "Not counted in the tally.");
+        ImGui::SameLine();
+        if (ImGui::Button("Reset ladder")) ResetSpankLadder();
+
+        ImGui::Spacing();
+        ImGui::TextDisabled("Blocked while emergency stop is active. Change the path in Settings > OSC.");
 
         if (changed) SaveConfig();
     }
@@ -201,6 +309,7 @@ namespace StayPutVR {
         static char global_out_of_bounds_path[128];
         static char bite_path[128];
         static char shock_path[128];
+        static char spank_path[128];
         static char estop_stretch_path[128];
 
         if (strlen(osc_ip) == 0) strcpy_s(osc_ip, sizeof(osc_ip), config_.osc_address.c_str());
@@ -223,6 +332,7 @@ namespace StayPutVR {
         if (strlen(global_out_of_bounds_path) == 0) strcpy_s(global_out_of_bounds_path, sizeof(global_out_of_bounds_path), config_.osc_global_out_of_bounds_path.c_str());
         if (strlen(bite_path) == 0) strcpy_s(bite_path, sizeof(bite_path), config_.osc_bite_path.c_str());
         if (strlen(shock_path) == 0) strcpy_s(shock_path, sizeof(shock_path), config_.osc_shock_path.c_str());
+        if (strlen(spank_path) == 0) strcpy_s(spank_path, sizeof(spank_path), config_.osc_spank_path.c_str());
         if (strlen(estop_stretch_path) == 0) strcpy_s(estop_stretch_path, sizeof(estop_stretch_path), config_.osc_estop_stretch_path.c_str());
 
         // ===== Connection =====
@@ -292,15 +402,40 @@ namespace StayPutVR {
 
         // ===== Shock Trigger (path only; enable/intensity live in OSC Triggers) =====
         if (ImGui::CollapsingHeader("Shock Trigger")) {
-            ImGui::TextWrapped("OSC parameter path for the shock trigger (e.g. the ChilloutCharles "
-                "shock param). Enable it and tune intensity/duration in Integrations > OSC Triggers.");
+            ImGui::TextWrapped("OSC parameter path for the shock trigger. Enable it and tune "
+                "intensity/duration in Integrations > OSC Triggers.");
             if (ImGui::InputText("Shock Path", shock_path, IM_ARRAYSIZE(shock_path))) {
                 config_.osc_shock_path = shock_path;
                 changed = true;
             }
             if (ImGui::SmallButton("Reset to Defaults##shock")) {
-                config_.osc_shock_path = "/avatar/parameters/Shock";
+                config_.osc_shock_path = "/avatar/parameters/SPVR_Shock";
                 strcpy_s(shock_path, sizeof(shock_path), config_.osc_shock_path.c_str());
+                config_.osc_shock_accept_legacy_path = true;
+                changed = true;
+            }
+            if (ImGui::Checkbox("Also accept /avatar/parameters/Shock", &config_.osc_shock_accept_legacy_path)) {
+                changed = true;
+            }
+            ImGui::SameLine();
+            ImGuiHelpers::HelpTooltip("The Shock path before 1.5.4. Apps like the\n"
+                                      "Dungeons of Eternity mod send it straight to\n"
+                                      "StayPutVR. Turn this off if your avatar drives\n"
+                                      "Shock itself and also copies it to SPVR_Shock,\n"
+                                      "or each hit fires twice.");
+        }
+
+        // ===== Spank Trigger (path only; everything else lives in Integrations > Spank) =====
+        if (ImGui::CollapsingHeader("Spank Trigger")) {
+            ImGui::TextWrapped("OSC parameter path for the spank trigger. Enable it and set up "
+                "the intensity ladder in Integrations > Spank.");
+            if (ImGui::InputText("Spank Path", spank_path, IM_ARRAYSIZE(spank_path))) {
+                config_.osc_spank_path = spank_path;
+                changed = true;
+            }
+            if (ImGui::SmallButton("Reset to Defaults##spank")) {
+                config_.osc_spank_path = "/avatar/parameters/SPVR_Spank";
+                strcpy_s(spank_path, sizeof(spank_path), config_.osc_spank_path.c_str());
                 changed = true;
             }
         }
@@ -610,6 +745,9 @@ namespace StayPutVR {
             osc_query_server_->AddParameter(OSCManager::BiteZonePath(config_.osc_bite_path, z),
                                             "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_shock_path, "T", A::WriteOnly, false);
+        if (config_.osc_shock_accept_legacy_path && config_.osc_shock_path != Config::kLegacyShockPath)
+            osc_query_server_->AddParameter(Config::kLegacyShockPath, "T", A::WriteOnly, false);
+        osc_query_server_->AddParameter(config_.osc_spank_path, "T", A::WriteOnly, false);
         osc_query_server_->AddParameter(config_.osc_estop_stretch_path, "f", A::WriteOnly, 0.0f);
         if (config_.jawopen_enabled) {
             osc_query_server_->AddParameter(config_.osc_jawopen_path, "f", A::WriteOnly, 0.0f);
@@ -1013,12 +1151,13 @@ namespace StayPutVR {
         );
 
         OSCManager::GetInstance().SetShockCallback(
-            [this](bool triggered) {
-                bool enabled, use_individual; float intensity, duration;
+            [this](float magnitude) {
+                bool enabled, use_individual; float intensity, max_intensity, duration;
                 {
                     auto cfg_lock = config_.ReadLock();
                     enabled = config_.osc_shock_enabled;
                     intensity = config_.osc_shock_intensity;
+                    max_intensity = config_.osc_shock_max_intensity;
                     duration = config_.osc_shock_duration;
                     use_individual = config_.osc_shock_use_individual_intensities;
                 }
@@ -1026,13 +1165,21 @@ namespace StayPutVR {
                     return;
                 }
                 if (Logger::IsInitialized()) {
-                    Logger::Info("Shock param triggered via OSC");
+                    Logger::Info(magnitude < 0.0f
+                        ? std::string("Shock param triggered via OSC")
+                        : "Shock param triggered via OSC with magnitude " + std::to_string(magnitude));
                 }
                 if (use_individual) {
-                    TriggerExternalShockIndividual(duration, "Shock param");
+                    TriggerExternalShockIndividual(duration, "Shock param", "", magnitude);
                 } else {
-                    TriggerExternalShock(intensity, duration, "Shock param");
+                    TriggerExternalShock(Config::ScaleShock(intensity, max_intensity, magnitude), duration, "Shock param");
                 }
+            }
+        );
+
+        OSCManager::GetInstance().SetSpankCallback(
+            [this](bool value) {
+                OnSpankParam(value);
             }
         );
         
@@ -1484,6 +1631,7 @@ namespace StayPutVR {
         // and we have just unlocked everything, so a stale "already true" cache here
         // would swallow the re-latch and leave the user unable to lock again.
         ResetOSCLockParamState();
+        ResetSpankLadder();
 
         // Release the global lock and any individually-locked devices. Suppress
         // the unlock sound: this is an automatic transition triggered by VRChat's
@@ -1563,7 +1711,7 @@ namespace StayPutVR {
     }
 
     void UIManager::TriggerExternalShockIndividual(float duration_seconds, const std::string& reason,
-                                                   const std::string& device_serial) {
+                                                   const std::string& device_serial, float magnitude) {
         // Same gating as TriggerExternalShock, but each shocker fires at its own
         // per-device disobedience intensity instead of a single supplied value.
         if (emergency_stop_active_) {
@@ -1581,23 +1729,149 @@ namespace StayPutVR {
 
         if (mode == Config::PiShockMode::LEGACY_API) {
             if (pishock_manager_ && pishock_manager_->IsEnabled()) {
-                pishock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
+                pishock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial, magnitude);
             }
         } else {
             if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
-                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
+                pishock_ws_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial, magnitude);
             }
         }
 
         if (openshock_manager_ && openshock_manager_->IsEnabled()) {
-            openshock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial);
+            openshock_manager_->TriggerShockIndividual(duration_seconds, reason, device_serial, magnitude);
         }
 
         // DG-Lab has no per-channel intensity split (channel strength is pinned
         // at the configured limit), so the individual variant fires the
-        // configured disobedience intensity on the enabled (or bound) channels.
+        // configured disobedience intensity on the enabled (or bound) channels,
+        // scaled up to the global Shock max when a magnitude came in.
         if (dglab_manager_ && dglab_manager_->IsEnabled()) {
-            dglab_manager_->TriggerDisobedienceActions(device_serial);
+            dglab_manager_->TriggerDisobedienceActions(device_serial, magnitude);
+        }
+    }
+
+    void UIManager::OnSpankParam(bool value) {
+        // Act on the false -> true edge only: VRChat sends the release too,
+        // and a held contact must not count again.
+        const bool was = spank_prev_.exchange(value);
+        if (!value || was) return;
+        AcceptSpank("Spank");
+    }
+
+    bool UIManager::AcceptSpank(const std::string& reason, bool count_spank) {
+        bool enabled, wrap;
+        float min_level, max_level, step, debounce, hold, ramp;
+        {
+            auto cfg_lock = config_.ReadLock();
+            enabled = config_.spank_enabled;
+            wrap = config_.spank_wrap_at_max;
+            min_level = config_.spank_min_intensity;
+            max_level = config_.spank_max_intensity;
+            step = config_.spank_step;
+            debounce = config_.spank_debounce_seconds;
+            hold = config_.spank_hold_seconds;
+            ramp = config_.spank_rampdown_seconds;
+        }
+        if (!enabled) return false;
+        // Checked here rather than left to the managers so an ignored spank
+        // doesn't climb the ladder either.
+        if (emergency_stop_active_) {
+            if (Logger::IsInitialized()) {
+                Logger::Warning(reason + " ignored - emergency stop is active");
+            }
+            return false;
+        }
+
+        float intensity;
+        {
+            std::lock_guard<std::mutex> lk(spank_mutex_);
+            const auto now = std::chrono::steady_clock::now();
+            const float since = std::chrono::duration<float>(now - spank_last_).count();
+            if (since < debounce) {
+                if (Logger::IsInitialized()) {
+                    Logger::Debug(reason + " ignored - within the " + std::to_string(debounce) + "s debounce");
+                }
+                return false;
+            }
+            const float current = spank_active_
+                ? Config::SpankLevelAt(spank_level_, since, hold, ramp, min_level) : -1.0f;
+            intensity = Config::SpankNextLevel(current, min_level, max_level, step, wrap);
+            spank_active_ = true;
+            spank_level_ = intensity;
+            spank_last_ = now;
+        }
+        if (count_spank) {
+            spank_count_session_.fetch_add(1, std::memory_order_relaxed);
+            spank_count_lifetime_.fetch_add(1, std::memory_order_relaxed);
+        }
+        FireSpank(intensity, reason);
+        return true;
+    }
+
+    float UIManager::SpankLevelNow() {
+        float min_level, hold, ramp;
+        {
+            auto cfg_lock = config_.ReadLock();
+            min_level = config_.spank_min_intensity;
+            hold = config_.spank_hold_seconds;
+            ramp = config_.spank_rampdown_seconds;
+        }
+        std::lock_guard<std::mutex> lk(spank_mutex_);
+        if (!spank_active_) return -1.0f;
+        const float since = std::chrono::duration<float>(std::chrono::steady_clock::now() - spank_last_).count();
+        return Config::SpankLevelAt(spank_level_, since, hold, ramp, min_level);
+    }
+
+    void UIManager::ResetSpankLadder() {
+        std::lock_guard<std::mutex> lk(spank_mutex_);
+        spank_active_ = false;
+        spank_last_ = {};
+        spank_prev_.store(false);
+    }
+
+    void UIManager::FireSpank(float intensity, const std::string& reason) {
+        bool vibrate, use_pishock, use_openshock, use_dglab, use_buttplug;
+        float duration;
+        Config::PiShockMode mode;
+        {
+            auto cfg_lock = config_.ReadLock();
+            vibrate = config_.spank_action == 1;
+            use_pishock = config_.spank_use_pishock;
+            use_openshock = config_.spank_use_openshock;
+            use_dglab = config_.spank_use_dglab;
+            use_buttplug = config_.spank_use_buttplug;
+            duration = config_.spank_duration;
+            mode = config_.pishock_mode;
+        }
+
+        if (Logger::IsInitialized()) {
+            Logger::Info(reason + ": " + (vibrate ? "vibrate" : "shock") + " at intensity " +
+                         std::to_string(intensity) + " for " + std::to_string(duration) + "s");
+        }
+
+        if (use_pishock) {
+            if (mode == Config::PiShockMode::LEGACY_API) {
+                if (pishock_manager_ && pishock_manager_->IsEnabled()) {
+                    if (vibrate) pishock_manager_->TriggerVibrate(intensity, duration, reason);
+                    else pishock_manager_->TriggerShock(intensity, duration, reason);
+                }
+            } else if (pishock_ws_manager_ && pishock_ws_manager_->IsEnabled()) {
+                if (vibrate) pishock_ws_manager_->TriggerVibrate(intensity, duration, reason);
+                else pishock_ws_manager_->TriggerShock(intensity, duration, reason);
+            }
+        }
+
+        if (use_openshock && openshock_manager_ && openshock_manager_->IsEnabled()) {
+            if (vibrate) openshock_manager_->TriggerVibrate(intensity, duration, reason);
+            else openshock_manager_->TriggerShock(intensity, duration, reason);
+        }
+
+        // DG-Lab only pulses and BPIO only vibrates, whatever the action.
+        if (use_dglab && dglab_manager_ && dglab_manager_->IsEnabled()) {
+            dglab_manager_->TriggerShock(intensity, duration, reason);
+        }
+        if (use_buttplug && buttplug_manager_ && buttplug_manager_->IsEnabled()) {
+            buttplug_manager_->TriggerPulse(intensity, duration, reason);
         }
     }
 

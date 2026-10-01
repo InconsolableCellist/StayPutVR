@@ -248,6 +248,18 @@ void OpenShockPanel::Render() {
                     save_config_();
                 }
 
+                std::string max_label = "Device " + std::to_string(i) + " Shock max";
+                float shock_max = config_.openshock_individual_shock_max_intensities[i];
+                if (ImGui::SliderFloat(max_label.c_str(), &shock_max, 0.0f, 1.0f, "%.2f")) {
+                    config_.openshock_individual_shock_max_intensities[i] = shock_max;
+                    save_config_();
+                }
+                ImGui::SameLine();
+                ImGuiHelpers::HelpTooltip("Ceiling for the OSC Shock param when it is sent\n"
+                                          "as a float: this device fires at that fraction\n"
+                                          "of this, anywhere from 0 up to it. A bool uses\n"
+                                          "the disobedience intensity above instead.");
+
                 ImGui::PopID();
             }
         }

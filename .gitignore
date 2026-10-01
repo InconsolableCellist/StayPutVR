@@ -4,3 +4,6 @@
 # Runtime-generated artifacts
 /config.ini
 /imgui.ini
+
+# Unity asset work backups (NOT open source — never commit)
+/unity_backup/
